@@ -1,0 +1,54 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  darkMode: 'class',
+  content: ['./index.html', './src/**/*.{ts,html}'],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          primary: {
+            light: 'var(--brand-primary-light, #1c2926)',
+            dark: 'var(--brand-primary-dark, #edf5ef)',
+          },
+          secondary: {
+            light: 'var(--brand-secondary-light, #c4f36b)',
+            dark: 'var(--brand-secondary-dark, #b3df5e)',
+          },
+          accent: {
+            light: 'var(--brand-accent-light, #87b743)',
+            dark: 'var(--brand-accent-dark, #a9d85c)',
+          },
+          info: {
+            light: 'var(--brand-info-light, #6395e6)',
+            dark: 'var(--brand-info-dark, #8fb5f0)',
+          },
+          warning: {
+            light: 'var(--brand-warning-light, #f0bd46)',
+            dark: 'var(--brand-warning-dark, #f4ca68)',
+          },
+          canvas: {
+            light: 'var(--brand-canvas-light, #f5f8f6)',
+            dark: 'var(--brand-canvas-dark, #15211e)',
+          },
+          surface: {
+            light: 'var(--brand-surface-light, #ffffff)',
+            dark: 'var(--brand-surface-dark, #24332e)',
+          },
+          muted: {
+            light: 'var(--brand-muted-light, #77827e)',
+            dark: 'var(--brand-muted-dark, #a4b2aa)',
+          },
+          line: {
+            light: 'var(--brand-line-light, #e1e8e4)',
+            dark: 'var(--brand-line-dark, #35453e)',
+          },
+        },
+      },
+      fontFamily: {
+        sans: ['var(--brand-font-sans, "Inter")', 'Roboto', 'DM Sans', 'sans-serif'],
+        display: ['Space Grotesk', 'var(--brand-font-sans, "Inter")', 'sans-serif'],
+      },
+    },
+  },
+  plugins: [],
+}

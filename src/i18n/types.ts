@@ -1,0 +1,223 @@
+export type SupportedLanguage = 'es' | 'en'
+
+export interface TranslationDictionary {
+  common: {
+    brandTitle: string
+    backToSessions: string
+    cancel: string
+    save: string
+    delete: string
+    edit: string
+    close: string
+    reopen: string
+    loading: string
+    toggleTheme: string
+    toggleLang: string
+    langName: string
+    langCode: string
+    error: string
+    apply: string
+    reject: string
+    send: string
+    stop: string
+  }
+  sidebar: {
+    workspace: string
+    sessions: string
+    memory: string
+    settings: string
+    localSession: string
+    workerReady: string
+  }
+  sessions: {
+    eyebrow: string
+    title: string
+    heroTitle: string
+    heroSubtitle: string
+    newSession: string
+    selectWorkspaceBtn: string
+    workspaceLinked: string
+    sessionRunningTooltip: string
+    stats: {
+      activeSessions: string
+      activeSessionsDetail: string
+      pendingApprovals: string
+      pendingApprovalsDetail: string
+      engramMemories: string
+      engramMemoriesDetail: string
+    }
+    tabs: {
+      active: string
+      completed: string
+    }
+    heading: {
+      activeTitle: string
+      completedTitle: string
+      registeredCount: string
+    }
+    card: {
+      turnsCount: string
+      progressAria: string
+      agentThinking: string
+      executingTools: string
+      waitingApproval: string
+      planningScopes: string
+      reusingMemory: string
+    }
+    empty: {
+      completedTitle: string
+      activeTitle: string
+      completedText: string
+      activeText: string
+    }
+    footer: {
+      workerReady: string
+      localDataNotice: string
+    }
+  }
+  dialogs: {
+    newSession: {
+      eyebrow: string
+      title: string
+      description: string
+      titleLabel: string
+      titlePlaceholder: string
+      goalLabel: string
+      goalPlaceholder: string
+      skillLabel: string
+      workspaceHint: string
+      createBtn: string
+    }
+  }
+  workspace: {
+    filesPanelTitle: string
+    linkFolderBtn: string
+    relinkFolderBtn: string
+    refreshFilesBtn: string
+    noFolderLinked: string
+    noFolderLinkedHint: string
+    chatPanelTitle: string
+    promptPlaceholder: string
+    inspectorPanelTitle: string
+    tabProposals: string
+    tabTools: string
+    tabPreview: string
+    emptyProposals: string
+    emptyTools: string
+    approveWriteBtn: string
+    rejectWriteBtn: string
+    appliedBadge: string
+    rejectedBadge: string
+    pendingBadge: string
+    turnsBudgetLabel: string
+    tokensBudgetLabel: string
+    runSandboxBtn: string
+  }
+  memory: {
+    eyebrow: string
+    title: string
+    subtitle: string
+    searchPlaceholder: string
+    engramsTitle: string
+    engramsSubtitle: string
+    checkpointsTitle: string
+    checkpointsSubtitle: string
+    emptyEngrams: string
+    emptyCheckpoints: string
+    colTitle: string
+    colType: string
+    colProject: string
+    colTags: string
+    colRecords: string
+    colUpdated: string
+  }
+  settings: {
+    eyebrow: string
+    title: string
+    localOnly: string
+    introTitle: string
+    introDesc: string
+    connEyebrow: string
+    connTitle: string
+    connDesc: string
+    runtimeUrlLabel: string
+    runtimeUrlHint: string
+    modelLabel: string
+    refreshModelsTitle: string
+    loadingModels: string
+    modelsAvailable: string
+    modelsError: string
+    budgetEyebrow: string
+    budgetTitle: string
+    budgetDesc: string
+    tempLabel: string
+    tempHint: string
+    maxTokensLabel: string
+    maxTokensHint: string
+    maxTurnsLabel: string
+    maxTurnsHint: string
+    maxTokenBudgetLabel: string
+    maxTokenBudgetHint: string
+    maxDepthLabel: string
+    maxDepthHint: string
+    maxConcurrencyLabel: string
+    maxConcurrencyHint: string
+    fsPolicyEyebrow: string
+    fsPolicyTitle: string
+    fsPolicyDesc: string
+    fsWriteModeLabel: string
+    fsWriteModeConfirm: string
+    fsWriteModeAuto: string
+    fsWriteModeHint: string
+    mcpEyebrow: string
+    mcpTitle: string
+    mcpDesc: string
+    mcpAddBtn: string
+    mcpNamePlaceholder: string
+    mcpUrlPlaceholder: string
+    brandEyebrow: string
+    brandTitle: string
+    brandDesc: string
+    companyNameLabel: string
+    fontFamilyLabel: string
+    logoSvgLabel: string
+    resetBrandBtn: string
+    promptsEyebrow: string
+    promptsTitle: string
+    promptsDesc: string
+    systemPromptLabel: string
+    systemPromptHint: string
+    statusNotice: string
+    testBtn: string
+    saveBtn: string
+    savedSuccess: string
+    saveBtnSuccess: string
+    errorRequired: string
+    errorSave: string
+    errorTest: string
+    storageEyebrow: string
+    storageTitle: string
+    storageDesc: string
+    resetDataBtn: string
+    resetDataConfirm: string
+    resetDataSuccess: string
+  }
+  pwa: {
+    updateAvailable: string
+    updateBtn: string
+    updating: string
+    checkingUpdates: string
+    upToDate: string
+    checkUpdatesBtn: string
+  }
+  domain: {
+    statuses: {
+      idle: string
+      running: string
+      waitingApproval: string
+      completed: string
+      budgetExceeded: string
+      error: string
+    }
+  }
+}
