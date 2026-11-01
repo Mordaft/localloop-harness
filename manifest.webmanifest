@@ -1,0 +1,18 @@
+{
+  "name": "LocalLoop AI",
+  "short_name": "LocalLoop",
+  "description": "Arnés Agéntico Minimalista en PWA con LangGraph.js, engram-ts y modelos LLM locales",
+  "lang": "es",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f5f8f6",
+  "theme_color": "#1c2926",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
