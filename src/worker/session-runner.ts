@@ -3,6 +3,8 @@ import {
   registerSessionCallbacks,
   unregisterSessionCallbacks,
 } from '../agent/agent-graph'
+import { compiledSDLCGraph } from '../agent/sdlc-graph'
+import type { Phase0ThreeStepData } from '../agent/sdlc-state'
 import { trace } from '../diagnostics'
 import { SessionStatus, type SessionStatus as SessionStatusType } from '../enums'
 import type { ChatMessage } from '../llm/llm-client'
@@ -54,6 +56,7 @@ export async function executeSessionTurn(
   sessionId: number,
   userPrompt: string | undefined,
   hooks: SessionRunHooks = {},
+  phase0Data?: Phase0ThreeStepData,
 ): Promise<SessionStatusType> {
   if (activeAbortControllers.has(sessionId)) {
     return SessionStatus.RUNNING
@@ -116,6 +119,78 @@ export async function executeSessionTurn(
   })
 
   try {
+    if (session.skill === 'ProjectRigor_Interviewer' || session.skill === 'sdlc' || !session.skill || session.skill === 'skill_general') {
+      const threadConfig = { configurable: { thread_id: session.threadId } }
+      let finalState: any
+      if (userPrompt && userPrompt.trim().length > 0) {
+        const updatePayload: Record<string, any> = {
+          messages: historyMessages,
+        }
+        if (phase0Data) {
+          updatePayload.phase0Data = phase0Data
+          if (phase0Data.step2?.marketStandard) {
+            updatePayload.marketArchStandard = phase0Data.step2.marketStandard
+          }
+          if (phase0Data.step2?.mcpUrl) {
+            updatePayload.mcpServerConfig = {
+              connected: true,
+              url: phase0Data.step2.mcpUrl,
+            }
+          }
+        }
+        await compiledSDLCGraph.updateState(threadConfig, updatePayload)
+        finalState = await compiledSDLCGraph.invoke(null, threadConfig)
+      } else {
+        finalState = await compiledSDLCGraph.invoke(
+          {
+            sessionId,
+            threadId: session.threadId,
+            messages: historyMessages,
+            ...(phase0Data ? { phase0Data } : {}),
+            ...(phase0Data?.step2?.marketStandard ? { marketArchStandard: phase0Data.step2.marketStandard } : {}),
+            ...(phase0Data?.step2?.mcpUrl ? { mcpServerConfig: { connected: true, url: phase0Data.step2.mcpUrl } } : {}),
+          },
+          threadConfig,
+        )
+      }
+
+      const existingCount = storedMessages.length
+      const graphMessages = finalState.messages || []
+      for (let i = existingCount; i < graphMessages.length; i++) {
+        const gm = graphMessages[i]
+        await appendSessionMessage({
+          sessionId,
+          role: gm.role,
+          content: gm.content,
+        })
+      }
+
+      let resolvedStatus: SessionStatusType = SessionStatus.COMPLETED
+      if (finalState.currentPhase === '0_DISCOVERY_RIGOR' && !finalState.discoveryCompleted) {
+        resolvedStatus = SessionStatus.WAITING_APPROVAL
+      } else if (finalState.currentPhase === '4_E2E_BUSINESS_AUDIT' && !finalState.businessApproval) {
+        resolvedStatus = SessionStatus.WAITING_APPROVAL
+      } else if (finalState.currentPhase !== 'COMPLETED') {
+        resolvedStatus = SessionStatus.IDLE
+      }
+
+      await updateSessionMetrics(sessionId, {
+        status: resolvedStatus,
+        turnsUsed: (session.turnsUsed || 0) + 1,
+        tokensUsed: session.tokensUsed || 0,
+      })
+
+      hooks.onThinking?.({
+        sessionId,
+        isThinking: false,
+        thought: '',
+        phase: 'completed',
+        updatedAt: Date.now(),
+      })
+      hooks.onStepUpdate?.(sessionId)
+      return resolvedStatus
+    }
+
     const finalState = await defaultAgentWorkflow.invoke(
       {
         sessionId,

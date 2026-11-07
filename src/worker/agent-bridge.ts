@@ -1,3 +1,4 @@
+import type { Phase0ThreeStepData } from '../agent/sdlc-state'
 import { trace } from '../diagnostics'
 import { getWorkspaceDirectoryHandle } from '../fs/workspace-fs'
 import { getLlmConfig } from '../llm/llm-config'
@@ -151,6 +152,7 @@ export function isSessionRunning(sessionId: number): boolean {
 export async function runAgentSessionTurn(
   sessionId: number,
   userPrompt?: string,
+  phase0Data?: Phase0ThreeStepData,
 ): Promise<void> {
   if (isSessionRunning(sessionId)) return
 
@@ -161,6 +163,7 @@ export async function runAgentSessionTurn(
     type: 'RUN_AGENT_SESSION',
     sessionId,
     prompt: userPrompt,
+    phase0Data,
   })
 
   if (sentToWorker) {
@@ -169,11 +172,16 @@ export async function runAgentSessionTurn(
 
   // Fallback for environments where Web Worker is unavailable
   try {
-    await executeSessionTurn(sessionId, userPrompt, {
-      onThinking: (state) => updateThinkingState(state),
-      onStepUpdate: (id) => notifyProgress(id),
-      onProposalCreated: (sId) => notifyProgress(sId),
-    })
+    await executeSessionTurn(
+      sessionId,
+      userPrompt,
+      {
+        onThinking: (state) => updateThinkingState(state),
+        onStepUpdate: (id) => notifyProgress(id),
+        onProposalCreated: (sId) => notifyProgress(sId),
+      },
+      phase0Data,
+    )
   } finally {
     runningSessionsInUi.delete(sessionId)
   }

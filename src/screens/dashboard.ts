@@ -1,4 +1,3 @@
-import { getBuiltInSkills } from '../agent/skills-registry'
 import { heroIcon } from '../config/heroicons'
 import { SessionStatus } from '../enums'
 import {
@@ -157,7 +156,6 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
   const [sessions, kpis] = await Promise.all([listSessions(), getDashboardKpis()])
   const i18n = t()
   const handle = getWorkspaceDirectoryHandle()
-  const skills = getBuiltInSkills()
 
   const activeList = sessions.filter(
     (s) => s.status !== SessionStatus.COMPLETED && s.status !== SessionStatus.BUDGET_EXCEEDED,
@@ -262,58 +260,6 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
           <span>${i18n.sessions.footer.localDataNotice}</span>
         </footer>
       </div>
-
-      <dialog id="new-session-dialog" class="w-full max-w-lg rounded-2xl border border-border-default bg-bg-card p-0 text-text-primary shadow-2xl backdrop:bg-black/60">
-        <form id="new-session-form" class="p-6 space-y-4">
-          <div class="flex items-start justify-between">
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-widest text-primary">${i18n.dialogs.newSession.eyebrow}</p>
-              <h3 class="mt-1 font-display text-lg font-bold text-text-primary">${i18n.dialogs.newSession.title}</h3>
-            </div>
-            <button type="button" id="close-new-session-dialog" class="rounded-lg p-1.5 text-text-muted hover:bg-bg-elevated hover:text-text-primary">
-              ${heroIcon('x-mark', 'h-4 w-4')}
-            </button>
-          </div>
-
-          <p class="text-xs text-text-secondary">${i18n.dialogs.newSession.description}</p>
-
-          <div>
-            <label class="mb-1.5 block text-xs font-medium text-text-secondary" for="session-title">${i18n.dialogs.newSession.titleLabel}</label>
-            <input id="session-title" name="title" required placeholder="${i18n.dialogs.newSession.titlePlaceholder}" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2 text-sm text-text-primary outline-none focus:border-primary" />
-          </div>
-
-          <div>
-            <label class="mb-1.5 block text-xs font-medium text-text-secondary" for="session-skill">${i18n.dialogs.newSession.skillLabel}</label>
-            <select id="session-skill" name="skill" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2 text-sm text-text-primary outline-none focus:border-primary">
-              ${skills
-                .map(
-                  (sk) =>
-                    `<option value="${sk.id}">${sk.title} — ${sk.description}</option>`,
-                )
-                .join('')}
-            </select>
-          </div>
-
-          <div>
-            <label class="mb-1.5 block text-xs font-medium text-text-secondary" for="session-goal">${i18n.dialogs.newSession.goalLabel}</label>
-            <textarea id="session-goal" name="goal" rows="4" required placeholder="${i18n.dialogs.newSession.goalPlaceholder}" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2 text-sm text-text-primary outline-none focus:border-primary"></textarea>
-          </div>
-
-          <p class="rounded-lg border border-border-subtle bg-bg-app px-3 py-2 text-[11px] text-text-muted">
-            ${i18n.dialogs.newSession.workspaceHint}
-          </p>
-
-          <div class="flex items-center justify-end gap-2 pt-2">
-            <button type="button" id="cancel-new-session-btn" class="rounded-lg border border-border-default bg-bg-app px-4 py-2 text-xs font-medium text-text-secondary hover:bg-bg-elevated">
-              ${i18n.common.cancel}
-            </button>
-            <button type="submit" class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-primary/25 hover:opacity-95">
-              ${heroIcon('play', 'h-3.5 w-3.5')}
-              <span>${i18n.dialogs.newSession.createBtn}</span>
-            </button>
-          </div>
-        </form>
-      </dialog>
     </div>
   `
 
@@ -337,33 +283,21 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
     })
   })
 
-  const dialog = root.querySelector<HTMLDialogElement>('#new-session-dialog')
-  root.querySelector<HTMLButtonElement>('#new-session-btn')?.addEventListener('click', () => {
-    dialog?.showModal()
-  })
-  root.querySelector<HTMLButtonElement>('#close-new-session-dialog')?.addEventListener('click', () => {
-    dialog?.close()
-  })
-  root.querySelector<HTMLButtonElement>('#cancel-new-session-btn')?.addEventListener('click', () => {
-    dialog?.close()
-  })
-
-  root.querySelector<HTMLFormElement>('#new-session-form')?.addEventListener('submit', async (ev) => {
-    ev.preventDefault()
-    const fd = new FormData(ev.currentTarget as HTMLFormElement)
-    const title = String(fd.get('title') ?? '').trim()
-    const goal = String(fd.get('goal') ?? '').trim()
-    const skill = String(fd.get('skill') ?? 'skill_general')
-    if (!title || !goal) return
-
+  root.querySelector<HTMLButtonElement>('#new-session-btn')?.addEventListener('click', async () => {
     const activeDir = getWorkspaceDirectoryHandle()
+    const sessionGuid =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2, 10)
+
     const sessionId = await createSession({
-      title,
-      goal,
-      skill,
+      threadId: `session-${sessionGuid}`,
+      title: 'Nueva sesión de desarrollo',
+      goal: '',
+      skill: 'ProjectRigor_Interviewer',
       workspaceName: activeDir?.name ?? 'Sandbox Virtual FS',
     })
-    dialog?.close()
+
     void runAgentSessionTurn(sessionId)
     window.location.hash = `#/sessions/${sessionId}`
   })

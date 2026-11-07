@@ -1,3 +1,4 @@
+import type { Phase0ThreeStepData } from '../agent/sdlc-state'
 import { setWorkspaceDirectoryHandle } from '../fs/workspace-fs'
 import { setWorkerLlmConfig, type LlmConfig } from '../llm/llm-config'
 import {
@@ -14,7 +15,12 @@ import {
 export type WorkerInboundMessage =
   | { type: 'SYNC_CONFIG'; config: LlmConfig }
   | { type: 'SET_DIRECTORY_HANDLE'; handle?: FileSystemDirectoryHandle }
-  | { type: 'RUN_AGENT_SESSION'; sessionId: number; prompt?: string }
+  | {
+      type: 'RUN_AGENT_SESSION'
+      sessionId: number
+      prompt?: string
+      phase0Data?: Phase0ThreeStepData
+    }
   | { type: 'CANCEL_SESSION'; sessionId: number }
   | { type: 'BROWSER_SANDBOX_RESPONSE'; requestId: string; result: BrowserSandboxResult }
 
@@ -92,14 +98,19 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       break
     }
     case 'RUN_AGENT_SESSION': {
-      const { sessionId, prompt } = data
+      const { sessionId, prompt, phase0Data } = data
       try {
-        const status = await executeSessionTurn(sessionId, prompt, {
-          onThinking: (state) => postOut({ type: 'AGENT_THINKING', state }),
-          onStepUpdate: (id) => postOut({ type: 'AGENT_STEP_UPDATE', sessionId: id }),
-          onProposalCreated: (sId, proposalId, path) =>
-            postOut({ type: 'PROPOSAL_CREATED', sessionId: sId, proposalId, path }),
-        })
+        const status = await executeSessionTurn(
+          sessionId,
+          prompt,
+          {
+            onThinking: (state) => postOut({ type: 'AGENT_THINKING', state }),
+            onStepUpdate: (id) => postOut({ type: 'AGENT_STEP_UPDATE', sessionId: id }),
+            onProposalCreated: (sId, proposalId, path) =>
+              postOut({ type: 'PROPOSAL_CREATED', sessionId: sId, proposalId, path }),
+          },
+          phase0Data,
+        )
         postOut({ type: 'AGENT_COMPLETED', sessionId, status })
       } catch (err) {
         postOut({

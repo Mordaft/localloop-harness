@@ -114,15 +114,17 @@ export async function createSession(input: {
   goal: string
   workspaceName?: string
   skill?: string
+  threadId?: string
 }): Promise<number> {
   const now = new Date().toISOString()
   const config = getLlmConfig()
+  const generatedGuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 10)
   const session: AgentSession = {
-    threadId: `thread-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    threadId: input.threadId?.trim() || `session-${generatedGuid}`,
     title: input.title.trim(),
     goal: input.goal.trim(),
     workspaceName: input.workspaceName?.trim() || 'Workspace local',
-    skill: input.skill || 'skill_general',
+    skill: input.skill || 'ProjectRigor_Interviewer',
     status: SessionStatus.IDLE,
     turnsUsed: 0,
     maxTurns: config.maxTurns,
@@ -141,18 +143,33 @@ export async function createSession(input: {
     memSessions.push({ ...session, id: sessionId })
   }
 
-  await appendSessionMessage({
-    sessionId,
-    role: 'user',
-    content: input.goal.trim(),
-  })
+  if (input.goal.trim().length > 0) {
+    await appendSessionMessage({
+      sessionId,
+      role: 'user',
+      content: input.goal.trim(),
+    })
+  }
 
   return sessionId
 }
 
+export async function updateSessionTitle(id: number, title: string): Promise<void> {
+  const updated = new Date().toISOString()
+  if (database) {
+    await database.sessions.update(id, { title: title.trim(), updated })
+    return
+  }
+  const target = memSessions.find((s) => s.id === id)
+  if (target) {
+    target.title = title.trim()
+    target.updated = updated
+  }
+}
+
 export async function updateSessionMetrics(
   id: number,
-  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model'>>,
+  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model' | 'title' | 'skill'>>,
 ): Promise<void> {
   const updated = new Date().toISOString()
   if (database) {
