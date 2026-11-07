@@ -2,8 +2,12 @@ import assert from 'node:assert/strict'
 import {
   AgentScopeStorage,
   ENGRAM_REF_PREFIX,
+  InMemoryEngramStore,
   createIsolatedEngram,
   fromEngramRef,
+  retrieveEngramMemoryContext,
+  saveEpisodicTurnMemory,
+  saveSdlcPhaseArtifact,
   toEngramRef,
 } from '../src/memory/engram-memory'
 
@@ -65,6 +69,40 @@ async function runTests() {
   const loadedByRef = await rootStorage.getScopeResultByMemoryId(savedResult.engram_ref)
   assert.ok(loadedByRef)
   assert.equal(loadedByRef.id_scope, 'child_1')
+
+  // Pruebas de guardado episódico y recuperación de contexto LLM
+  const store = new InMemoryEngramStore()
+  const epHeader = await saveEpisodicTurnMemory({
+    sessionId: 99,
+    userPrompt: '¿Cómo modularizamos el módulo de pagos?',
+    assistantReply: 'Diseñamos una interfaz IPaymentGateway con Clean Architecture.',
+    thought: 'Analizando patrones arquitectónicos',
+    phase: 'fase_2_diseno',
+    store,
+  })
+  assert.ok(epHeader.id)
+  assert.equal(epHeader.type, 'conversational_episode')
+  assert.ok(epHeader.tags.includes('session-99'))
+
+  const artHeader = await saveSdlcPhaseArtifact({
+    sessionId: 99,
+    phaseName: 'phase_2_design',
+    artifactTitle: 'Contrato IPaymentGateway',
+    artifactType: 'technical_design',
+    payload: { interface: 'IPaymentGateway', methods: ['processPayment'] },
+    store,
+  })
+  assert.ok(artHeader.id)
+  assert.equal(artHeader.type, 'technical_design')
+
+  const contextStr = await retrieveEngramMemoryContext({
+    query: 'pagos arquitectura',
+    project: 'session-99',
+    limit: 2,
+    store,
+  })
+  assert.ok(contextStr.includes('MEMORIA EPISÓDICA'))
+  assert.ok(contextStr.includes('IPaymentGateway') || contextStr.includes('Turno Sesión #99'))
 
   console.log('✓ Todas las pruebas de Memoria Engram-ts pasaron exitosamente.')
 }

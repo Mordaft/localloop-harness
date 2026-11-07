@@ -17,6 +17,8 @@ import { appendSessionMessage, updateSessionMetrics } from '../memory/app-db'
 import {
   AgentScopeStorage,
   getPersistentEngram,
+  retrieveEngramMemoryContext,
+  saveEpisodicTurnMemory,
   type AgentSkillName,
   type ScopeTaskDefinition,
 } from '../memory/engram-memory'
@@ -296,9 +298,21 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
     ? '\n\n[FASE DE CONSOLIDACIÓN Y ENTREGA]: La descomposición en lista de tareas y la ejecución de los sub-agentes con sus pruebas de aceptación ya han finalizado. NO vuelvas a descomponer ni planificar. Usa los entregables recibidos (tarea_realizada, prueba_automatizada y evidencia_prueba) para aplicar cambios en archivos con "fs_write_file" si corresponde, o redacta directamente la respuesta final completa para el usuario sin invocar más herramientas.'
     : '\n\n[OBLIGATORIO - REGLA DE DESCOMPOSICIÓN POR PRUEBAS]: Siempre es obligatorio crear una lista de tareas antes de realizar un trabajo. Una tarea es aquello para lo que podemos definir una prueba de aceptación. Invoca "plan_and_delegate_tasks" (o "delegate_subagent_scope") indicando la lista de tareas y la prueba de aceptación ("acceptanceTest") de cada elemento para que cada tarea pase a un sub-agente.'
 
+  const latestUserMsg = [...state.messages].reverse().find((m) => m.role === 'user')
+  let engramMemoryContext = ''
+  try {
+    engramMemoryContext = await retrieveEngramMemoryContext({
+      query: latestUserMsg?.content || 'arquitectura desarrollo',
+      project: `session-${state.sessionId}`,
+      limit: 3,
+    })
+  } catch {
+    engramMemoryContext = ''
+  }
+
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `${config.systemPrompt}\n\n${skillDef.systemSupplement}${mandatoryDecompositionReminder}\n\n[PRESUPUESTO ACTUAL: Turno ${state.turnsUsed + 1}/${state.maxTurns} | Tokens ${state.tokensUsed}/${state.maxTokenBudget}]`,
+    content: `${config.systemPrompt}\n\n${skillDef.systemSupplement}${mandatoryDecompositionReminder}${engramMemoryContext}\n\n[PRESUPUESTO ACTUAL: Turno ${state.turnsUsed + 1}/${state.maxTurns} | Tokens ${state.tokensUsed}/${state.maxTokenBudget}]`,
   }
 
   const conversationMessages: ChatMessage[] = [
@@ -379,6 +393,20 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
         `Invocando ${response.toolCalls.map((tc) => tc.name).join(', ')}...`,
       thought: assistantMsg.thought,
     })
+    try {
+      await saveEpisodicTurnMemory({
+        sessionId: state.sessionId,
+        userPrompt: latestUserMsg?.content,
+        assistantReply:
+          assistantMsg.content ||
+          `Invocando ${response.toolCalls.map((tc) => tc.name).join(', ')}...`,
+        thought: assistantMsg.thought,
+        phase: `Turno ${nextTurns}`,
+        tags: [state.skill],
+      })
+    } catch (err) {
+      trace(`[AgentGraph] Error persistiendo memoria episódica en engram-ts: ${err}`)
+    }
   }
 
   const nextStatus =

@@ -2,6 +2,7 @@ import { compiledSDLCGraph } from '../src/agent/sdlc-graph'
 import type { SDLCStateType } from '../src/agent/sdlc-state'
 import { RuntimeSkillLoader } from '../src/agent/skills/runtime-loader'
 import { SKILL_TREE } from '../src/agent/skills/skills-tree'
+import { getVirtualFile } from '../src/fs/workspace-fs'
 
 async function runSDLCGraphTests() {
   console.log('--- Iniciando pruebas de Árbol Progresivo de Skills y SDLC Graph ---')
@@ -172,6 +173,27 @@ async function runSDLCGraphTests() {
     throw new Error(`Se esperaba estado COMPLETED, obtenido: ${run3.currentPhase}`)
   }
   console.log('✓ Fase 6 ejecutó la proyección documental y finalizó el ciclo con éxito.')
+
+  // 7. Verificar que los documentos modulares en doc/ y carpetas por fase existen
+  const docFiles = [
+    'doc/fase-0-descubrimiento/01_CASOS_DE_USO_Y_NEGOCIO.md',
+    'doc/fase-0-descubrimiento/02_ARQUITECTURA_EMPRESARIAL_AS_IS_TO_BE.md',
+    'doc/fase-1-estrategia-plan/01_PLAN_WBS_Y_GRAFO_DEPENDENCIAS.md',
+    'doc/fase-2-diseno-gatekeeper/00_AUDITORIA_ARQUITECTURA_Y_DEUDA_TECNICA.md',
+    'doc/fase-2-diseno-gatekeeper/DISENO_COMP_BILLING_CORE.md',
+    'doc/fase-3-construccion-pruebas/EVIDENCIA_PRUEBAS_COMP_BILLING_CORE.md',
+    'doc/fase-4-e2e-auditoria-negocio/01_EVIDENCIAS_PRUEBAS_E2E.md',
+    'doc/fase-4-e2e-auditoria-negocio/02_INFORME_EJECUTIVO_APROBACION_NEGOCIO.md',
+    'doc/fase-6-cierre-entrega/01_LANDSCAPE_ARQUITECTURA.md',
+    'LANDSCAPE.md',
+  ]
+  for (const path of docFiles) {
+    const fileContent = getVirtualFile(path)
+    if (!fileContent || fileContent.length === 0) {
+      throw new Error(`El archivo de documentación esperado no fue generado: ${path}`)
+    }
+  }
+  console.log(`✓ Generación documental modular en doc/ verificada (${docFiles.length} documentos validados).`)
 
   console.log('--- Todas las pruebas del SDLC Graph y Árbol de Skills pasaron con éxito ---')
 }

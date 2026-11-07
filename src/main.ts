@@ -8,7 +8,7 @@ import { renderMemoryExplorer } from './screens/memory-explorer'
 import { renderSettingsScreen } from './screens/settings'
 import { renderAgentWorkspace } from './screens/workspace'
 import './style.css'
-import { onAgentProgress, onAgentThinking } from './worker/agent-bridge'
+import { isSessionRunning, onAgentProgress, onAgentThinking } from './worker/agent-bridge'
 
 const savedTheme = localStorage.getItem('theme')
 if (savedTheme === 'light') {
@@ -117,9 +117,17 @@ window.addEventListener('hashchange', () => {
   void renderCurrentRoute()
 })
 
-onAgentProgress(() => {
+onAgentProgress((sessionId) => {
   const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]')
   if (openDialog) return
+
+  const route = parseHashRoute(window.location.hash)
+  // Si estamos observando la sesión en ejecución en el workspace, evitamos destruir y regenerar
+  // todo el DOM en cada paso intermedio, dejando que la cola de streaming selectiva actualice el chat.
+  if (route.name === 'workspace' && route.sessionId === sessionId && isSessionRunning(sessionId)) {
+    return
+  }
+
   void renderCurrentRoute()
 })
 

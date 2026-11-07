@@ -34,6 +34,7 @@ export interface BusinessNeedItem {
 }
 
 export interface Phase0Step1BusinessNeeds {
+  featureTitle?: string
   rawBusinessLanguageText: string
   needsList: BusinessNeedItem[]
 }

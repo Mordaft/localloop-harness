@@ -699,3 +699,223 @@ export class AgentScopeStorage {
     }
   }
 }
+
+export interface SaveTurnMemoryParams {
+  sessionId: number
+  userPrompt?: string
+  assistantReply: string
+  thought?: string
+  phase?: string
+  tags?: string[]
+  store?: MemoryStore
+}
+
+/**
+ * Persiste un turno conversacional como memoria episódica en `engram-ts`.
+ * Permite que el LLM recupere contexto histórico y recuerde decisiones previas.
+ */
+export async function saveEpisodicTurnMemory(params: SaveTurnMemoryParams): Promise<MemoryHeader> {
+  const engram = getPersistentEngram(params.store)
+  const preview = (params.userPrompt || params.assistantReply || 'Turno conversacional')
+    .slice(0, 90)
+    .replace(/\n/g, ' ')
+    .trim()
+  const phaseLabel = params.phase ? `[${params.phase}] ` : ''
+  const title = `Turno Sesión #${params.sessionId} ${phaseLabel}${preview}`
+
+  const records: Array<{ title: string; content: string; tags: string[] }> = []
+
+  if (params.userPrompt && params.userPrompt.trim()) {
+    records.push({
+      title: 'user_prompt',
+      content: params.userPrompt.trim(),
+      tags: ['user_prompt', `session:${params.sessionId}`],
+    })
+  }
+
+  if (params.assistantReply && params.assistantReply.trim()) {
+    records.push({
+      title: 'assistant_reply',
+      content: params.assistantReply.trim(),
+      tags: ['assistant_reply', `session:${params.sessionId}`],
+    })
+  }
+
+  if (params.thought && params.thought.trim()) {
+    records.push({
+      title: 'reasoning_thought',
+      content: params.thought.trim(),
+      tags: ['reasoning_thought', `session:${params.sessionId}`],
+    })
+  }
+
+  if (records.length === 0) {
+    records.push({
+      title: 'empty_turn',
+      content: 'Turno sin contenido textual directo.',
+      tags: [`session:${params.sessionId}`],
+    })
+  }
+
+  const header = await engram.save({
+    title,
+    type: 'conversational_episode',
+    project: `session-${params.sessionId}`,
+    tags: [
+      'episodic',
+      'conversation',
+      `session-${params.sessionId}`,
+      'localloop',
+      ...(params.phase ? [`phase:${normalizeScopeKeyText(params.phase).replace(/\s+/g, '_')}`] : []),
+      ...(params.tags ?? []),
+    ],
+    records,
+  })
+
+  trace('engram.turn.saved', {
+    sessionId: params.sessionId,
+    memoryId: header.id,
+    phase: params.phase,
+    recordsCount: records.length,
+  })
+
+  return header
+}
+
+export interface SavePhaseArtifactParams {
+  sessionId: number
+  phaseName: string
+  artifactTitle: string
+  artifactType: string
+  payload: Record<string, unknown> | string
+  tags?: string[]
+  store?: MemoryStore
+}
+
+/**
+ * Persiste artefactos y decisiones de las fases SDLC en `engram-ts`.
+ */
+export async function saveSdlcPhaseArtifact(params: SavePhaseArtifactParams): Promise<MemoryHeader> {
+  const engram = getPersistentEngram(params.store)
+  const contentStr =
+    typeof params.payload === 'string'
+      ? params.payload
+      : JSON.stringify(params.payload, null, 2)
+
+  const header = await engram.save({
+    title: params.artifactTitle,
+    type: params.artifactType,
+    project: `session-${params.sessionId}`,
+    tags: [
+      'sdlc_artifact',
+      `phase:${params.phaseName}`,
+      `session-${params.sessionId}`,
+      'localloop',
+      ...(params.tags ?? []),
+    ],
+    records: [
+      {
+        title: `${params.artifactType}_payload`,
+        content: contentStr,
+        tags: [params.artifactType, `phase:${params.phaseName}`],
+      },
+    ],
+  })
+
+  trace('engram.sdlc_phase_saved', {
+    sessionId: params.sessionId,
+    phaseName: params.phaseName,
+    memoryId: header.id,
+    title: params.artifactTitle,
+  })
+
+  return header
+}
+
+export interface RetrieveMemoryContextParams {
+  query: string
+  project?: string
+  limit?: number
+  store?: MemoryStore
+}
+
+/**
+ * Busca y recupera memorias relevantes en `engram-ts` para alimentar el prompt del LLM.
+ */
+export async function retrieveEngramMemoryContext(
+  params: RetrieveMemoryContextParams,
+): Promise<string> {
+  const engram = getPersistentEngram(params.store)
+  const limit = params.limit ?? 4
+
+  let results: MemorySearchResult[] = []
+  const cleanQuery = params.query.replace(/[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚñÑ ]/g, ' ').trim()
+
+  if (cleanQuery.length > 2) {
+    try {
+      results = await engram.search({
+        query: cleanQuery,
+        project: params.project,
+        limit,
+      })
+    } catch {
+      results = []
+    }
+  }
+
+  // Fallback 1: Buscar en el proyecto
+  if (results.length === 0 && params.project) {
+    try {
+      results = await engram.search({
+        query: '',
+        project: params.project,
+        limit,
+      })
+    } catch {
+      results = []
+    }
+  }
+
+  // Fallback 2: Buscar cualquier memoria reciente en el sistema
+  if (results.length === 0) {
+    try {
+      results = await engram.search({
+        query: '',
+        limit,
+      })
+    } catch {
+      results = []
+    }
+  }
+
+  if (results.length === 0) {
+    return ''
+  }
+
+  const memoryBlocks: string[] = []
+  for (const r of results.slice(0, limit)) {
+    try {
+      const doc = await engram.getById(r.header.id)
+      if (!doc || doc.records.length === 0) continue
+
+      const firstRecord = doc.records[0]
+      const snippet =
+        firstRecord.content.length > 450
+          ? `${firstRecord.content.slice(0, 450)}... [continúa en engram]`
+          : firstRecord.content
+
+      memoryBlocks.push(
+        `- **Memoria [${doc.header.type}]**: ${doc.header.title}\n  *Tags:* ${doc.header.tags.join(', ')}\n  *Detalle:* ${snippet.replace(/\n+/g, ' ')}`,
+      )
+    } catch {
+      // Ignorar fallos puntuales
+    }
+  }
+
+  if (memoryBlocks.length === 0) {
+    return ''
+  }
+
+  return `\n\n[MEMORIA EPISÓDICA / CONTEXTO PREVIO RECUPERADO DE ENGRAM-TS]:\n` + memoryBlocks.join('\n\n')
+}
+

@@ -1,5 +1,5 @@
 import { heroIcon } from '../config/heroicons'
-import { SessionStatus } from '../enums'
+import { SessionStatus, type SessionStatus as SessionStatusType } from '../enums'
 import {
   getWorkspaceDirectoryHandle,
   listWorkspaceFiles,
@@ -19,8 +19,10 @@ import {
   getSessionThinkingState,
   isSessionRunning,
   onAgentStreamChunk,
+  onAgentThinking,
   runAgentSessionTurn,
   syncWorkerEnvironment,
+  type AgentStreamChunkEvent,
 } from '../worker/agent-bridge'
 import { bindLangToggle, renderLangToggle, renderSidebar, statusClass, toggleTheme } from './shared'
 import type { Phase0ThreeStepData, SolutionComponentMapping } from '../agent/sdlc-state'
@@ -28,6 +30,8 @@ import type { Phase0ThreeStepData, SolutionComponentMapping } from '../agent/sdl
 let isFileDrawerOpen = false
 let selectedFilePath = ''
 let activeStreamListener: (() => void) | undefined
+let activeThinkingListener: (() => void) | undefined
+let activeStreamBatcher: StreamingQueueBatcher | undefined
 
 // Estado del Wizard de 3 Pasos de la Fase 0
 let phase0SubStep = 1
@@ -429,7 +433,7 @@ function renderFormattedMarkdown(raw: string): string {
 function renderMessageItem(msg: StoredChatMessage): string {
   if (msg.role === 'user') {
     return `
-      <div class="ml-auto max-w-3xl rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-xs text-white shadow-sm">
+      <div data-message-role="user" data-message-content="${escapeHtml(msg.content)}" class="ml-auto max-w-3xl rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-xs text-white shadow-sm">
         <p class="whitespace-pre-wrap leading-relaxed">${escapeHtml(msg.content)}</p>
       </div>
     `
@@ -437,7 +441,7 @@ function renderMessageItem(msg: StoredChatMessage): string {
 
   if (msg.role === 'tool') {
     return `
-      <div class="max-w-3xl w-full rounded-xl border border-border-default bg-bg-app/80 px-4 py-3 font-mono text-[11px] text-text-secondary">
+      <div data-message-role="tool" data-message-content="${escapeHtml(msg.content)}" class="max-w-3xl w-full rounded-xl border border-border-default bg-bg-app/80 px-4 py-3 font-mono text-[11px] text-text-secondary">
         <div class="flex items-center gap-2 text-accent">
           ${heroIcon('wrench-screwdriver', 'h-3.5 w-3.5')}
           <span class="font-semibold">${escapeHtml(msg.toolName ?? 'tool')}</span>
@@ -448,7 +452,7 @@ function renderMessageItem(msg: StoredChatMessage): string {
   }
 
   return `
-    <div class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
+    <div data-message-role="assistant" data-message-content="${escapeHtml(msg.content)}" class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
       ${
         msg.thought
           ? `
@@ -462,6 +466,411 @@ function renderMessageItem(msg: StoredChatMessage): string {
       <div class="leading-relaxed space-y-2 text-text-secondary">${renderFormattedMarkdown(msg.content)}</div>
     </div>
   `
+}
+
+export type PhaseLifecycleStatus = 'completed' | 'active' | 'waiting' | 'pending'
+
+export interface SdlcPhaseItem {
+  id: number
+  label: string
+  sublabel: string
+  status: PhaseLifecycleStatus
+}
+
+export function computeSdlcPhasesState(params: {
+  sessionStatus: SessionStatusType
+  turnsUsed: number
+  messages: StoredChatMessage[]
+  running: boolean
+  isThinking?: boolean
+  thinkingPhase?: string
+  thinkingThought?: string
+  liveStreamPhase?: string
+}): SdlcPhaseItem[] {
+  const { sessionStatus, turnsUsed, messages, running, thinkingThought, liveStreamPhase } = params
+
+  const isCompleted = sessionStatus === SessionStatus.COMPLETED
+
+  const lastMsg = messages[messages.length - 1]?.content ?? ''
+  const isPhase0Waiting =
+    !isCompleted &&
+    (lastMsg.includes('Fase 0: Descubrimiento') || messages.length <= 1)
+  const isPhase4Waiting =
+    !isCompleted &&
+    (lastMsg.includes('Fase 4: Solicitud de Aprobación Formal de Negocio') ||
+      lastMsg.includes('Aprobación Formal de Negocio') ||
+      sessionStatus === SessionStatus.WAITING_APPROVAL)
+
+  // Historial global de mensajes acumulados
+  const allText = messages.map((m) => m.content).join('\n')
+  const liveIndicator = `${liveStreamPhase || ''} ${thinkingThought || ''}`.toLowerCase()
+
+  const hasP0Done =
+    isCompleted ||
+    allText.includes('Definición Formal de Fase 0') ||
+    allText.includes('Fase 1: Alineamiento') ||
+    (turnsUsed >= 1 && !isPhase0Waiting)
+
+  const hasP1Done =
+    isCompleted ||
+    allText.includes('Fase 2: Diseño') ||
+    allText.includes('Fase 2: Dictamen Gatekeeper')
+
+  const hasP2Done =
+    isCompleted ||
+    allText.includes('Fase 3: Construcción') ||
+    allText.includes('Fase 3: Pruebas Unitarias')
+
+  const hasP3Done =
+    isCompleted ||
+    allText.includes('Fase 4: Integración E2E') ||
+    allText.includes('Fase 4: Solicitud de Aprobación')
+
+  const hasP4Done =
+    isCompleted ||
+    allText.includes('Aprobación formal de negocio concedida') ||
+    allText.includes('Fase 5 & 6: Cierre') ||
+    allText.includes('Fase 6')
+
+  const hasP5Done =
+    isCompleted ||
+    allText.includes('Fase 5 & 6: Cierre') ||
+    allText.includes('Fase 6')
+
+  const hasP6Done = isCompleted || allText.includes('Ciclo de desarrollo completado con éxito')
+
+  // Identificación precisa de la fase en tiempo real mientras el modelo genera deltas
+  let activeLivePhaseNumber = -1
+  if (running) {
+    if (
+      liveIndicator.includes('fase 6') ||
+      liveIndicator.includes('fase 5 & 6') ||
+      liveIndicator.includes('cierre y proyección') ||
+      liveIndicator.includes('sincronizador de documentación')
+    ) {
+      activeLivePhaseNumber = 6
+    } else if (liveIndicator.includes('fase 5') || liveIndicator.includes('resiliencia')) {
+      activeLivePhaseNumber = 5
+    } else if (
+      liveIndicator.includes('fase 4') ||
+      liveIndicator.includes('integración e2e') ||
+      liveIndicator.includes('auditoría de negocio')
+    ) {
+      activeLivePhaseNumber = 4
+    } else if (
+      liveIndicator.includes('fase 3') ||
+      liveIndicator.includes('construcción') ||
+      liveIndicator.includes('pruebas unitarias') ||
+      liveIndicator.includes('sandbox js') ||
+      liveIndicator.includes('typescript')
+    ) {
+      activeLivePhaseNumber = 3
+    } else if (
+      liveIndicator.includes('fase 2') ||
+      liveIndicator.includes('diseño técnico') ||
+      liveIndicator.includes('gatekeeper')
+    ) {
+      activeLivePhaseNumber = 2
+    } else if (
+      liveIndicator.includes('fase 1') ||
+      liveIndicator.includes('alineamiento') ||
+      liveIndicator.includes('dag') ||
+      liveIndicator.includes('planificación')
+    ) {
+      activeLivePhaseNumber = 1
+    } else if (liveIndicator.includes('fase 0') || liveIndicator.includes('descubrimiento')) {
+      activeLivePhaseNumber = 0
+    }
+  }
+
+  // Estado Fase 0
+  let p0Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP0Done || activeLivePhaseNumber > 0) {
+    p0Status = 'completed'
+  } else if (isPhase0Waiting) {
+    p0Status = 'waiting'
+  } else if (running && (activeLivePhaseNumber === 0 || activeLivePhaseNumber === -1)) {
+    p0Status = 'active'
+  }
+
+  // Estado Fase 1
+  let p1Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP1Done || activeLivePhaseNumber > 1) {
+    p1Status = 'completed'
+  } else if (activeLivePhaseNumber === 1 || (running && hasP0Done && !hasP1Done && activeLivePhaseNumber <= 1)) {
+    p1Status = 'active'
+  } else if (hasP0Done && !hasP1Done && !running) {
+    p1Status = allText.includes('Fase 1: Alineamiento') ? 'completed' : 'pending'
+  }
+
+  // Estado Fase 2
+  let p2Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP2Done || activeLivePhaseNumber > 2) {
+    p2Status = 'completed'
+  } else if (activeLivePhaseNumber === 2 || (running && hasP1Done && !hasP2Done && activeLivePhaseNumber <= 2)) {
+    p2Status = 'active'
+  }
+
+  // Estado Fase 3
+  let p3Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP3Done || activeLivePhaseNumber > 3) {
+    p3Status = 'completed'
+  } else if (activeLivePhaseNumber === 3 || (running && hasP2Done && !hasP3Done && activeLivePhaseNumber <= 3)) {
+    p3Status = 'active'
+  }
+
+  // Estado Fase 4
+  let p4Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP4Done || activeLivePhaseNumber > 4) {
+    p4Status = 'completed'
+  } else if (isPhase4Waiting) {
+    p4Status = 'waiting'
+  } else if (activeLivePhaseNumber === 4 || (running && hasP3Done && !hasP4Done && activeLivePhaseNumber <= 4)) {
+    p4Status = 'active'
+  }
+
+  // Estado Fase 5
+  let p5Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP5Done || activeLivePhaseNumber > 5) {
+    p5Status = 'completed'
+  } else if (activeLivePhaseNumber === 5) {
+    p5Status = 'active'
+  }
+
+  // Estado Fase 6
+  let p6Status: PhaseLifecycleStatus = 'pending'
+  if (isCompleted || hasP6Done) {
+    p6Status = 'completed'
+  } else if (activeLivePhaseNumber === 6 || (running && hasP4Done && !isCompleted)) {
+    p6Status = 'active'
+  }
+
+  return [
+    { id: 0, label: '0. Descubrimiento', sublabel: 'HITL 1', status: p0Status },
+    { id: 1, label: '1. Estrategia & Plan', sublabel: 'DAG', status: p1Status },
+    { id: 2, label: '2. Diseño & Gatekeeper', sublabel: 'Clean Arch', status: p2Status },
+    { id: 3, label: '3. Construcción & Unit', sublabel: 'Sandbox JS', status: p3Status },
+    { id: 4, label: '4. E2E & Negocio', sublabel: 'HITL 2', status: p4Status },
+    { id: 5, label: '5. Resiliencia', sublabel: 'RCA / Deuda', status: p5Status },
+    { id: 6, label: '6. Cierre & Docs', sublabel: 'doc/ y src/', status: p6Status },
+  ]
+}
+
+export function renderLifecycleStepperHtml(phases: SdlcPhaseItem[]): string {
+  return phases
+    .map((p, idx) => {
+      let badgeStyle = ''
+      let icon = ''
+      switch (p.status) {
+        case 'completed':
+          badgeStyle =
+            'border-emerald-500/50 bg-emerald-500/10 text-emerald-400 font-semibold shadow-sm'
+          icon = heroIcon('check', 'h-3.5 w-3.5 text-emerald-400 shrink-0 inline-block mr-1')
+          break
+        case 'active':
+          badgeStyle =
+            'border-2 border-primary bg-primary/20 text-primary font-bold shadow-md shadow-primary/25 animate-pulse'
+          icon =
+            '<span class="inline-block h-2 w-2 rounded-full bg-primary animate-ping mr-1.5 shrink-0"></span>'
+          break
+        case 'waiting':
+          badgeStyle =
+            'border-2 border-amber-500 bg-amber-500/20 text-amber-300 font-bold shadow-md shadow-amber-500/30 animate-pulse'
+          icon = heroIcon('exclamation-triangle', 'h-3.5 w-3.5 text-amber-300 shrink-0 inline-block mr-1')
+          break
+        case 'pending':
+        default:
+          badgeStyle = 'border-border-default/60 bg-bg-card/40 text-text-muted/60'
+          icon = '<span class="inline-block h-1.5 w-1.5 rounded-full bg-text-muted/30 mr-1.5 shrink-0"></span>'
+          break
+      }
+
+      const arrow =
+        idx < phases.length - 1
+          ? `<span class="shrink-0 text-xs ${
+              p.status === 'completed'
+                ? 'text-emerald-500/80 font-bold'
+                : p.status === 'active'
+                  ? 'text-primary font-bold'
+                  : 'text-text-muted/30'
+            }">→</span>`
+          : ''
+
+      return `
+        <div class="flex items-center gap-2 shrink-0">
+          <div class="inline-flex items-center rounded-lg border px-2.5 py-1 text-[11px] transition-all duration-300 ${badgeStyle}" title="${p.sublabel}">
+            ${icon}
+            <span class="whitespace-nowrap">${p.label}</span>
+          </div>
+          ${arrow}
+        </div>
+      `
+    })
+    .join('')
+}
+
+export function updateLifecycleStepperInDom(
+  root: HTMLElement,
+  sessionId: number,
+  livePhase?: string,
+): void {
+  const container = root.querySelector<HTMLElement>('#sdlc-lifecycle-stepper')
+  if (!container) return
+
+  const running = isSessionRunning(sessionId)
+  const thinkingState = getSessionThinkingState(sessionId)
+
+  const messageNodes = root.querySelectorAll<HTMLElement>('[data-message-role]')
+  const messageTexts: StoredChatMessage[] = Array.from(messageNodes).map((node) => ({
+    role: (node.dataset.messageRole as any) || 'assistant',
+    content: node.dataset.messageContent || node.textContent || '',
+    sessionId,
+    createdAt: new Date().toISOString(),
+  }))
+
+  const headerStatusEl = root.querySelector('#session-title-header')?.parentElement
+  const isCompleted = headerStatusEl?.textContent?.includes('Completado') ?? false
+
+  const phases = computeSdlcPhasesState({
+    sessionStatus: isCompleted
+      ? SessionStatus.COMPLETED
+      : running
+        ? SessionStatus.RUNNING
+        : SessionStatus.IDLE,
+    turnsUsed: messageTexts.length,
+    messages: messageTexts,
+    running,
+    isThinking: Boolean(thinkingState?.isThinking),
+    thinkingPhase: thinkingState?.phase,
+    thinkingThought: thinkingState?.thought,
+    liveStreamPhase: livePhase,
+  })
+
+  container.innerHTML = renderLifecycleStepperHtml(phases)
+}
+
+interface QueuedChunk {
+  sessionId: number
+  contentSoFar: string
+  delta: string
+  thought?: string
+  phase?: string
+  receivedAt: number
+}
+
+/**
+ * Cola de Streaming selectiva que acumula los deltas de SSE y actualiza
+ * el DOM cada 1000 ms de forma quirúrgica sin alterar la responsividad general.
+ */
+class StreamingQueueBatcher {
+  private latestChunk: QueuedChunk | null = null
+  private timer: any = null
+  private root: HTMLElement | null = null
+  private sessionId = 0
+  private isDirty = false
+  private readonly INTERVAL_MS = 1000
+
+  start(sessionId: number, root: HTMLElement) {
+    this.stop()
+    this.sessionId = sessionId
+    this.root = root
+    this.latestChunk = null
+    this.isDirty = false
+
+    this.timer = setInterval(() => {
+      this.flush()
+    }, this.INTERVAL_MS)
+  }
+
+  enqueue(chunk: AgentStreamChunkEvent) {
+    if (chunk.sessionId !== this.sessionId) return
+    this.latestChunk = {
+      ...chunk,
+      receivedAt: Date.now(),
+    }
+    this.isDirty = true
+  }
+
+  flush() {
+    if (!this.isDirty || !this.latestChunk || !this.root) return
+    this.isDirty = false
+    this.applySelectiveDomUpdate(this.latestChunk)
+  }
+
+  private applySelectiveDomUpdate(chunk: QueuedChunk) {
+    if (!this.root) return
+    const scrollContainer = this.root.querySelector<HTMLElement>('#chat-messages-scroll')
+    if (!scrollContainer) return
+
+    let bubble = scrollContainer.querySelector<HTMLElement>(`#live-streaming-bubble-${this.sessionId}`)
+    if (!bubble) {
+      bubble = document.createElement('div')
+      bubble.id = `live-streaming-bubble-${this.sessionId}`
+      bubble.className =
+        'max-w-3xl w-full rounded-2xl border border-primary/40 bg-bg-card p-6 text-xs text-text-primary shadow-lg space-y-3 transition-all'
+      bubble.innerHTML = `
+        <div class="flex items-center justify-between border-b border-border-default pb-2.5">
+          <div class="flex items-center gap-2">
+            <span class="flex h-2.5 w-2.5 rounded-full bg-primary animate-ping"></span>
+            <span id="stream-phase-title" class="font-display text-xs font-bold text-primary">Conectando con Modelo LLM...</span>
+          </div>
+          <span class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">Cola Streaming (1000ms Selectivo)</span>
+        </div>
+        <div id="stream-thought-box" class="hidden rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
+          <div class="font-semibold text-primary mb-1 select-none">Razonamiento del Modelo (&lt;think&gt;)</div>
+          <pre class="font-mono text-[10px] text-text-muted whitespace-pre-wrap"></pre>
+        </div>
+        <div id="stream-content-box" class="leading-relaxed space-y-2 text-text-secondary"></div>
+      `
+      const thinkingPill = scrollContainer.querySelector(`[data-thinking-pill="${this.sessionId}"]`)
+      if (thinkingPill) {
+        scrollContainer.insertBefore(bubble, thinkingPill)
+      } else {
+        scrollContainer.appendChild(bubble)
+      }
+    }
+
+    if (chunk.phase) {
+      const titleEl = bubble.querySelector<HTMLElement>('#stream-phase-title')
+      if (titleEl) titleEl.textContent = `${chunk.phase}...`
+    }
+
+    if (chunk.thought && chunk.thought.trim()) {
+      const thoughtBox = bubble.querySelector<HTMLElement>('#stream-thought-box')
+      const thoughtPre = thoughtBox?.querySelector<HTMLElement>('pre')
+      if (thoughtBox && thoughtPre) {
+        thoughtBox.classList.remove('hidden')
+        thoughtPre.textContent = chunk.thought
+      }
+    }
+
+    const contentBox = bubble.querySelector<HTMLElement>('#stream-content-box')
+    if (contentBox && chunk.contentSoFar) {
+      contentBox.innerHTML = renderFormattedMarkdown(chunk.contentSoFar)
+    }
+
+    // Scroll suave solo si el usuario no ha subido intencionalmente
+    const isNearBottom =
+      scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 180
+    if (isNearBottom) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight
+    }
+
+    // Actualizar selectivamente el stepper del ciclo de vida conforme avanza el proceso
+    if (chunk.phase) {
+      updateLifecycleStepperInDom(this.root, this.sessionId, chunk.phase)
+    }
+  }
+
+  stop() {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+    if (this.isDirty && this.latestChunk && this.root) {
+      this.flush()
+    }
+  }
 }
 
 export async function renderWorkspaceScreen(
@@ -544,31 +953,23 @@ export async function renderWorkspaceScreen(
           </div>
         </header>
 
-        <!-- Sub-header: Contexto & Stepper de Fases SDLC Progresivo -->
+        <!-- Sub-header: Contexto & Stepper de Fases SDLC Progresivo Dinámico -->
         <div class="border-b border-border-default bg-bg-app px-8 py-3 space-y-2">
           <p class="text-xs text-text-muted font-medium">
             ${escapeHtml(session.goal || 'Ciclo de Vida de Software Guiado por Árbol de Habilidades y Arquitectura Empresarial')}
           </p>
-          <div class="flex items-center gap-2 overflow-x-auto text-[11px] font-medium text-text-muted">
-            <span class="px-2.5 py-1 rounded-md border border-border-default ${isPhase0Waiting ? 'bg-bg-card text-text-primary font-semibold shadow-sm' : 'text-text-muted'}">
-              0. Descubrimiento
-            </span>
-            <span>→</span>
-            <span class="px-2 py-1 rounded-md ${session.turnsUsed >= 1 && !isPhase0Waiting && !isPhase4Waiting ? 'bg-bg-card text-text-primary font-semibold' : 'text-text-muted'}">
-              1. Estrategia & Plan
-            </span>
-            <span>→</span>
-            <span class="px-2 py-1 rounded-md text-text-muted">2. Diseño & Gatekeeper</span>
-            <span>→</span>
-            <span class="px-2 py-1 rounded-md text-text-muted">3. Construcción & Unit</span>
-            <span>→</span>
-            <span class="px-2 py-1 rounded-md ${isPhase4Waiting ? 'bg-warning/20 text-warning font-semibold border border-warning/30 animate-pulse' : 'text-text-muted'}">
-              4. E2E & Negocio (HITL)
-            </span>
-            <span>→</span>
-            <span class="px-2 py-1 rounded-md ${session.status === SessionStatus.COMPLETED ? 'bg-success/20 text-success font-semibold' : 'text-text-muted'}">
-              5. Cierre & Docs
-            </span>
+          <div id="sdlc-lifecycle-stepper" class="flex items-center gap-2 overflow-x-auto text-[11px] font-medium py-1 scrollbar-none">
+            ${renderLifecycleStepperHtml(
+              computeSdlcPhasesState({
+                sessionStatus: session.status,
+                turnsUsed: session.turnsUsed,
+                messages: visibleMessages,
+                running,
+                isThinking: Boolean(thinkingState?.isThinking),
+                thinkingPhase: thinkingState?.phase,
+                thinkingThought: thinkingState?.thought,
+              }),
+            )}
           </div>
         </div>
 
@@ -961,8 +1362,21 @@ export async function renderWorkspaceScreen(
             ${
               files.length > 0
                 ? files
-                    .map(
-                      (f) => `
+                    .map((f) => {
+                      const isDoc = f.path.startsWith('doc/') || f.path.endsWith('.md')
+                      const isSrc = f.path.startsWith('src/')
+                      const icon = isDoc
+                        ? heroIcon('book-open', 'h-3.5 w-3.5 shrink-0 text-amber-400')
+                        : isSrc
+                          ? heroIcon('code-bracket', 'h-3.5 w-3.5 shrink-0 text-cyan-400')
+                          : heroIcon('document-text', 'h-3.5 w-3.5 shrink-0 text-text-muted')
+                      const badge = isDoc
+                        ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">DOC</span>'
+                        : isSrc
+                          ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">SRC</span>'
+                          : ''
+
+                      return `
                       <button
                         data-open-file="${escapeHtml(f.path)}"
                         class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left font-mono text-xs transition ${
@@ -971,16 +1385,17 @@ export async function renderWorkspaceScreen(
                             : 'text-text-secondary hover:bg-bg-elevated hover:text-text-primary'
                         }"
                       >
-                        ${heroIcon('document-text', 'h-3.5 w-3.5 shrink-0 text-text-muted')}
+                        ${icon}
                         <span class="truncate">${escapeHtml(f.path)}</span>
+                        ${badge}
                       </button>
-                    `,
-                    )
+                    `
+                    })
                     .join('')
                 : `
                   <div class="rounded-xl border border-dashed border-border-default p-4 text-center">
                     <p class="text-xs font-semibold text-text-primary">No hay archivos en workspace</p>
-                    <p class="mt-1 text-[11px] text-text-muted">Los componentes generados aparecerán aquí.</p>
+                    <p class="mt-1 text-[11px] text-text-muted">Los componentes y documentación generados aparecerán aquí.</p>
                   </div>
                 `
             }
@@ -1278,6 +1693,7 @@ export async function renderWorkspaceScreen(
     // 2. Construir objeto estructurado de los 3 pasos
     const phase0ThreeStepPayload: Phase0ThreeStepData = {
       step1: {
+        featureTitle: p0State.featureTitle,
         rawBusinessLanguageText: p0State.rawBusinessLanguageText,
         needsList: p0State.needsList.filter((n) => n.description.trim().length > 0),
       },
@@ -1333,6 +1749,7 @@ export async function renderWorkspaceScreen(
         .join('\n')
 
     // 4. Reanudar el ciclo agéntico con la especificación completa
+    activeStreamBatcher?.stop()
     void runAgentSessionTurn(sessionId, promptMessage, phase0ThreeStepPayload)
     await renderWorkspaceScreen(root, sessionId, rerender)
   }
@@ -1343,11 +1760,13 @@ export async function renderWorkspaceScreen(
 
   // Submit interactivo HITL 2: FASE 4 (Aprobación Formal)
   root.querySelector<HTMLButtonElement>('#hitl-approve-btn')?.addEventListener('click', async () => {
+    activeStreamBatcher?.stop()
     void runAgentSessionTurn(sessionId, 'Aprobación formal de negocio concedida.')
     await renderWorkspaceScreen(root, sessionId, rerender)
   })
 
   root.querySelector<HTMLButtonElement>('#hitl-reject-btn')?.addEventListener('click', async () => {
+    activeStreamBatcher?.stop()
     void runAgentSessionTurn(sessionId, 'Rechazo de negocio: Activar análisis de causa raíz (RCA).')
     await renderWorkspaceScreen(root, sessionId, rerender)
   })
@@ -1359,71 +1778,45 @@ export async function renderWorkspaceScreen(
     const text = input?.value.trim() ?? ''
     if (!text) return
     input!.value = ''
+    activeStreamBatcher?.stop()
     void runAgentSessionTurn(sessionId, text)
     void renderWorkspaceScreen(root, sessionId, rerender)
   })
 
   // Botón detener ejecución
   root.querySelector<HTMLButtonElement>('#stop-agent-btn')?.addEventListener('click', () => {
+    activeStreamBatcher?.stop()
     cancelAgentSession(sessionId)
     void renderWorkspaceScreen(root, sessionId, rerender)
   })
 
-  // Suscripción a Streaming SSE en vivo del LLM
+  // Iniciar / reactivar la cola selectiva de Streaming SSE (1000 ms)
+  if (!activeStreamBatcher) {
+    activeStreamBatcher = new StreamingQueueBatcher()
+  }
+  activeStreamBatcher.start(sessionId, root)
+
+  // Suscripción a Streaming SSE en vivo del LLM acumulando en cola cada 1000ms
   activeStreamListener?.()
   activeStreamListener = onAgentStreamChunk((evt) => {
     if (evt.sessionId !== sessionId) return
-    const scrollContainer = root.querySelector<HTMLElement>('#chat-messages-scroll')
-    if (!scrollContainer) return
+    activeStreamBatcher?.enqueue(evt)
+  })
 
-    let bubble = scrollContainer.querySelector<HTMLElement>(`#live-streaming-bubble-${sessionId}`)
-    if (!bubble) {
-      bubble = document.createElement('div')
-      bubble.id = `live-streaming-bubble-${sessionId}`
-      bubble.className =
-        'max-w-3xl w-full rounded-2xl border border-primary/40 bg-bg-card p-6 text-xs text-text-primary shadow-lg space-y-3 transition-all'
-      bubble.innerHTML = `
-        <div class="flex items-center justify-between border-b border-border-default pb-2.5">
-          <div class="flex items-center gap-2">
-            <span class="flex h-2.5 w-2.5 rounded-full bg-primary animate-ping"></span>
-            <span id="stream-phase-title" class="font-display text-xs font-bold text-primary">Conectando con Modelo LLM...</span>
-          </div>
-          <span class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">Streaming SSE</span>
-        </div>
-        <div id="stream-thought-box" class="hidden rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
-          <div class="font-semibold text-primary mb-1 select-none">Razonamiento del Modelo (&lt;think&gt;)</div>
-          <pre class="font-mono text-[10px] text-text-muted whitespace-pre-wrap"></pre>
-        </div>
-        <div id="stream-content-box" class="leading-relaxed space-y-2 text-text-secondary"></div>
-      `
-      const thinkingPill = scrollContainer.querySelector(`[data-thinking-pill="${sessionId}"]`)
-      if (thinkingPill) {
-        scrollContainer.insertBefore(bubble, thinkingPill)
-      } else {
-        scrollContainer.appendChild(bubble)
-      }
+  // Suscripción a Thinking del agente para actualizar el stepper y el banner de estado
+  activeThinkingListener?.()
+  activeThinkingListener = onAgentThinking((state) => {
+    if (state.sessionId !== sessionId) return
+    const pill = root.querySelector(`[data-thinking-pill="${sessionId}"]`)
+    if (pill) {
+      pill.classList.toggle('hidden', !state.isThinking)
+      pill.classList.toggle('flex', state.isThinking)
     }
-
-    if (evt.phase) {
-      const titleEl = bubble.querySelector<HTMLElement>('#stream-phase-title')
-      if (titleEl) titleEl.textContent = `${evt.phase}...`
+    const text = root.querySelector(`[data-thinking-text="${sessionId}"]`)
+    if (text) {
+      text.textContent = state.thought
     }
-
-    if (evt.thought && evt.thought.trim()) {
-      const thoughtBox = bubble.querySelector<HTMLElement>('#stream-thought-box')
-      const thoughtPre = thoughtBox?.querySelector<HTMLElement>('pre')
-      if (thoughtBox && thoughtPre) {
-        thoughtBox.classList.remove('hidden')
-        thoughtPre.textContent = evt.thought
-      }
-    }
-
-    const contentBox = bubble.querySelector<HTMLElement>('#stream-content-box')
-    if (contentBox && evt.contentSoFar) {
-      contentBox.innerHTML = renderFormattedMarkdown(evt.contentSoFar)
-    }
-
-    scrollContainer.scrollTop = scrollContainer.scrollHeight
+    updateLifecycleStepperInDom(root, sessionId, state.thought)
   })
 }
 
