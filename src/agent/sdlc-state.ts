@@ -78,6 +78,7 @@ export interface ComponentNode {
   name: string
   description: string
   targetPath?: string
+  targetState?: 'DESIRED' | 'TRANSITION'
   /** IDs de componentes que deben estar en estado VERIFIED antes de poder iniciar este componente (Fin-Inicio) */
   dependsOn: string[]
   status:

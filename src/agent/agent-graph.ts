@@ -39,6 +39,13 @@ export interface AgentLoopCallbacks {
     maxTurns?: number
     tokensUsed?: number
   }) => void
+  onStreamChunk?: (chunk: {
+    sessionId: number
+    contentSoFar: string
+    delta: string
+    thought?: string
+    phase?: string
+  }) => void
   onStepUpdate?: (sessionId: number) => void
   onProposalCreated?: (proposalId: number, path: string) => void
   signal?: AbortSignal
@@ -50,11 +57,15 @@ export function registerSessionCallbacks(sessionId: number, callbacks: AgentLoop
   activeCallbacks.set(sessionId, callbacks)
 }
 
+export function getSessionCallbacks(sessionId: number): AgentLoopCallbacks | undefined {
+  return activeCallbacks.get(sessionId)
+}
+
 export function unregisterSessionCallbacks(sessionId: number): void {
   activeCallbacks.delete(sessionId)
 }
 
-function getEngramToolSpecs(): OpenAiToolSpec[] {
+export function getEngramToolSpecs(): OpenAiToolSpec[] {
   return [
     {
       type: 'function',
@@ -317,6 +328,22 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
         turnsUsed: state.turnsUsed + 1,
         maxTurns: state.maxTurns,
         tokensUsed: state.tokensUsed,
+      })
+      callbacks?.onStreamChunk?.({
+        sessionId: state.sessionId,
+        contentSoFar: '',
+        delta: '',
+        thought,
+        phase: 'Pensando',
+      })
+    },
+    onContentDelta: (contentSoFar, delta) => {
+      callbacks?.onStreamChunk?.({
+        sessionId: state.sessionId,
+        contentSoFar,
+        delta,
+        thought: undefined,
+        phase: 'Generando respuesta',
       })
     },
     signal,

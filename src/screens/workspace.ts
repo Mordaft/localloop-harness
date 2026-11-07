@@ -3,6 +3,8 @@ import { SessionStatus } from '../enums'
 import {
   getWorkspaceDirectoryHandle,
   listWorkspaceFiles,
+  pickWorkspaceDirectory,
+  readWorkspaceFile,
   restoreSavedWorkspaceDirectory,
 } from '../fs/workspace-fs'
 import { t, translateStatus } from '../i18n'
@@ -16,13 +18,16 @@ import {
   cancelAgentSession,
   getSessionThinkingState,
   isSessionRunning,
+  onAgentStreamChunk,
   runAgentSessionTurn,
+  syncWorkerEnvironment,
 } from '../worker/agent-bridge'
 import { bindLangToggle, renderLangToggle, renderSidebar, statusClass, toggleTheme } from './shared'
 import type { Phase0ThreeStepData, SolutionComponentMapping } from '../agent/sdlc-state'
 
 let isFileDrawerOpen = false
 let selectedFilePath = ''
+let activeStreamListener: (() => void) | undefined
 
 // Estado del Wizard de 3 Pasos de la Fase 0
 let phase0SubStep = 1
@@ -941,9 +946,15 @@ export async function renderWorkspaceScreen(
                 ${handle ? escapeHtml(handle.name) : 'Explorador de Archivos'}
               </span>
             </div>
-            <button id="close-files-drawer-btn" class="rounded-lg p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary">
-              ${heroIcon('x-mark', 'h-4 w-4')}
-            </button>
+            <div class="flex items-center gap-1.5">
+              <button id="btn-link-workspace-dir" class="inline-flex items-center gap-1 rounded-md border border-border-default bg-bg-app px-2 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition" title="Vincular carpeta física del disco local">
+                ${heroIcon('folder-open', 'h-3 w-3 text-primary')}
+                <span>${handle ? 'Cambiar' : 'Vincular'}</span>
+              </button>
+              <button id="close-files-drawer-btn" class="rounded-lg p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary">
+                ${heroIcon('x-mark', 'h-4 w-4')}
+              </button>
+            </div>
           </div>
 
           <div class="flex-1 overflow-y-auto p-3 space-y-1">
@@ -1000,6 +1011,89 @@ export async function renderWorkspaceScreen(
       drawer.classList.add('translate-x-full')
       drawer.classList.remove('translate-x-0')
     }
+  })
+
+  // Vincular carpeta física del disco local desde el drawer
+  root.querySelector<HTMLButtonElement>('#btn-link-workspace-dir')?.addEventListener('click', async () => {
+    try {
+      await pickWorkspaceDirectory()
+      syncWorkerEnvironment()
+      void renderWorkspaceScreen(root, sessionId, rerender)
+    } catch (err) {
+      console.warn('Vincular carpeta cancelado o error:', err)
+    }
+  })
+
+  // Visualizador e Inspector de Archivos del Workspace
+  root.querySelectorAll<HTMLButtonElement>('[data-open-file]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const path = btn.getAttribute('data-open-file')
+      if (!path) return
+      try {
+        const fileData = await readWorkspaceFile(path)
+        selectedFilePath = path
+
+        let viewerDialog = document.getElementById('workspace-file-viewer-dialog') as HTMLDialogElement | null
+        if (!viewerDialog) {
+          viewerDialog = document.createElement('dialog')
+          viewerDialog.id = 'workspace-file-viewer-dialog'
+          viewerDialog.className =
+            'fixed inset-0 z-50 m-auto max-w-4xl w-[90vw] max-h-[85vh] rounded-2xl border border-border-default bg-bg-card p-6 shadow-2xl backdrop:bg-black/60 text-text-primary flex flex-col'
+          document.body.appendChild(viewerDialog)
+        }
+
+        viewerDialog.innerHTML = `
+          <div class="flex items-center justify-between border-b border-border-default pb-3 shrink-0">
+            <div class="flex items-center gap-2.5 min-w-0">
+              ${heroIcon('document-text', 'h-5 w-5 text-primary shrink-0')}
+              <h3 class="font-mono text-sm font-bold truncate text-text-primary">${escapeHtml(path)}</h3>
+              <span class="rounded bg-bg-app px-2 py-0.5 font-mono text-[10px] text-text-muted">${fileData.totalLines} líneas</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="copy-file-content-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-3 py-1.5 text-xs font-semibold text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition">
+                <span>📋 Copiar</span>
+              </button>
+              <button id="download-file-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-3 py-1.5 text-xs font-semibold text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition">
+                <span>⬇️ Descargar</span>
+              </button>
+              <button id="close-file-viewer-btn" class="rounded-lg p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary">
+                ${heroIcon('x-mark', 'h-4 w-4')}
+              </button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-auto mt-4 rounded-xl border border-border-default bg-bg-app p-4">
+            <pre class="font-mono text-xs text-text-secondary whitespace-pre-wrap leading-relaxed select-text">${escapeHtml(fileData.numberedContent)}</pre>
+          </div>
+        `
+
+        viewerDialog.querySelector('#copy-file-content-btn')?.addEventListener('click', async () => {
+          await navigator.clipboard.writeText(fileData.content)
+          const copyBtn = viewerDialog!.querySelector('#copy-file-content-btn')!
+          copyBtn.innerHTML = '<span>✓ Copiado</span>'
+          setTimeout(() => {
+            copyBtn.innerHTML = '<span>📋 Copiar</span>'
+          }, 2000)
+        })
+
+        viewerDialog.querySelector('#download-file-btn')?.addEventListener('click', () => {
+          const blob = new Blob([fileData.content], { type: 'text/plain' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = path.split('/').pop() || 'file.txt'
+          a.click()
+          URL.revokeObjectURL(url)
+        })
+
+        viewerDialog.querySelector('#close-file-viewer-btn')?.addEventListener('click', () => {
+          viewerDialog!.close()
+        })
+
+        viewerDialog.showModal()
+      } catch (err) {
+        console.error('Error al abrir archivo:', err)
+      }
+    })
   })
 
   // -----------------------------------------------------------------------------------
@@ -1273,6 +1367,63 @@ export async function renderWorkspaceScreen(
   root.querySelector<HTMLButtonElement>('#stop-agent-btn')?.addEventListener('click', () => {
     cancelAgentSession(sessionId)
     void renderWorkspaceScreen(root, sessionId, rerender)
+  })
+
+  // Suscripción a Streaming SSE en vivo del LLM
+  activeStreamListener?.()
+  activeStreamListener = onAgentStreamChunk((evt) => {
+    if (evt.sessionId !== sessionId) return
+    const scrollContainer = root.querySelector<HTMLElement>('#chat-messages-scroll')
+    if (!scrollContainer) return
+
+    let bubble = scrollContainer.querySelector<HTMLElement>(`#live-streaming-bubble-${sessionId}`)
+    if (!bubble) {
+      bubble = document.createElement('div')
+      bubble.id = `live-streaming-bubble-${sessionId}`
+      bubble.className =
+        'max-w-3xl w-full rounded-2xl border border-primary/40 bg-bg-card p-6 text-xs text-text-primary shadow-lg space-y-3 transition-all'
+      bubble.innerHTML = `
+        <div class="flex items-center justify-between border-b border-border-default pb-2.5">
+          <div class="flex items-center gap-2">
+            <span class="flex h-2.5 w-2.5 rounded-full bg-primary animate-ping"></span>
+            <span id="stream-phase-title" class="font-display text-xs font-bold text-primary">Conectando con Modelo LLM...</span>
+          </div>
+          <span class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">Streaming SSE</span>
+        </div>
+        <div id="stream-thought-box" class="hidden rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
+          <div class="font-semibold text-primary mb-1 select-none">Razonamiento del Modelo (&lt;think&gt;)</div>
+          <pre class="font-mono text-[10px] text-text-muted whitespace-pre-wrap"></pre>
+        </div>
+        <div id="stream-content-box" class="leading-relaxed space-y-2 text-text-secondary"></div>
+      `
+      const thinkingPill = scrollContainer.querySelector(`[data-thinking-pill="${sessionId}"]`)
+      if (thinkingPill) {
+        scrollContainer.insertBefore(bubble, thinkingPill)
+      } else {
+        scrollContainer.appendChild(bubble)
+      }
+    }
+
+    if (evt.phase) {
+      const titleEl = bubble.querySelector<HTMLElement>('#stream-phase-title')
+      if (titleEl) titleEl.textContent = `${evt.phase}...`
+    }
+
+    if (evt.thought && evt.thought.trim()) {
+      const thoughtBox = bubble.querySelector<HTMLElement>('#stream-thought-box')
+      const thoughtPre = thoughtBox?.querySelector<HTMLElement>('pre')
+      if (thoughtBox && thoughtPre) {
+        thoughtBox.classList.remove('hidden')
+        thoughtPre.textContent = evt.thought
+      }
+    }
+
+    const contentBox = bubble.querySelector<HTMLElement>('#stream-content-box')
+    if (contentBox && evt.contentSoFar) {
+      contentBox.innerHTML = renderFormattedMarkdown(evt.contentSoFar)
+    }
+
+    scrollContainer.scrollTop = scrollContainer.scrollHeight
   })
 }
 

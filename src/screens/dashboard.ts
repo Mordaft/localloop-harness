@@ -118,13 +118,12 @@ function renderSessionCard(session: AgentSession): string {
           </div>
 
           <div class="flex items-center gap-1.5">
-            ${
-              isCompleted && !running
-                ? `<button data-reopen-session="${id}" class="rounded-lg border border-border-default bg-bg-app px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:border-primary/40 hover:text-primary" title="${i18n.common.reopen}">
+            ${isCompleted && !running
+      ? `<button data-reopen-session="${id}" class="rounded-lg border border-border-default bg-bg-app px-2.5 py-1.5 text-xs font-medium text-text-secondary transition hover:border-primary/40 hover:text-primary" title="${i18n.common.reopen}">
                     ${i18n.common.reopen}
                   </button>`
-                : ''
-            }
+      : ''
+    }
             <button
               data-delete-session="${id}"
               class="rounded-lg border border-border-default bg-bg-app p-1.5 text-text-muted transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-500"
@@ -180,7 +179,7 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
               ${heroIcon('folder-open', 'h-4 w-4 text-primary')}
               <span>${handle ? `${i18n.sessions.workspaceLinked}: ${handle.name}` : i18n.sessions.selectWorkspaceBtn}</span>
             </button>
-            <button id="new-session-btn" class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-primary/25 transition hover:opacity-95">
+            <button id="new-session-btn" class="inline-flex items-center gap-2 rounded-lg border border-border-default bg-bg-card px-3.5 py-2 text-xs font-semibold text-text-primary transition hover:border-primary/40 hover:bg-bg-elevated">
               ${heroIcon('plus', 'h-4 w-4')}
               <span>${i18n.sessions.newSession}</span>
             </button>
@@ -217,18 +216,16 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
 
           <section class="flex items-center justify-between border-b border-border-default pb-3">
             <div class="flex items-center gap-2">
-              <button data-tab="active" class="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-                currentTab === 'active'
-                  ? 'bg-primary text-white'
-                  : 'bg-bg-card text-text-secondary hover:bg-bg-elevated'
-              }">
+              <button data-tab="active" class="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${currentTab === 'active'
+      ? 'bg-primary text-white'
+      : 'bg-bg-card text-text-secondary hover:bg-bg-elevated'
+    }">
                 ${i18n.sessions.tabs.active} (${activeList.length})
               </button>
-              <button data-tab="completed" class="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-                currentTab === 'completed'
-                  ? 'bg-primary text-white'
-                  : 'bg-bg-card text-text-secondary hover:bg-bg-elevated'
-              }">
+              <button data-tab="completed" class="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${currentTab === 'completed'
+      ? 'bg-primary text-white'
+      : 'bg-bg-card text-text-secondary hover:bg-bg-elevated'
+    }">
                 ${i18n.sessions.tabs.completed} (${completedList.length})
               </button>
             </div>
@@ -238,10 +235,9 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
           </section>
 
           <section class="grid grid-cols-1 gap-4 md:grid-cols-2">
-            ${
-              visibleSessions.length > 0
-                ? visibleSessions.map((s) => renderSessionCard(s)).join('')
-                : `
+            ${visibleSessions.length > 0
+      ? visibleSessions.map((s) => renderSessionCard(s)).join('')
+      : `
                   <div class="col-span-full rounded-2xl border border-dashed border-border-default bg-bg-card/50 p-10 text-center">
                     <p class="font-display text-base font-semibold text-text-primary">
                       ${currentTab === 'completed' ? i18n.sessions.empty.completedTitle : i18n.sessions.empty.activeTitle}
@@ -251,7 +247,7 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
                     </p>
                   </div>
                 `
-            }
+    }
           </section>
         </main>
 

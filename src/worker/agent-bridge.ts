@@ -14,8 +14,19 @@ import {
 type ProgressListener = (sessionId: number) => void
 type ThinkingListener = (state: AgentThinkingState) => void
 
+export interface AgentStreamChunkEvent {
+  sessionId: number
+  contentSoFar: string
+  delta: string
+  thought?: string
+  phase?: string
+}
+
+type StreamChunkListener = (event: AgentStreamChunkEvent) => void
+
 const progressListeners = new Set<ProgressListener>()
 const thinkingListeners = new Set<ThinkingListener>()
+const streamChunkListeners = new Set<StreamChunkListener>()
 const thinkingStateBySession = new Map<number, AgentThinkingState>()
 const runningSessionsInUi = new Set<number>()
 
@@ -61,6 +72,18 @@ function getOrCreateWorker(): Worker | null {
         }
         case 'AGENT_THINKING': {
           updateThinkingState(msg.state)
+          break
+        }
+        case 'AGENT_STREAM_CHUNK': {
+          for (const listener of streamChunkListeners) {
+            listener({
+              sessionId: msg.sessionId,
+              contentSoFar: msg.contentSoFar,
+              delta: msg.delta,
+              thought: msg.thought,
+              phase: msg.phase,
+            })
+          }
           break
         }
         case 'AGENT_STEP_UPDATE':
@@ -139,6 +162,11 @@ export function onAgentProgress(listener: ProgressListener): () => void {
 export function onAgentThinking(listener: ThinkingListener): () => void {
   thinkingListeners.add(listener)
   return () => thinkingListeners.delete(listener)
+}
+
+export function onAgentStreamChunk(listener: StreamChunkListener): () => void {
+  streamChunkListeners.add(listener)
+  return () => streamChunkListeners.delete(listener)
 }
 
 export function getSessionThinkingState(sessionId: number): AgentThinkingState | undefined {

@@ -1,5 +1,5 @@
 import { trace } from '../diagnostics'
-import { getSavedWorkspaceHandle, saveWorkspaceHandle } from '../memory/app-db'
+import { getSavedWorkspaceHandle, listFileProposals, saveWorkspaceHandle } from '../memory/app-db'
 
 export interface WorkspaceFileEntry {
   path: string
@@ -117,11 +117,25 @@ export async function restoreSavedWorkspaceDirectory(): Promise<FileSystemDirect
 export async function listWorkspaceFiles(maxFiles = 200): Promise<WorkspaceFileEntry[]> {
   const handle = activeDirectoryHandle
   if (!handle) {
-    return [...virtualFileSystem.entries()].map(([path, content]) => ({
+    const fileMap = new Map<string, number>()
+    for (const [path, content] of virtualFileSystem.entries()) {
+      fileMap.set(path, content.length)
+    }
+    try {
+      const proposals = await listFileProposals()
+      for (const p of proposals) {
+        if (!fileMap.has(p.path)) {
+          fileMap.set(p.path, p.proposedContent.length)
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return [...fileMap.entries()].map(([path, size]) => ({
       path,
       name: path.split('/').pop() ?? path,
       extension: path.split('.').pop()?.toLowerCase() ?? 'txt',
-      size: content.length,
+      size,
     }))
   }
 
@@ -188,7 +202,17 @@ export async function readWorkspaceFile(
   } else if (virtualFileSystem.has(normalized)) {
     rawText = virtualFileSystem.get(normalized)!
   } else {
-    throw new Error(`El archivo "${normalized}" no existe en el workspace actual.`)
+    try {
+      const proposals = await listFileProposals()
+      const match = [...proposals].reverse().find((p) => p.path === normalized)
+      if (match) {
+        rawText = match.proposedContent
+      } else {
+        throw new Error(`El archivo "${normalized}" no existe en el workspace actual.`)
+      }
+    } catch {
+      throw new Error(`El archivo "${normalized}" no existe en el workspace actual.`)
+    }
   }
 
   const allLines = rawText.split('\n')

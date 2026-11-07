@@ -31,6 +31,7 @@ export interface AgentThinkingState {
 export interface SessionRunHooks {
   onThinking?: (state: AgentThinkingState) => void
   onStepUpdate?: (sessionId: number) => void
+  onStreamChunk?: (sessionId: number, contentSoFar: string, delta: string, thought?: string, phase?: string) => void
   onProposalCreated?: (sessionId: number, proposalId: number, path: string) => void
 }
 
@@ -110,6 +111,9 @@ export async function executeSessionTurn(
         updatedAt: Date.now(),
       })
     },
+    onStreamChunk: (chunk) => {
+      hooks.onStreamChunk?.(sessionId, chunk.contentSoFar, chunk.delta, chunk.thought, chunk.phase)
+    },
     onStepUpdate: (id) => {
       hooks.onStepUpdate?.(id)
     },
@@ -154,15 +158,18 @@ export async function executeSessionTurn(
         )
       }
 
-      const existingCount = storedMessages.length
+      const storedAfterInvoke = await listSessionMessages(sessionId)
+      const storedContents = new Set(storedAfterInvoke.map((m) => m.content.trim()))
       const graphMessages = finalState.messages || []
-      for (let i = existingCount; i < graphMessages.length; i++) {
-        const gm = graphMessages[i]
-        await appendSessionMessage({
-          sessionId,
-          role: gm.role,
-          content: gm.content,
-        })
+      for (const gm of graphMessages) {
+        if (gm.content && !storedContents.has(gm.content.trim())) {
+          await appendSessionMessage({
+            sessionId,
+            role: gm.role,
+            content: gm.content,
+          })
+          storedContents.add(gm.content.trim())
+        }
       }
 
       let resolvedStatus: SessionStatusType = SessionStatus.COMPLETED

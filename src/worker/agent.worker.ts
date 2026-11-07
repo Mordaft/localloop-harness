@@ -28,6 +28,14 @@ export type WorkerOutboundMessage =
   | { type: 'WORKER_READY' }
   | { type: 'AGENT_THINKING'; state: AgentThinkingState }
   | { type: 'AGENT_STEP_UPDATE'; sessionId: number }
+  | {
+      type: 'AGENT_STREAM_CHUNK'
+      sessionId: number
+      contentSoFar: string
+      delta: string
+      thought?: string
+      phase?: string
+    }
   | { type: 'PROPOSAL_CREATED'; sessionId: number; proposalId: number; path: string }
   | { type: 'AGENT_COMPLETED'; sessionId: number; status: number | string }
   | { type: 'AGENT_ERROR'; sessionId: number; error: string }
@@ -106,6 +114,15 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
           {
             onThinking: (state) => postOut({ type: 'AGENT_THINKING', state }),
             onStepUpdate: (id) => postOut({ type: 'AGENT_STEP_UPDATE', sessionId: id }),
+            onStreamChunk: (id, contentSoFar, delta, thought, phase) =>
+              postOut({
+                type: 'AGENT_STREAM_CHUNK',
+                sessionId: id,
+                contentSoFar,
+                delta,
+                thought,
+                phase,
+              }),
             onProposalCreated: (sId, proposalId, path) =>
               postOut({ type: 'PROPOSAL_CREATED', sessionId: sId, proposalId, path }),
           },
