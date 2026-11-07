@@ -1,6 +1,7 @@
 import { trace } from '../diagnostics'
 import { getWorkspaceDirectoryHandle } from '../fs/workspace-fs'
 import { getLlmConfig } from '../llm/llm-config'
+import { executeBrowserSandbox } from '../sandbox/browser-sandbox'
 import type { WorkerInboundMessage, WorkerOutboundMessage } from './agent.worker'
 import {
   abortRunningSession,
@@ -64,6 +65,20 @@ function getOrCreateWorker(): Worker | null {
         case 'AGENT_STEP_UPDATE':
         case 'PROPOSAL_CREATED': {
           notifyProgress(msg.sessionId)
+          break
+        }
+        case 'BROWSER_SANDBOX_REQUEST': {
+          void (async () => {
+            const result = await executeBrowserSandbox(msg.options)
+            postToWorker({
+              type: 'BROWSER_SANDBOX_RESPONSE',
+              requestId: msg.requestId,
+              result,
+            })
+            for (const sId of runningSessionsInUi) {
+              notifyProgress(sId)
+            }
+          })()
           break
         }
         case 'AGENT_COMPLETED':

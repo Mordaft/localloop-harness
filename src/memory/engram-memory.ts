@@ -20,6 +20,7 @@ export type AgentSkillName = 'skill_architect' | 'skill_coder' | 'skill_security
 export interface ScopeTaskDefinition {
   id_subtarea: string
   descripcion: string
+  prueba_aceptacion?: string
   skill_requerida?: AgentSkillName
   targetPath?: string
   lineStart?: number
@@ -38,6 +39,33 @@ export interface ScopeFinding {
   recommendation: string
 }
 
+export interface AtomicTestEvidence {
+  ejecutada: boolean
+  exito: boolean
+  modo: 'js_sandbox' | 'browser_iframe_sandbox'
+  logs: string[]
+  returnValue?: string
+  domSnapshot?: string
+  screenshotDataUrl?: string
+  error?: string
+  reporteAgente?: string
+  resumen: string
+}
+
+export interface AtomicTaskDeliverable {
+  tarea_realizada: string
+  prueba_aceptacion: string
+  prueba_automatizada: string
+  evidencia_prueba: AtomicTestEvidence
+}
+
+export interface SubAgentDeliverableSummary {
+  id_scope: string
+  descripcion: string
+  prueba_aceptacion: string
+  entregable_atomico?: AtomicTaskDeliverable
+}
+
 export interface ScopeExecutionResult {
   id_scope: string
   engram_ref: string
@@ -47,6 +75,8 @@ export interface ScopeExecutionResult {
   fromMemoryCache?: boolean
   isAggregated?: boolean
   depth: number
+  entregable_atomico?: AtomicTaskDeliverable
+  entregables_subagentes?: SubAgentDeliverableSummary[]
 }
 
 export interface ReducedScopeSummary {
@@ -376,6 +406,8 @@ export class AgentScopeStorage {
     sumarioEjecutivo: string
     findings: ScopeFinding[]
     isAggregated?: boolean
+    entregableAtomico?: AtomicTaskDeliverable
+    entregablesSubagentes?: SubAgentDeliverableSummary[]
   }): Promise<ScopeExecutionResult> {
     const { sigTag, topicTag, sliceTag } = computeScopeSignature({
       filePath: this.filePath,
@@ -389,6 +421,42 @@ export class AgentScopeStorage {
     const summaryText =
       params.sumarioEjecutivo.trim() ||
       `Scope ${this.scopeId} completado con ${params.findings.length} resultado(s) en ${this.filePath}.`
+
+    const records: Array<{ title: string; content: string; tags: string[] }> = [
+      {
+        title: 'sumario_ejecutivo',
+        content: JSON.stringify({
+          id_scope: this.scopeId,
+          filePath: this.filePath,
+          skill: params.task.skill_requerida ?? 'skill_general',
+          lineStart: params.task.lineStart ?? 1,
+          lineEnd: params.task.lineEnd ?? null,
+          descripcion: params.task.descripcion,
+          prueba_aceptacion: params.task.prueba_aceptacion ?? null,
+          sumario_ejecutivo: summaryText,
+          findingsCount: params.findings.length,
+        }),
+        tags: ['summary', `scope:${this.scopeId}`, sigTag, topicTag],
+      },
+      {
+        title: 'findings_payload',
+        content: JSON.stringify({
+          findings: params.findings,
+        }),
+        tags: ['findings', `scope:${this.scopeId}`, `file:${this.filePath}`],
+      },
+    ]
+
+    if (params.entregableAtomico || params.entregablesSubagentes) {
+      records.push({
+        title: 'entregable_atomico_payload',
+        content: JSON.stringify({
+          entregable_atomico: params.entregableAtomico,
+          entregables_subagentes: params.entregablesSubagentes,
+        }),
+        tags: ['deliverable', `scope:${this.scopeId}`, `file:${this.filePath}`],
+      })
+    }
 
     const header = await this.engram.save({
       title: summaryText.slice(0, 160),
@@ -407,29 +475,7 @@ export class AgentScopeStorage {
         topicTag,
         sliceTag,
       ],
-      records: [
-        {
-          title: 'sumario_ejecutivo',
-          content: JSON.stringify({
-            id_scope: this.scopeId,
-            filePath: this.filePath,
-            skill: params.task.skill_requerida ?? 'skill_general',
-            lineStart: params.task.lineStart ?? 1,
-            lineEnd: params.task.lineEnd ?? null,
-            descripcion: params.task.descripcion,
-            sumario_ejecutivo: summaryText,
-            findingsCount: params.findings.length,
-          }),
-          tags: ['summary', `scope:${this.scopeId}`, sigTag, topicTag],
-        },
-        {
-          title: 'findings_payload',
-          content: JSON.stringify({
-            findings: params.findings,
-          }),
-          tags: ['findings', `scope:${this.scopeId}`, `file:${this.filePath}`],
-        },
-      ],
+      records,
     })
 
     this.scopeIdToMemoryIdMap.set(this.scopeId, header.id)
@@ -446,6 +492,10 @@ export class AgentScopeStorage {
       fromMemoryCache: false,
       isAggregated: Boolean(params.isAggregated),
       depth: this.depth,
+      ...(params.entregableAtomico ? { entregable_atomico: params.entregableAtomico } : {}),
+      ...(params.entregablesSubagentes
+        ? { entregables_subagentes: params.entregablesSubagentes }
+        : {}),
     }
 
     trace('engram.scope.result_saved', {
@@ -455,6 +505,7 @@ export class AgentScopeStorage {
       memoryId: header.id,
       engramRef: result.engram_ref,
       findingsCount: params.findings.length,
+      hasAtomicDeliverable: Boolean(params.entregableAtomico),
     })
 
     return result
@@ -587,6 +638,8 @@ export class AgentScopeStorage {
     let sumarioEjecutivo = doc.header.title
     let idScope = this.scopeId
     let findings: ScopeFinding[] = []
+    let entregableAtomico: AtomicTaskDeliverable | undefined
+    let entregablesSubagentes: SubAgentDeliverableSummary[] | undefined
 
     for (const record of doc.records) {
       if (record.title === 'sumario_ejecutivo') {
@@ -614,6 +667,21 @@ export class AgentScopeStorage {
         } catch {
           // Ignore malformed payload
         }
+      } else if (record.title === 'entregable_atomico_payload') {
+        try {
+          const parsed = JSON.parse(record.content) as {
+            entregable_atomico?: AtomicTaskDeliverable
+            entregables_subagentes?: SubAgentDeliverableSummary[]
+          }
+          if (parsed.entregable_atomico) {
+            entregableAtomico = parsed.entregable_atomico
+          }
+          if (Array.isArray(parsed.entregables_subagentes)) {
+            entregablesSubagentes = parsed.entregables_subagentes
+          }
+        } catch {
+          // Ignore malformed deliverable payload
+        }
       }
     }
 
@@ -626,6 +694,8 @@ export class AgentScopeStorage {
       fromMemoryCache: true,
       isAggregated: doc.header.type === 'scope-synthesis',
       depth: this.depth,
+      ...(entregableAtomico ? { entregable_atomico: entregableAtomico } : {}),
+      ...(entregablesSubagentes ? { entregables_subagentes: entregablesSubagentes } : {}),
     }
   }
 }

@@ -29,9 +29,9 @@ export const BUILTIN_SKILLS: AgentSkillDefinition[] = [
     id: 'skill_coder',
     name: 'Implementador & Refactorizador',
     title: 'Implementador & Refactorizador',
-    description: 'Generación de código TypeScript limpio, pruebas unitarias y verificación en el Sandbox JS.',
+    description: 'Generación de código TypeScript limpio, pruebas unitarias y verificación en Sandbox JS e Iframe.',
     systemSupplement:
-      '[SKILL ACTIVA: skill_coder] Prioriza escribir código conciso, tipado estrictamente y verificable. Usa run_sandboxed_js para validar algoritmos y fs_write_file para proponer los cambios.',
+      '[SKILL ACTIVA: skill_coder] Prioriza escribir código conciso, tipado estrictamente y verificable. Usa run_browser_sandbox (iframe con inspección de DOM, logs y captura) o run_sandboxed_js para validar pruebas automatizadas y fs_write_file para proponer los cambios.',
   },
   {
     id: 'skill_security',

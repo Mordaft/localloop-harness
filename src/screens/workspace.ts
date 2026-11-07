@@ -18,7 +18,11 @@ import {
   type StoredChatMessage,
   type StoredFileWriteProposal,
 } from '../memory/app-db'
-import { executeSandboxedJs } from '../sandbox/code-runner'
+import {
+  executeBrowserSandbox,
+  executeSandboxedJs,
+  getLastBrowserSandboxResult,
+} from '../sandbox/code-runner'
 import {
   cancelAgentSession,
   getSessionThinkingState,
@@ -33,6 +37,14 @@ let activeInspectorTab: InspectorTab = 'proposals'
 let selectedFilePath = ''
 let selectedFileContent = ''
 let sandboxOutput = ''
+let browserSandboxHtmlInput = '<div id="card" class="box"><h2>Hola LocalLoop</h2><button id="btn">Incrementar</button><span id="count">0</span></div>'
+let browserSandboxCodeInput = `const btn = document.getElementById('btn');
+const count = document.getElementById('count');
+btn.addEventListener('click', () => { count.textContent = String(Number(count.textContent) + 1); });
+btn.click();
+console.log('Nuevo contador:', count.textContent);
+return count.textContent;`
+let browserSandboxSelectorInput = '#card, #count'
 
 function escapeHtml(raw: string): string {
   return raw
@@ -326,7 +338,67 @@ export async function renderAgentWorkspace(
 
               ${
                 activeInspectorTab === 'tools'
-                  ? `
+                  ? (() => {
+                      const lastIframeRes = getLastBrowserSandboxResult()
+                      return `
+                    <div class="rounded-xl border border-border-default bg-bg-card p-3.5 space-y-2.5">
+                      <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-text-primary">Sandbox Navegador (Iframe DOM + Captura)</span>
+                        <button id="run-browser-sandbox-btn" class="rounded-lg bg-accent px-2.5 py-1 text-[11px] font-semibold text-slate-950">
+                          Probar en Iframe
+                        </button>
+                      </div>
+                      <div class="space-y-1.5">
+                        <label class="block text-[10px] font-semibold uppercase text-text-muted">HTML del Iframe</label>
+                        <textarea id="browser-sandbox-html" rows="2" class="w-full rounded-lg border border-border-default bg-bg-app p-2 font-mono text-[11px] text-text-primary">${escapeHtml(browserSandboxHtmlInput)}</textarea>
+                        <label class="block text-[10px] font-semibold uppercase text-text-muted">Prueba JS (DOM / Eventos)</label>
+                        <textarea id="browser-sandbox-code" rows="3" class="w-full rounded-lg border border-border-default bg-bg-app p-2 font-mono text-[11px] text-text-primary">${escapeHtml(browserSandboxCodeInput)}</textarea>
+                        <label class="block text-[10px] font-semibold uppercase text-text-muted">Selector CSS a consultar</label>
+                        <input id="browser-sandbox-selector" value="${escapeHtml(browserSandboxSelectorInput)}" class="w-full rounded-lg border border-border-default bg-bg-app px-2 py-1 font-mono text-[11px] text-text-primary" />
+                      </div>
+                      ${
+                        lastIframeRes
+                          ? `
+                            <div class="space-y-2 pt-1">
+                              <div class="flex items-center justify-between text-[11px]">
+                                <span class="font-semibold ${lastIframeRes.ok ? 'text-accent' : 'text-red-500'}">
+                                  ${lastIframeRes.ok ? '✓ Ejecución Iframe OK' : '✗ Error en Iframe'} (${lastIframeRes.durationMs}ms)
+                                </span>
+                                <span class="font-mono text-[10px] text-text-muted">Elementos: ${lastIframeRes.dom.queriedElements.length}</span>
+                              </div>
+                              ${
+                                lastIframeRes.screenshotDataUrl
+                                  ? `
+                                    <div class="space-y-1">
+                                      <p class="text-[10px] font-semibold uppercase text-text-muted">Captura del área renderizada</p>
+                                      <img src="${lastIframeRes.screenshotDataUrl}" alt="Captura del Sandbox Iframe" class="max-h-40 w-full rounded-lg border border-border-default bg-white object-contain" />
+                                    </div>
+                                  `
+                                  : ''
+                              }
+                              <pre class="max-h-40 overflow-auto rounded-lg border border-border-subtle bg-bg-app p-2 font-mono text-[10px] text-text-secondary">${escapeHtml(
+                                JSON.stringify(
+                                  {
+                                    logs: lastIframeRes.logs,
+                                    returnValue: lastIframeRes.returnValue,
+                                    domText: lastIframeRes.dom.text,
+                                    queriedElements: lastIframeRes.dom.queriedElements.map((el) => ({
+                                      selector: el.selector,
+                                      tag: el.tagName,
+                                      text: el.textContent,
+                                      rect: el.rect,
+                                    })),
+                                  },
+                                  null,
+                                  2,
+                                ),
+                              )}</pre>
+                            </div>
+                          `
+                          : ''
+                      }
+                    </div>
+
                     <div class="rounded-xl border border-border-default bg-bg-card p-3.5 space-y-2.5">
                       <div class="flex items-center justify-between">
                         <span class="text-xs font-semibold text-text-primary">Sandbox JS Worker (Aislado)</span>
@@ -352,7 +424,7 @@ export async function renderAgentWorkspace(
                                 <div class="rounded-lg border border-border-default bg-bg-card px-3 py-2 font-mono text-[10px]">
                                   <div class="flex justify-between text-primary">
                                     <span>${escapeHtml(tr.step)}</span>
-                                    <span class="text-text-muted">+${tr.elapsedMs}ms</span>
+                                  <span class="text-text-muted">+${tr.elapsedMs}ms</span>
                                   </div>
                                   ${
                                     tr.detail
@@ -367,6 +439,7 @@ export async function renderAgentWorkspace(
                       }
                     </div>
                   `
+                    })()
                   : ''
               }
 
@@ -452,6 +525,22 @@ export async function renderAgentWorkspace(
       await rejectFileProposal(id)
       rerender()
     })
+  })
+
+  root.querySelector<HTMLButtonElement>('#run-browser-sandbox-btn')?.addEventListener('click', async () => {
+    const htmlEl = root.querySelector<HTMLTextAreaElement>('#browser-sandbox-html')
+    const codeEl = root.querySelector<HTMLTextAreaElement>('#browser-sandbox-code')
+    const selEl = root.querySelector<HTMLInputElement>('#browser-sandbox-selector')
+    browserSandboxHtmlInput = htmlEl?.value ?? ''
+    browserSandboxCodeInput = codeEl?.value ?? ''
+    browserSandboxSelectorInput = selEl?.value ?? ''
+    await executeBrowserSandbox({
+      html: browserSandboxHtmlInput,
+      code: browserSandboxCodeInput,
+      domSelector: browserSandboxSelectorInput,
+      captureScreenshot: true,
+    })
+    rerender()
   })
 
   root.querySelector<HTMLButtonElement>('#run-sandbox-demo-btn')?.addEventListener('click', async () => {

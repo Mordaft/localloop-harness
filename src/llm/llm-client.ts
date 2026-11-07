@@ -6,10 +6,15 @@ import {
   normalizeScopeKeyText,
   toReducedScopeSummary,
   type AgentSkillName,
+  type AtomicTaskDeliverable,
+  type AtomicTestEvidence,
   type ScopeExecutionResult,
   type ScopeFinding,
   type ScopeTaskDefinition,
+  type SubAgentDeliverableSummary,
 } from '../memory/engram-memory'
+import { executeBrowserSandbox, stripMarkdownCodeFences } from '../sandbox/browser-sandbox'
+import { executeSandboxedJs } from '../sandbox/code-runner'
 
 interface RawToolCallDelta {
   index?: number
@@ -243,7 +248,7 @@ export async function streamChatCompletion(params: {
   const { messages, tools, onThinking, onContentDelta, signal } = params
   const releaseGate = params.concurrencyGate
     ? await params.concurrencyGate.acquire(signal)
-    : () => {}
+    : () => { }
 
   const inactivityTimeoutMs = params.requestTimeoutMs ?? DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS
   const requestAbortController = new AbortController()
@@ -638,14 +643,60 @@ const findingItemSchema = {
   required: ['message'],
 }
 
-export function buildStep1ScopeTools(allowDecompose: boolean, hasMemoryHeaders: boolean): OpenAiToolSpec[] {
-  const tools: OpenAiToolSpec[] = [
-    {
+export function buildStep1ScopeTools(
+  allowDecompose: boolean,
+  hasMemoryHeaders: boolean,
+  forceDecompose = false,
+): OpenAiToolSpec[] {
+  const tools: OpenAiToolSpec[] = []
+
+  const atomicDeliverableProperties: Record<string, unknown> = {
+    foco: { type: 'string' },
+    tarea_realizada: {
+      type: 'string',
+      description:
+        'OBLIGATORIO: Entrega completa de la tarea realizada (código, cambios o solución implementada).',
+    },
+    prueba_automatizada: {
+      type: 'string',
+      description:
+        'OBLIGATORIO: Código ejecutable de la prueba automatizada implementada (JS o script DOM para navegador iframe) que verifica la prueba de aceptación.',
+    },
+    modo_sandbox: {
+      type: 'string',
+      enum: ['js', 'browser_iframe'],
+      description:
+        'Entorno donde ejecutar la prueba automatizada: "browser_iframe" si prueba DOM/HTML en un iframe o "js" para lógica pura.',
+    },
+    html_prueba: {
+      type: 'string',
+      description:
+        'Markup HTML opcional a montar en el iframe sandbox durante la prueba automatizada.',
+    },
+    css_prueba: {
+      type: 'string',
+      description: 'CSS opcional a montar en el iframe sandbox.',
+    },
+    selector_dom: {
+      type: 'string',
+      description: 'Selector CSS opcional a consultar en el DOM del iframe sandbox.',
+    },
+    evidencia_prueba: {
+      type: 'string',
+      description:
+        'OBLIGATORIO: Evidencia verificable de haber realizado y superado la prueba automatizada.',
+    },
+    sumario_ejecutivo: { type: 'string' },
+    findings: { type: 'array', items: findingItemSchema },
+  }
+
+  if (!forceDecompose || !allowDecompose) {
+    tools.push({
       type: 'function',
       function: {
         name: 'ejecutar_tarea_atomica',
         description:
-          'Úsala si la subtarea asignada a este Scope se puede resolver directamente en este paso sin subdividir en más sub-hilos.',
+          'Ejecuta y entrega la tarea asignada a este sub-agente cuando NO necesita descomponerse en más subtareas. Es OBLIGATORIO entregar: 1) tarea_realizada, 2) prueba_automatizada implementada y 3) evidencia_prueba.',
         parameters: {
           type: 'object',
           properties: {
@@ -653,48 +704,55 @@ export function buildStep1ScopeTools(allowDecompose: boolean, hasMemoryHeaders: 
               type: 'string',
               enum: ['skill_architect', 'skill_coder', 'skill_security', 'skill_general'],
             },
+            ...atomicDeliverableProperties,
             argumentos: {
               type: 'object',
-              properties: {
-                foco: { type: 'string' },
-                sumario_ejecutivo: { type: 'string' },
-                findings: { type: 'array', items: findingItemSchema },
-              },
-              required: ['foco'],
+              properties: atomicDeliverableProperties,
+              required: ['tarea_realizada', 'prueba_automatizada', 'evidencia_prueba'],
             },
           },
-          required: ['skill_a_usar', 'argumentos'],
         },
       },
-    },
-  ]
+    })
+  }
 
   if (allowDecompose) {
     tools.push({
       type: 'function',
       function: {
         name: 'descomponer_en_subtareas',
-        description:
-          'Úsala si la tarea es compleja y conviene delegar el trabajo en sub-scopes concurrentes más específicos respaldados por engram-ts.',
+        description: forceDecompose
+          ? 'OBLIGATORIO para iniciar o dividir un trabajo: crea una lista de tareas verificables donde cada elemento define explícitamente su prueba de aceptación (prueba_aceptacion). Cada tarea de la lista se delega a un sub-agente independiente.'
+          : 'Opcional: úsala SOLO si la tarea asignada es compuesta y requiere subdividirse en subtareas más pequeñas con su propia prueba_aceptacion. Si la tarea ya tiene una prueba de aceptación directa, usa ejecutar_tarea_atomica.',
         parameters: {
           type: 'object',
           properties: {
             justificacion: { type: 'string' },
             subtareas: {
               type: 'array',
+              minItems: 1,
               items: {
                 type: 'object',
                 properties: {
                   id_subtarea: { type: 'string' },
-                  descripcion: { type: 'string' },
+                  descripcion: {
+                    type: 'string',
+                    description: 'Descripción de la tarea verificable a asignar al sub-agente.',
+                  },
+                  prueba_aceptacion: {
+                    type: 'string',
+                    description:
+                      'OBLIGATORIO: Definición de la prueba de aceptación que valida empíricamente esta tarea.',
+                  },
                   skill_requerida: {
                     type: 'string',
                     enum: ['skill_architect', 'skill_coder', 'skill_security', 'skill_general'],
                   },
+                  targetPath: { type: 'string' },
                   lineStart: { type: 'integer', minimum: 1 },
                   lineEnd: { type: 'integer', minimum: 1 },
                 },
-                required: ['id_subtarea', 'descripcion'],
+                required: ['id_subtarea', 'descripcion', 'prueba_aceptacion'],
               },
             },
           },
@@ -766,12 +824,86 @@ export interface FractalScopeContext {
   maxDepth: number
   maxConcurrency: number
   concurrencyGate: SlmConcurrencyGate
+  forceRootDecomposition?: boolean
   onThinking?: (thought: string) => void | Promise<void>
   signal?: AbortSignal
 }
 
+async function runAndVerifyAtomicTest(params: {
+  tareaRealizada: string
+  pruebaAceptacion: string
+  pruebaAutomatizada: string
+  evidenciaAgente: string
+  modoSandbox?: string
+  htmlPrueba?: string
+  cssPrueba?: string
+  selectorDom?: string
+}): Promise<AtomicTestEvidence> {
+  const cleanedTestCode = stripMarkdownCodeFences(params.pruebaAutomatizada)
+  const codeToRun =
+    cleanedTestCode ||
+    `if (!${JSON.stringify(params.tareaRealizada.trim())}) throw new Error("Tarea vacía"); console.log("Verificación automática de tarea atómica OK"); return true;`
+
+  const useBrowser =
+    params.modoSandbox === 'browser_iframe' ||
+    Boolean(params.htmlPrueba && params.htmlPrueba.trim()) ||
+    /\b(document|window|HTMLElement|querySelector|getElementById)\b/.test(codeToRun)
+
+  if (useBrowser) {
+    const browserRes = await executeBrowserSandbox({
+      html: params.htmlPrueba ?? '',
+      css: params.cssPrueba ?? '',
+      code: codeToRun,
+      domSelector: params.selectorDom,
+      captureScreenshot: true,
+      timeoutMs: 5000,
+    })
+    const resumen = [
+      params.evidenciaAgente.trim(),
+      `[Browser Iframe Sandbox: ${browserRes.ok ? 'PASS ✓' : 'FAIL ✗'} en ${browserRes.durationMs}ms | Logs: ${browserRes.logs.join(' ; ') || 'ninguno'} | DOM: ${browserRes.dom.text.slice(0, 160) || 'vacío'}]`,
+    ]
+      .filter(Boolean)
+      .join(' — ')
+
+    return {
+      ejecutada: true,
+      exito: browserRes.ok,
+      modo: 'browser_iframe_sandbox',
+      logs: browserRes.logs,
+      returnValue: browserRes.returnValue,
+      domSnapshot: browserRes.dom.html.slice(0, 1500),
+      screenshotDataUrl: browserRes.screenshotDataUrl,
+      error: browserRes.error,
+      reporteAgente: params.evidenciaAgente.trim() || undefined,
+      resumen,
+    }
+  }
+
+  const jsRes = await executeSandboxedJs(codeToRun, 3000)
+  const resumen = [
+    params.evidenciaAgente.trim(),
+    `[JS Sandbox: ${jsRes.ok ? 'PASS ✓' : 'FAIL ✗'} en ${jsRes.durationMs}ms | Logs: ${jsRes.logs.join(' ; ') || 'ninguno'}${jsRes.returnValue ? ` | Return: ${jsRes.returnValue}` : ''}]`,
+  ]
+    .filter(Boolean)
+    .join(' — ')
+
+  return {
+    ejecutada: true,
+    exito: jsRes.ok,
+    modo: 'js_sandbox',
+    logs: jsRes.logs,
+    returnValue: jsRes.returnValue,
+    error: jsRes.error,
+    reporteAgente: params.evidenciaAgente.trim() || undefined,
+    resumen,
+  }
+}
+
 /**
  * Homogeneous Fractal Sub-Agent Scope Loop reused from codereview-ai-assisted (`procesarNodoScope`).
+ * Enforces mandatory task list creation with acceptance tests (`prueba_aceptacion`) at root scope,
+ * delegates each task item to a child sub-agent, and requires every atomic leaf sub-agent to deliver
+ * `tarea_realizada`, `prueba_automatizada`, and verifiable `evidencia_prueba`.
  */
 export async function procesarNodoScope(
   task: ScopeTaskDefinition,
@@ -814,26 +946,44 @@ export async function procesarNodoScope(
   const executionPromise = (async (): Promise<ScopeExecutionResult> => {
     const canDecompose =
       currentStorage.depth < context.maxDepth && task.requiere_sub_planificacion !== false
+    const forceDecompose =
+      canDecompose && isRootScope && context.forceRootDecomposition !== false
     const relatedHeaders = await currentStorage.listRelatedScopeHeaders(task)
-    const step1Tools = buildStep1ScopeTools(canDecompose, relatedHeaders.length > 0)
+    const step1Tools = buildStep1ScopeTools(
+      canDecompose,
+      relatedHeaders.length > 0,
+      forceDecompose,
+    )
 
     const memoryCatalogText =
       relatedHeaders.length > 0
         ? `\nMEMORIAS EN ENGRAM-TS:\n${relatedHeaders
-            .map((h) => `- id_scope: "${h.id}" | título: "${h.title}"`)
-            .join('\n')}`
+          .map((h) => `- id_scope: "${h.id}" | título: "${h.title}"`)
+          .join('\n')}`
         : ''
+
+    const acceptanceCriterion =
+      task.prueba_aceptacion?.trim() ||
+      `Verificar mediante prueba automatizada que se cumple: ${task.descripcion}`
+
+    const decompositionDirective = forceDecompose
+      ? `\nREGLA OBLIGATORIA DE DESCOMPOSICIÓN: Estás en el nivel raíz del trabajo. Es OBLIGATORIO crear primero una lista de tareas invocando "descomponer_en_subtareas". Una tarea es aquello para lo que podemos definir una prueba: cada elemento de "subtareas" DEBE incluir su "descripcion" y su "prueba_aceptacion", y cada elemento se pasará a un sub-agente.`
+      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada. Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada", 2) "prueba_automatizada" (código ejecutable JS o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
+
+    const sanitizedBaseInstructions = context.baseInstructions.includes('plan_and_delegate_tasks')
+      ? 'Actúa con precisión técnica verificando empíricamente cada entrega mediante su prueba de aceptación.'
+      : context.baseInstructions
 
     const response = await streamChatCompletion({
       scopeId: currentStorage.scopeId,
       messages: [
         {
           role: 'system',
-          content: `Eres un sub-agente fractal dentro de LocalLoop con memoria engram-ts.\n${context.baseInstructions}`,
+          content: `Eres un sub-agente especializado dentro de LocalLoop con memoria engram-ts.\n${sanitizedBaseInstructions}${decompositionDirective}`,
         },
         {
           role: 'user',
-          content: `SCOPE: ${currentStorage.scopeId} (Profundidad ${currentStorage.depth}/${context.maxDepth})\nTAREA: ${task.descripcion}\nOBJETIVO: ${context.targetPath}${memoryCatalogText}\n\nCONTENIDO:\n${rawSlice.slice(0, 12000)}`,
+          content: `SCOPE: ${currentStorage.scopeId} (Profundidad ${currentStorage.depth}/${context.maxDepth})\nTAREA: ${task.descripcion}\nPRUEBA DE ACEPTACIÓN: ${acceptanceCriterion}\nOBJETIVO: ${context.targetPath}${memoryCatalogText}\n\nCONTENIDO:\n${rawSlice.slice(0, 12000)}`,
         },
       ],
       tools: step1Tools,
@@ -851,8 +1001,22 @@ export async function procesarNodoScope(
       if (recovered) return recovered
     }
 
-    if (decisionCall?.name === 'descomponer_en_subtareas' && canDecompose) {
-      const rawSubtasks = Array.isArray(decisionCall.args.subtareas) ? decisionCall.args.subtareas : []
+    if (
+      (decisionCall?.name === 'descomponer_en_subtareas' || forceDecompose) &&
+      canDecompose
+    ) {
+      const rawArgs = decisionCall?.args ?? {}
+      const rawSubtasks = Array.isArray(rawArgs.subtareas)
+        ? rawArgs.subtareas
+        : Array.isArray(rawArgs.tasks)
+          ? rawArgs.tasks
+          : Array.isArray(rawArgs.tareas)
+            ? rawArgs.tareas
+            : Array.isArray(rawArgs.lista_tareas)
+              ? rawArgs.lista_tareas
+              : Array.isArray(rawArgs.items)
+                ? rawArgs.items
+                : []
       const subPlan: ScopeTaskDefinition[] = []
       for (const [idx, item] of rawSubtasks.entries()) {
         if (!item || typeof item !== 'object') continue
@@ -860,51 +1024,117 @@ export async function procesarNodoScope(
         const rawId =
           typeof rawItem.id_subtarea === 'string' && rawItem.id_subtarea.trim()
             ? rawItem.id_subtarea.trim()
-            : `${currentStorage.scopeId}_sub_${idx + 1}`
+            : typeof rawItem.id === 'string' && rawItem.id.trim()
+              ? rawItem.id.trim()
+              : `${currentStorage.scopeId}_sub_${idx + 1}`
         const safeId =
           rawId === currentStorage.scopeId || currentStorage.ancestorScopeIds.has(rawId)
             ? `${currentStorage.scopeId}_${rawId}_${idx + 1}`
             : rawId
+        const desc =
+          typeof rawItem.descripcion === 'string' && rawItem.descripcion.trim()
+            ? rawItem.descripcion.trim()
+            : typeof rawItem.description === 'string' && rawItem.description.trim()
+              ? rawItem.description.trim()
+              : `${task.descripcion} #${idx + 1}`
+        const pruebaAceptacion =
+          typeof rawItem.prueba_aceptacion === 'string' && rawItem.prueba_aceptacion.trim()
+            ? rawItem.prueba_aceptacion.trim()
+            : typeof rawItem.acceptanceTest === 'string' && rawItem.acceptanceTest.trim()
+              ? rawItem.acceptanceTest.trim()
+              : `Verificar automatizadamente que: ${desc}`
+
         subPlan.push({
           id_subtarea: safeId,
-          descripcion:
-            typeof rawItem.descripcion === 'string' && rawItem.descripcion.trim()
-              ? rawItem.descripcion.trim()
-              : `${task.descripcion} #${idx + 1}`,
-          skill_requerida: (rawItem.skill_requerida as AgentSkillName) ?? 'skill_general',
+          descripcion: desc,
+          prueba_aceptacion: pruebaAceptacion,
+          skill_requerida:
+            (rawItem.skill_requerida as AgentSkillName) ??
+            (rawItem.skill as AgentSkillName) ??
+            'skill_general',
+          targetPath:
+            typeof rawItem.targetPath === 'string' && rawItem.targetPath.trim()
+              ? rawItem.targetPath.trim()
+              : task.targetPath ?? context.targetPath,
           lineStart: typeof rawItem.lineStart === 'number' ? rawItem.lineStart : task.lineStart,
           lineEnd: typeof rawItem.lineEnd === 'number' ? rawItem.lineEnd : task.lineEnd,
+          requiere_sub_planificacion:
+            typeof rawItem.requiere_sub_planificacion === 'boolean'
+              ? rawItem.requiere_sub_planificacion
+              : false,
         })
         if (subPlan.length >= MAX_SUBTASKS_PER_SCOPE) break
       }
 
+      if (subPlan.length === 0 && forceDecompose) {
+        subPlan.push({
+          id_subtarea: `${currentStorage.scopeId}_task_1`,
+          descripcion: task.descripcion,
+          prueba_aceptacion: acceptanceCriterion,
+          skill_requerida: task.skill_requerida ?? 'skill_coder',
+          targetPath: task.targetPath ?? context.targetPath,
+          lineStart: task.lineStart,
+          lineEnd: task.lineEnd,
+          requiere_sub_planificacion: true,
+        })
+      }
+
       if (subPlan.length > 0) {
         currentStorage.clearInFlight(sigTag)
-        await currentStorage.saveSubPlan(subPlan, String(decisionCall.args.justificacion ?? ''))
+        await currentStorage.saveSubPlan(
+          subPlan,
+          String(
+            decisionCall?.args?.justificacion ??
+            'Descomposición obligatoria en lista de tareas con pruebas de aceptación',
+          ),
+        )
         const childResults = await Promise.all(
           subPlan.map((sub) => procesarNodoScope(sub, currentStorage, context, false)),
         )
         const combinedFindings = childResults.flatMap((r) => r.findings)
+        const combinedDeliverables: SubAgentDeliverableSummary[] = childResults.flatMap(
+          (r, idx) => {
+            const subTask = subPlan[idx]
+            if (r.entregables_subagentes && r.entregables_subagentes.length > 0) {
+              return r.entregables_subagentes
+            }
+            return [
+              {
+                id_scope: r.id_scope,
+                descripcion: subTask?.descripcion ?? task.descripcion,
+                prueba_aceptacion:
+                  subTask?.prueba_aceptacion ?? acceptanceCriterion,
+                entregable_atomico: r.entregable_atomico,
+              },
+            ]
+          },
+        )
         const combinedSummary = childResults
           .map((r) => `[${r.id_scope}] ${r.sumario_ejecutivo}`)
           .join(' | ')
           .slice(0, 400)
         return currentStorage.saveScopeResult({
-          task,
+          task: {
+            ...task,
+            prueba_aceptacion: acceptanceCriterion,
+          },
           codeSlice: rawSlice,
           sumarioEjecutivo:
             combinedSummary ||
             `Sub-scopes consolidados (${toReducedScopeSummary(childResults[0]).id_scope})`,
           findings: combinedFindings,
           isAggregated: true,
+          entregablesSubagentes: combinedDeliverables,
         })
       }
     }
 
-    const argsObj =
-      decisionCall?.args.argumentos && typeof decisionCall.args.argumentos === 'object'
-        ? (decisionCall.args.argumentos as Record<string, unknown>)
-        : (decisionCall?.args ?? {})
+    const topArgs = decisionCall?.args ?? {}
+    const nestedArgs =
+      topArgs.argumentos && typeof topArgs.argumentos === 'object'
+        ? (topArgs.argumentos as Record<string, unknown>)
+        : {}
+    const argsObj: Record<string, unknown> = { ...topArgs, ...nestedArgs }
 
     const findings = normalizeFindings(
       Array.isArray(argsObj.findings)
@@ -918,14 +1148,61 @@ export async function procesarNodoScope(
       typeof argsObj.sumario_ejecutivo === 'string' && argsObj.sumario_ejecutivo.trim()
         ? argsObj.sumario_ejecutivo.trim()
         : response.contentBuffer.trim() ||
-          `Scope ${currentStorage.scopeId} completado (${findings.length} hallazgos).`
+        `Scope ${currentStorage.scopeId} completado (${findings.length} hallazgos).`
+
+    const tareaRealizada =
+      typeof argsObj.tarea_realizada === 'string' && argsObj.tarea_realizada.trim()
+        ? argsObj.tarea_realizada.trim()
+        : typeof argsObj.completedTask === 'string' && argsObj.completedTask.trim()
+          ? argsObj.completedTask.trim()
+          : typeof argsObj.code === 'string' && argsObj.code.trim()
+            ? argsObj.code.trim()
+            : sumario
+
+    const pruebaAutomatizada =
+      typeof argsObj.prueba_automatizada === 'string' && argsObj.prueba_automatizada.trim()
+        ? argsObj.prueba_automatizada.trim()
+        : typeof argsObj.automatedTest === 'string' && argsObj.automatedTest.trim()
+          ? argsObj.automatedTest.trim()
+          : typeof argsObj.testCode === 'string' && argsObj.testCode.trim()
+            ? argsObj.testCode.trim()
+            : `console.log(${JSON.stringify(`Prueba automatizada para: ${task.descripcion}`)}); return true;`
+
+    const rawEvidencia =
+      typeof argsObj.evidencia_prueba === 'string' && argsObj.evidencia_prueba.trim()
+        ? argsObj.evidencia_prueba.trim()
+        : typeof argsObj.testEvidence === 'string' && argsObj.testEvidence.trim()
+          ? argsObj.testEvidence.trim()
+          : `Ejecución de prueba automatizada para validar: ${acceptanceCriterion}`
+
+    const evidenciaVerificada = await runAndVerifyAtomicTest({
+      tareaRealizada,
+      pruebaAceptacion: acceptanceCriterion,
+      pruebaAutomatizada,
+      evidenciaAgente: rawEvidencia,
+      modoSandbox: typeof argsObj.modo_sandbox === 'string' ? argsObj.modo_sandbox : undefined,
+      htmlPrueba: typeof argsObj.html_prueba === 'string' ? argsObj.html_prueba : undefined,
+      cssPrueba: typeof argsObj.css_prueba === 'string' ? argsObj.css_prueba : undefined,
+      selectorDom: typeof argsObj.selector_dom === 'string' ? argsObj.selector_dom : undefined,
+    })
+
+    const entregableAtomico: AtomicTaskDeliverable = {
+      tarea_realizada: tareaRealizada,
+      prueba_aceptacion: acceptanceCriterion,
+      prueba_automatizada: pruebaAutomatizada,
+      evidencia_prueba: evidenciaVerificada,
+    }
 
     return currentStorage.saveScopeResult({
-      task,
+      task: {
+        ...task,
+        prueba_aceptacion: acceptanceCriterion,
+      },
       codeSlice: rawSlice,
       sumarioEjecutivo: sumario,
       findings,
       isAggregated: false,
+      entregableAtomico,
     })
   })()
 

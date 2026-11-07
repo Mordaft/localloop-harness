@@ -1,5 +1,16 @@
 import { trace } from '../diagnostics'
 import type { OpenAiToolSpec } from '../llm/llm-client'
+export {
+  executeBrowserSandbox,
+  executeBrowserSandboxInDom,
+  getBrowserSandboxToolSpec,
+  getLastBrowserSandboxResult,
+  setWorkerBrowserSandboxDispatcher,
+  type BrowserSandboxDomSnapshot,
+  type BrowserSandboxElementInfo,
+  type BrowserSandboxOptions,
+  type BrowserSandboxResult,
+} from './browser-sandbox'
 
 export interface SandboxExecutionResult {
   ok: boolean

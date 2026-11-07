@@ -20,6 +20,7 @@ async function runTests() {
       maxTokenBudget: 10000,
       pendingToolCalls: [],
       requiresHumanConfirmation: false,
+      taskPlanCreated: false,
       status: SessionStatus.COMPLETED,
     })
     assert.equal(endRoute, '__end__')
@@ -35,6 +36,7 @@ async function runTests() {
       maxTokenBudget: 10000,
       pendingToolCalls: [{ id: 'c1', name: 'fs_list_dir', args: {}, argumentsRaw: '{}' }],
       requiresHumanConfirmation: false,
+      taskPlanCreated: false,
       status: SessionStatus.RUNNING,
     })
     assert.equal(haltRoute, 'halt_budget_exceeded')
