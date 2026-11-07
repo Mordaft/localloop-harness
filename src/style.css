@@ -36,6 +36,21 @@
   --gold: var(--brand-warning-light);
   --coral: #e05d44;
 
+  /* Semantic RGB Triplets for Tailwind Utilities */
+  --color-primary: 2 132 199;
+  --color-secondary: 79 70 229;
+  --color-accent: 5 150 105;
+  --color-info: 8 145 178;
+  --color-warning: 217 119 6;
+  --color-bg-app: 245 248 246;
+  --color-bg-card: 255 255 255;
+  --color-bg-elevated: 255 255 255;
+  --color-bg-sidebar: 245 248 246;
+  --color-text-primary: 28 41 38;
+  --color-text-secondary: 119 130 126;
+  --color-text-muted: 119 130 126;
+  --color-border-default: 225 232 228;
+
   font-family: var(--brand-font-sans), 'Inter', 'Roboto', sans-serif;
   color: var(--ink);
   background: var(--canvas);
@@ -283,6 +298,21 @@ html.dark {
   --blue: var(--brand-info-dark);
   --gold: var(--brand-warning-dark);
   --coral: #f87171;
+
+  /* Semantic RGB Triplets for Tailwind Utilities in Dark Mode */
+  --color-primary: 56 189 248;
+  --color-secondary: 129 140 248;
+  --color-accent: 52 211 153;
+  --color-info: 34 211 238;
+  --color-warning: 251 191 36;
+  --color-bg-app: 21 33 30;
+  --color-bg-card: 36 51 46;
+  --color-bg-elevated: 44 62 56;
+  --color-bg-sidebar: 21 33 30;
+  --color-text-primary: 237 245 239;
+  --color-text-secondary: 164 178 170;
+  --color-text-muted: 164 178 170;
+  --color-border-default: 53 69 62;
 }
 html.dark body { background: var(--canvas); color: var(--ink); }
 html.dark .intro { background: #1c2b26; border-color: var(--line); }

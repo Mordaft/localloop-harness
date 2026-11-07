@@ -411,8 +411,8 @@ function renderFormattedMarkdown(raw: string): string {
   let html = escapeHtml(raw)
 
   // Headers: ### Header
-  html = html.replace(/^### (.*$)/gim, '<h3 class="text-xs font-bold uppercase tracking-wider text-primary mt-1 mb-3">$1</h3>')
-  html = html.replace(/^## (.*$)/gim, '<h2 class="text-sm font-bold text-text-primary mt-2 mb-2">$1</h2>')
+  html = html.replace(/^### (.*$)/gim, '<h3 class="text-xs font-bold uppercase tracking-wider text-primary mt-3 mb-1.5">$1</h3>')
+  html = html.replace(/^## (.*$)/gim, '<h2 class="text-sm font-bold text-text-primary mt-3 mb-2">$1</h2>')
   html = html.replace(/^# (.*$)/gim, '<h1 class="text-base font-bold text-text-primary mt-3 mb-2">$1</h1>')
 
   // Negrita: **texto**
@@ -424,8 +424,23 @@ function renderFormattedMarkdown(raw: string): string {
   // Listas ordenadas: 1. Item...
   html = html.replace(
     /^(\d+)\.\s+(.*$)/gim,
-    '<div class="flex items-start gap-2.5 my-2"><span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary mt-0.5">$1</span><div class="leading-relaxed text-xs text-text-secondary">$2</div></div>',
+    '<div class="flex items-start gap-2.5 my-1.5"><span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary mt-0.5">$1</span><div class="leading-relaxed text-xs text-text-primary">$2</div></div>',
   )
+
+  // Viñetas anidadas (con 2 o más espacios de sangría):   - Item o   * Item
+  html = html.replace(
+    /^\s{2,}[\*\-]\s+(.*$)/gim,
+    '<div class="flex items-start gap-2 my-1 ml-4"><span class="h-1.5 w-1.5 rounded-full bg-primary/60 shrink-0 mt-1.5"></span><div class="leading-relaxed text-xs text-text-secondary">$1</div></div>',
+  )
+
+  // Viñetas estándar: - Item o * Item
+  html = html.replace(
+    /^\s*[\*\-]\s+(.*$)/gim,
+    '<div class="flex items-start gap-2 my-1"><span class="h-1.5 w-1.5 rounded-full bg-primary shrink-0 mt-1.5"></span><div class="leading-relaxed text-xs text-text-primary">$1</div></div>',
+  )
+
+  // Párrafos y saltos de línea estructurados
+  html = html.replace(/\n\n+/g, '<div class="h-2"></div>')
 
   return html
 }
@@ -433,8 +448,19 @@ function renderFormattedMarkdown(raw: string): string {
 function renderMessageItem(msg: StoredChatMessage): string {
   if (msg.role === 'user') {
     return `
-      <div data-message-role="user" data-message-content="${escapeHtml(msg.content)}" class="ml-auto max-w-3xl rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-xs text-white shadow-sm">
-        <p class="whitespace-pre-wrap leading-relaxed">${escapeHtml(msg.content)}</p>
+      <div data-message-role="user" data-message-content="${escapeHtml(msg.content)}" class="ml-auto max-w-3xl w-full rounded-2xl rounded-tr-sm border border-primary/30 bg-primary/[0.06] dark:bg-primary/[0.12] p-5 text-xs text-text-primary shadow-sm space-y-3 transition-all">
+        <div class="flex items-center justify-between border-b border-primary/20 pb-2 text-[11px]">
+          <div class="flex items-center gap-1.5 font-bold text-primary">
+            ${heroIcon('sparkles', 'h-3.5 w-3.5 text-primary')}
+            <span>Tú (Usuario)</span>
+          </div>
+          <span class="rounded bg-primary/15 border border-primary/25 px-2 py-0.5 font-mono text-[10px] font-semibold text-primary">
+            Prompt / Definición
+          </span>
+        </div>
+        <div class="leading-relaxed space-y-2 text-text-primary">
+          ${renderFormattedMarkdown(msg.content)}
+        </div>
       </div>
     `
   }
@@ -453,16 +479,15 @@ function renderMessageItem(msg: StoredChatMessage): string {
 
   return `
     <div data-message-role="assistant" data-message-content="${escapeHtml(msg.content)}" class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
-      ${
-        msg.thought
-          ? `
+      ${msg.thought
+      ? `
             <details class="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
               <summary class="cursor-pointer font-semibold text-primary select-none">Razonamiento del Agente (&lt;think&gt;)</summary>
               <pre class="mt-2 whitespace-pre-wrap font-mono text-[10px] text-text-muted">${escapeHtml(msg.thought)}</pre>
             </details>
           `
-          : ''
-      }
+      : ''
+    }
       <div class="leading-relaxed space-y-2 text-text-secondary">${renderFormattedMarkdown(msg.content)}</div>
     </div>
   `
@@ -687,13 +712,12 @@ export function renderLifecycleStepperHtml(phases: SdlcPhaseItem[]): string {
 
       const arrow =
         idx < phases.length - 1
-          ? `<span class="shrink-0 text-xs ${
-              p.status === 'completed'
-                ? 'text-emerald-500/80 font-bold'
-                : p.status === 'active'
-                  ? 'text-primary font-bold'
-                  : 'text-text-muted/30'
-            }">→</span>`
+          ? `<span class="shrink-0 text-xs ${p.status === 'completed'
+            ? 'text-emerald-500/80 font-bold'
+            : p.status === 'active'
+              ? 'text-primary font-bold'
+              : 'text-text-muted/30'
+          }">→</span>`
           : ''
 
       return `
@@ -960,16 +984,16 @@ export async function renderWorkspaceScreen(
           </p>
           <div id="sdlc-lifecycle-stepper" class="flex items-center gap-2 overflow-x-auto text-[11px] font-medium py-1 scrollbar-none">
             ${renderLifecycleStepperHtml(
-              computeSdlcPhasesState({
-                sessionStatus: session.status,
-                turnsUsed: session.turnsUsed,
-                messages: visibleMessages,
-                running,
-                isThinking: Boolean(thinkingState?.isThinking),
-                thinkingPhase: thinkingState?.phase,
-                thinkingThought: thinkingState?.thought,
-              }),
-            )}
+    computeSdlcPhasesState({
+      sessionStatus: session.status,
+      turnsUsed: session.turnsUsed,
+      messages: visibleMessages,
+      running,
+      isThinking: Boolean(thinkingState?.isThinking),
+      thinkingPhase: thinkingState?.phase,
+      thinkingThought: thinkingState?.thought,
+    }),
+  )}
           </div>
         </div>
 
@@ -979,9 +1003,8 @@ export async function renderWorkspaceScreen(
             ${visibleMessages.map((m) => renderMessageItem(m)).join('')}
 
             <!-- WIDGET INTERACTIVO HITL 1: FASE 0 EN 3 PASOS RIGUROSOS -->
-            ${
-              isPhase0Waiting
-                ? `
+            ${isPhase0Waiting
+      ? `
                   <div class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 shadow-sm space-y-5">
                     <!-- Cabecera del Wizard con botón para cargar plantilla de ejemplo y toggle Markdown -->
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border-default pb-3.5 gap-3">
@@ -1002,9 +1025,8 @@ export async function renderWorkspaceScreen(
                       </div>
                     </div>
 
-                    ${
-                      isMarkdownView
-                        ? `
+                    ${isMarkdownView
+        ? `
                           <!-- VISTA PLANTILLA MARKDOWN EDITABLE -->
                           <div class="space-y-4 pt-1 animate-in fade-in duration-200">
                             <div class="flex items-center justify-between">
@@ -1029,7 +1051,7 @@ export async function renderWorkspaceScreen(
                             </div>
                           </div>
                         `
-                        : `
+        : `
                           <!-- Navegador de Sub-Pasos (Stepper Interno) -->
                           <div class="grid grid-cols-3 gap-2 text-center text-xs font-semibold">
                             <button type="button" id="tab-p0-step-1" class="py-2 px-2.5 rounded-xl transition ${phase0SubStep === 1 ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-bg-app text-text-muted hover:text-text-secondary'}">
@@ -1044,9 +1066,8 @@ export async function renderWorkspaceScreen(
                           </div>
 
                           <!-- ================= SUB-PASO 1: NECESIDADES DE NEGOCIO ================= -->
-                          ${
-                            phase0SubStep === 1
-                              ? `
+                          ${phase0SubStep === 1
+          ? `
                                 <div class="space-y-4 pt-1 animate-in fade-in duration-200">
                                   <div>
                                     <label class="block text-xs font-semibold text-text-primary mb-1.5">Nombre / Título de la Funcionalidad (Etiqueta de Sesión)</label>
@@ -1067,8 +1088,8 @@ export async function renderWorkspaceScreen(
                                     </div>
                                     <div id="needs-list-container" class="space-y-2">
                                       ${p0State.needsList
-                                        .map(
-                                          (need, idx) => `
+            .map(
+              (need, idx) => `
                                           <div class="flex items-start gap-2 rounded-xl border border-border-default bg-bg-app p-2.5">
                                             <div class="flex-1 space-y-1.5">
                                               <input data-need-desc="${idx}" value="${escapeHtml(need.description)}" placeholder="Descripción de la necesidad de negocio..." class="w-full rounded-lg border border-border-default bg-bg-card px-2.5 py-1 text-xs text-text-primary outline-none focus:border-primary" />
@@ -1079,8 +1100,8 @@ export async function renderWorkspaceScreen(
                                             </button>
                                           </div>
                                         `,
-                                        )
-                                        .join('')}
+            )
+            .join('')}
                                     </div>
                                   </div>
 
@@ -1091,13 +1112,12 @@ export async function renderWorkspaceScreen(
                                   </div>
                                 </div>
                               `
-                              : ''
-                          }
+          : ''
+        }
 
                           <!-- ================= SUB-PASO 2: ARQUITECTURA EMPRESARIAL ================= -->
-                          ${
-                            phase0SubStep === 2
-                              ? `
+                          ${phase0SubStep === 2
+          ? `
                                 <div class="space-y-4 pt-1 animate-in fade-in duration-200">
                                   <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                                     <div>
@@ -1124,16 +1144,16 @@ export async function renderWorkspaceScreen(
                                     <input id="step2-cur-title" value="${escapeHtml(p0State.currentSituationTitle)}" placeholder="Descripción de las soluciones actuales..." class="w-full rounded-lg border border-border-default bg-bg-card px-3 py-1.5 text-xs text-text-primary outline-none focus:border-primary" />
                                     <div id="cur-limits-container" class="space-y-1.5">
                                       ${p0State.currentSituationLimitations
-                                        .map(
-                                          (lim, idx) => `
+            .map(
+              (lim, idx) => `
                                           <div class="flex items-center gap-2">
                                             <span class="text-text-muted text-xs">•</span>
                                             <input data-cur-limit="${idx}" value="${escapeHtml(lim)}" placeholder="Limitación que impone al negocio..." class="flex-1 rounded-lg border border-border-default bg-bg-card px-2.5 py-1 text-xs text-text-primary outline-none focus:border-primary" />
                                             <button type="button" data-remove-cur-limit="${idx}" class="p-1 text-text-muted hover:text-red-400">${heroIcon('x-mark', 'h-3.5 w-3.5')}</button>
                                           </div>
                                         `,
-                                        )
-                                        .join('')}
+            )
+            .join('')}
                                     </div>
                                   </div>
 
@@ -1146,16 +1166,16 @@ export async function renderWorkspaceScreen(
                                     <input id="step2-des-title" value="${escapeHtml(p0State.desiredSituationTitle)}" placeholder="Descripción de las soluciones futuras deseadas..." class="w-full rounded-lg border border-border-default bg-bg-card px-3 py-1.5 text-xs text-text-primary outline-none focus:border-primary" />
                                     <div id="des-caps-container" class="space-y-1.5">
                                       ${p0State.desiredSituationCapabilities
-                                        .map(
-                                          (cap, idx) => `
+            .map(
+              (cap, idx) => `
                                           <div class="flex items-center gap-2">
                                             <span class="text-text-muted text-xs">•</span>
                                             <input data-des-cap="${idx}" value="${escapeHtml(cap)}" placeholder="Capacidad objetivo a habilitar..." class="flex-1 rounded-lg border border-border-default bg-bg-card px-2.5 py-1 text-xs text-text-primary outline-none focus:border-primary" />
                                             <button type="button" data-remove-des-cap="${idx}" class="p-1 text-text-muted hover:text-red-400">${heroIcon('x-mark', 'h-3.5 w-3.5')}</button>
                                           </div>
                                         `,
-                                        )
-                                        .join('')}
+            )
+            .join('')}
                                     </div>
                                   </div>
 
@@ -1168,16 +1188,16 @@ export async function renderWorkspaceScreen(
                                     <input id="step2-trans-title" value="${escapeHtml(p0State.transitionSituationTitle)}" placeholder="Estadio intermedio de adaptación (opcional)..." class="w-full rounded-lg border border-border-default bg-bg-card px-3 py-1.5 text-xs text-text-primary outline-none focus:border-primary" />
                                     <div id="trans-miles-container" class="space-y-1.5">
                                       ${p0State.transitionMilestones
-                                        .map(
-                                          (mile, idx) => `
+            .map(
+              (mile, idx) => `
                                           <div class="flex items-center gap-2">
                                             <span class="text-text-muted text-xs">•</span>
                                             <input data-trans-mile="${idx}" value="${escapeHtml(mile)}" placeholder="Hito o convivencia intermedia..." class="flex-1 rounded-lg border border-border-default bg-bg-card px-2.5 py-1 text-xs text-text-primary outline-none focus:border-primary" />
                                             <button type="button" data-remove-trans-mile="${idx}" class="p-1 text-text-muted hover:text-red-400">${heroIcon('x-mark', 'h-3.5 w-3.5')}</button>
                                           </div>
                                         `,
-                                        )
-                                        .join('')}
+            )
+            .join('')}
                                     </div>
                                   </div>
 
@@ -1191,13 +1211,12 @@ export async function renderWorkspaceScreen(
                                   </div>
                                 </div>
                               `
-                              : ''
-                          }
+          : ''
+        }
 
                           <!-- ================= SUB-PASO 3: ARQUITECTURA DE SOLUCIONES ================= -->
-                          ${
-                            phase0SubStep === 3
-                              ? `
+                          ${phase0SubStep === 3
+          ? `
                                 <div class="space-y-4 pt-1 animate-in fade-in duration-200">
                                   <div>
                                     <div class="flex items-center justify-between mb-1.5">
@@ -1212,8 +1231,8 @@ export async function renderWorkspaceScreen(
 
                                     <div id="components-list-container" class="space-y-2.5">
                                       ${p0State.components
-                                        .map(
-                                          (comp, idx) => `
+            .map(
+              (comp, idx) => `
                                           <div class="rounded-xl border border-border-default bg-bg-app p-3 space-y-2">
                                             <div class="flex items-center justify-between gap-2">
                                               <input data-comp-name="${idx}" value="${escapeHtml(comp.name)}" placeholder="Nombre del componente..." class="flex-1 rounded-lg border border-border-default bg-bg-card px-2.5 py-1 text-xs font-semibold text-text-primary outline-none focus:border-primary" />
@@ -1236,8 +1255,8 @@ export async function renderWorkspaceScreen(
                                             <input data-comp-desc="${idx}" value="${escapeHtml(comp.description)}" placeholder="Descripción técnica y responsabilidades..." class="w-full rounded-lg border border-border-default bg-bg-card px-2.5 py-1 text-xs text-text-muted outline-none" />
                                           </div>
                                         `,
-                                        )
-                                        .join('')}
+            )
+            .join('')}
                                     </div>
                                   </div>
 
@@ -1251,19 +1270,18 @@ export async function renderWorkspaceScreen(
                                   </div>
                                 </div>
                               `
-                              : ''
-                          }
+          : ''
+        }
                         `
-                    }
+      }
                   </div>
                 `
-                : ''
-            }
+      : ''
+    }
 
             <!-- WIDGET INTERACTIVO HITL 2: FASE 4 (APROBACIÓN FORMAL DE NEGOCIO) -->
-            ${
-              isPhase4Waiting
-                ? `
+            ${isPhase4Waiting
+      ? `
                   <div class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 shadow-sm space-y-4">
                     <div class="flex items-center gap-3">
                       <div class="text-warning">
@@ -1291,13 +1309,12 @@ export async function renderWorkspaceScreen(
                     </div>
                   </div>
                 `
-                : ''
-            }
+      : ''
+    }
 
             <!-- Banner de Feedback en Tiempo Real (Fases Autónomas) -->
-            <div data-thinking-pill="${sessionId}" class="${
-              thinkingState?.isThinking || running ? 'flex' : 'hidden'
-            } max-w-3xl items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs text-primary shadow-sm">
+            <div data-thinking-pill="${sessionId}" class="${thinkingState?.isThinking || running ? 'flex' : 'hidden'
+    } max-w-3xl items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs text-primary shadow-sm">
               <span class="h-2.5 w-2.5 rounded-full bg-primary animate-ping shrink-0"></span>
               <div class="min-w-0 flex-1">
                 <span data-thinking-phase="${sessionId}" class="font-bold">Ejecutando ciclo agéntico SDLC...</span>
@@ -1317,29 +1334,27 @@ export async function renderWorkspaceScreen(
                 placeholder="${i18n.workspace.promptPlaceholder}"
                 class="flex-1 bg-transparent text-xs text-text-primary placeholder:text-text-muted outline-none"
               />
-              ${
-                running
-                  ? `
+              ${running
+      ? `
                     <button type="button" id="stop-agent-btn" class="inline-flex items-center gap-1.5 text-xs font-semibold text-red-500 hover:text-red-400 transition shrink-0">
                       ${heroIcon('stop', 'h-4 w-4')}
                       <span>${i18n.common.stop}</span>
                     </button>
                   `
-                  : `
+      : `
                     <button type="submit" class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary transition shrink-0">
                       <span>▷</span>
                       <span>${i18n.common.send}</span>
                     </button>
                   `
-              }
+    }
             </form>
           </footer>
         </main>
 
         <!-- Drawer Lateral Opcional de Archivos (Slide-Over) -->
-        <aside id="workspace-files-drawer" class="absolute top-0 right-0 h-full w-80 max-w-[85vw] transform transition-transform duration-300 ease-in-out border-l border-border-default bg-bg-sidebar shadow-2xl z-20 flex flex-col ${
-          isFileDrawerOpen ? 'translate-x-0' : 'translate-x-full'
-        }">
+        <aside id="workspace-files-drawer" class="absolute top-0 right-0 h-full w-80 max-w-[85vw] transform transition-transform duration-300 ease-in-out border-l border-border-default bg-bg-sidebar shadow-2xl z-20 flex flex-col ${isFileDrawerOpen ? 'translate-x-0' : 'translate-x-full'
+    }">
           <div class="flex items-center justify-between border-b border-border-default px-4 py-3 bg-bg-card">
             <div class="flex items-center gap-2 min-w-0">
               ${heroIcon('folder-open', 'h-4 w-4 text-primary shrink-0')}
@@ -1359,46 +1374,44 @@ export async function renderWorkspaceScreen(
           </div>
 
           <div class="flex-1 overflow-y-auto p-3 space-y-1">
-            ${
-              files.length > 0
-                ? files
-                    .map((f) => {
-                      const isDoc = f.path.startsWith('doc/') || f.path.endsWith('.md')
-                      const isSrc = f.path.startsWith('src/')
-                      const icon = isDoc
-                        ? heroIcon('book-open', 'h-3.5 w-3.5 shrink-0 text-amber-400')
-                        : isSrc
-                          ? heroIcon('code-bracket', 'h-3.5 w-3.5 shrink-0 text-cyan-400')
-                          : heroIcon('document-text', 'h-3.5 w-3.5 shrink-0 text-text-muted')
-                      const badge = isDoc
-                        ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">DOC</span>'
-                        : isSrc
-                          ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">SRC</span>'
-                          : ''
+            ${files.length > 0
+      ? files
+        .map((f) => {
+          const isDoc = f.path.startsWith('doc/') || f.path.endsWith('.md')
+          const isSrc = f.path.startsWith('src/')
+          const icon = isDoc
+            ? heroIcon('book-open', 'h-3.5 w-3.5 shrink-0 text-amber-400')
+            : isSrc
+              ? heroIcon('code-bracket', 'h-3.5 w-3.5 shrink-0 text-cyan-400')
+              : heroIcon('document-text', 'h-3.5 w-3.5 shrink-0 text-text-muted')
+          const badge = isDoc
+            ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">DOC</span>'
+            : isSrc
+              ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">SRC</span>'
+              : ''
 
-                      return `
+          return `
                       <button
                         data-open-file="${escapeHtml(f.path)}"
-                        class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left font-mono text-xs transition ${
-                          selectedFilePath === f.path
-                            ? 'bg-primary/15 text-primary font-semibold'
-                            : 'text-text-secondary hover:bg-bg-elevated hover:text-text-primary'
-                        }"
+                        class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left font-mono text-xs transition ${selectedFilePath === f.path
+              ? 'bg-primary/15 text-primary font-semibold'
+              : 'text-text-secondary hover:bg-bg-elevated hover:text-text-primary'
+            }"
                       >
                         ${icon}
                         <span class="truncate">${escapeHtml(f.path)}</span>
                         ${badge}
                       </button>
                     `
-                    })
-                    .join('')
-                : `
+        })
+        .join('')
+      : `
                   <div class="rounded-xl border border-dashed border-border-default p-4 text-center">
                     <p class="text-xs font-semibold text-text-primary">No hay archivos en workspace</p>
                     <p class="mt-1 text-[11px] text-text-muted">Los componentes y documentación generados aparecerán aquí.</p>
                   </div>
                 `
-            }
+    }
           </div>
         </aside>
       </div>
@@ -1712,10 +1725,10 @@ export async function renderWorkspaceScreen(
         },
         transitionSituation: p0State.transitionSituationTitle.trim()
           ? {
-              title: p0State.transitionSituationTitle,
-              description: p0State.transitionSituationTitle,
-              limitationsOrCapabilities: p0State.transitionMilestones.filter((m) => m.trim().length > 0),
-            }
+            title: p0State.transitionSituationTitle,
+            description: p0State.transitionSituationTitle,
+            limitationsOrCapabilities: p0State.transitionMilestones.filter((m) => m.trim().length > 0),
+          }
           : undefined,
       },
       step3: {
@@ -1738,7 +1751,7 @@ export async function renderWorkspaceScreen(
       p0State.desiredSituationCapabilities.map((c) => `  - [Capacidad Objetivo]: ${c}`).join('\n') +
       (p0State.transitionSituationTitle
         ? `\n* **Situación de Transición:** ${p0State.transitionSituationTitle}\n` +
-          p0State.transitionMilestones.map((m) => `  - [Hito]: ${m}`).join('\n')
+        p0State.transitionMilestones.map((m) => `  - [Hito]: ${m}`).join('\n')
         : '') +
       `\n\n### 3. Arquitectura de Soluciones & Componentes\n` +
       p0State.components
