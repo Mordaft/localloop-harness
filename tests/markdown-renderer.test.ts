@@ -1,5 +1,6 @@
 import assert from 'node:assert'
 import { renderFormattedMarkdown, escapeHtml } from '../src/screens/workspace'
+import { generateMermaidDag } from '../src/mermaid'
 
 console.log('--- Iniciando pruebas de renderFormattedMarkdown para informes de Verificación Unitaria ---')
 
@@ -221,5 +222,52 @@ assert.ok(htmlGlued.includes('<table class="w-full text-left text-xs border-coll
 assert.ok(htmlGlued.includes('<th class="py-2.5 px-3 text-[11px] font-bold uppercase tracking-wider text-text-primary text-left">ID</th>'), 'El primer encabezado debe ser limpiamente ID')
 assert.ok(htmlGlued.includes('🧪 SUITE DE PRUEBAS UNITARIAS'), 'El título preliminar debe preservarse fuera de la tabla')
 
-console.log('✓ Todas las verificaciones de renderFormattedMarkdown pasaron exitosamente.')
+// 7. Pruebas de Renderizado de Diagramas Mermaid
+const mermaidDoc = `#### Diagrama de Dependencias Fin-Inicio
+\`\`\`mermaid
+graph TD
+  comp_core["Módulo Core / Dominio (comp_core)"]
+  comp_service["Servicio de Aplicación (comp_service)"]
+  comp_core --> comp_service
+\`\`\``
+
+const htmlMermaid = renderFormattedMarkdown(mermaidDoc)
+assert.ok(htmlMermaid.includes('Diagrama Mermaid'), 'Debe renderizar la cabecera del contenedor Mermaid')
+assert.ok(htmlMermaid.includes('class="mermaid text-xs font-mono text-text-secondary leading-relaxed"'), 'Debe generar el elemento pre con clase mermaid para el módulo CDN')
+assert.ok(htmlMermaid.includes('comp_core --&gt; comp_service'), 'Debe escapar caracteres HTML para renderizado seguro en DOM')
+
+// 8. Prueba de Diagrama Mermaid incompleto en Streaming
+const streamingMermaid = `\`\`\`mermaid
+graph TD
+  comp_core --> comp_service`
+const htmlStreamMermaid = renderFormattedMarkdown(streamingMermaid)
+assert.ok(htmlStreamMermaid.includes('MERMAID (Generando diagrama...)'), 'Debe mostrar badge de generación en progreso durante streaming')
+
+// 9. Prueba de generación automática del grafo DAG en sintaxis Mermaid
+const mockDag = {
+  comp_core: {
+    id: 'comp_core',
+    name: 'Módulo Core',
+    description: 'Entidades centrales',
+    targetState: 'DESIRED' as const,
+    dependsOn: [],
+    status: 'VERIFIED' as const,
+  },
+  comp_service: {
+    id: 'comp_service',
+    name: 'Servicio de Aplicación',
+    description: 'Lógica orquestadora',
+    targetState: 'DESIRED' as const,
+    dependsOn: ['comp_core'],
+    status: 'READY' as const,
+  },
+}
+
+const generatedDagMd = generateMermaidDag(mockDag)
+assert.ok(generatedDagMd.includes('```mermaid\ngraph TD'), 'Debe incluir encabezado ```mermaid graph TD')
+assert.ok(generatedDagMd.includes('comp_core["Módulo Core (comp_core)"]'), 'Debe definir nodo comp_core')
+assert.ok(generatedDagMd.includes('comp_service["Servicio de Aplicación (comp_service)"]'), 'Debe definir nodo comp_service')
+assert.ok(generatedDagMd.includes('comp_core --> comp_service'), 'Debe modelar relación de dependencia Fin-Inicio comp_core --> comp_service')
+
+console.log('✓ Todas las verificaciones de renderFormattedMarkdown y Mermaid pasaron exitosamente.')
 

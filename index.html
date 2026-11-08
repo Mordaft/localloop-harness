@@ -9,6 +9,19 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>LocalLoop AI</title>
+    <!-- Carga del módulo Mermaid vía CDN para renderizado de diagramas de procesos y DAGs -->
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'
+      const isDark = !document.documentElement.classList.contains('light')
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: isDark ? 'dark' : 'default',
+        securityLevel: 'loose',
+        fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+      })
+      window.mermaid = mermaid
+      window.dispatchEvent(new CustomEvent('mermaid-ready', { detail: { mermaid } }))
+    </script>
   </head>
   <body>
     <div id="app"></div>

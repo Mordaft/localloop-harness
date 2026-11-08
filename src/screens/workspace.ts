@@ -28,6 +28,7 @@ import {
 } from '../worker/agent-bridge'
 import { bindLangToggle, renderLangToggle, renderSidebar, statusClass, toggleTheme } from './shared'
 import type { Phase0ThreeStepData, SdlcPhase, SolutionComponentMapping } from '../agent/sdlc-state'
+import { renderMermaidInDom } from '../mermaid'
 
 let isFileDrawerOpen = false
 let selectedFilePath = ''
@@ -487,8 +488,10 @@ function sanitizeCssStyle(rawStyle: string): string {
 export function renderFormattedMarkdown(raw: string): string {
   if (!raw) return ''
 
+  let text = raw.replace(/\r\n/g, '\n')
+
   // 1. Desacoplar texto preliminar o títulos pegados antes de una tabla colapsada
-  let text = raw.replace(/([^\n|]+)\s+(\|[^\n|]+(?:\|[^\n|]+)+\|\s*\|:?-+:?)/g, '$1\n$2')
+  text = text.replace(/([^\n|]+)\s+(\|[^\n|]+(?:\|[^\n|]+)+\|\s*\|:?-+:?)/g, '$1\n$2')
 
   // Desacoplar texto posterior (ej. conclusiones o divisores) pegado al cierre de la última celda de la tabla
   text = text.replace(/(\|\s*)((?:#{1,6}|---|---|\d+\.|Estado\s+Final|[A-Z]\.)\s+[^\n]+)$/gm, '$1\n$2')
@@ -517,7 +520,7 @@ export function renderFormattedMarkdown(raw: string): string {
   const codeBlocks: string[] = []
   text = text.replace(
     /```([a-zA-Z0-9_\-]+)?(?:\n([\s\S]*?)(?:```|$)|(?:\s+([^\n`][\s\S]*?)(?:```|$))|$)/g,
-    (_match, lang, codeWithNewline, codeInline) => {
+    (fullMatch, lang, codeWithNewline, codeInline) => {
       const idx = codeBlocks.length
       const cleanLang = (lang || '').trim()
       let formattedCode = (codeWithNewline ?? codeInline ?? '').trimEnd()
@@ -527,6 +530,29 @@ export function renderFormattedMarkdown(raw: string): string {
         formattedCode = formattedCode.replace(/>\s*</g, '>\n<')
       }
       const escapedCode = escapeHtml(formattedCode)
+
+      if (cleanLang.toLowerCase() === 'mermaid') {
+        const isClosed = fullMatch.trimEnd().endsWith('```')
+        if (!isClosed) {
+          const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm"><div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">MERMAID (Generando diagrama...)</span></div><pre class="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-text-primary whitespace-pre"><code>${escapedCode}</code></pre></div>`
+          codeBlocks.push(blockHtml)
+          return `\n___LOCALLOOP_CODE_BLOCK_${idx}___\n`
+        }
+
+        const blockHtml = `<div class="my-3 overflow-hidden rounded-xl border border-border-default bg-bg-card/40 shadow-sm">
+          <div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1.5 font-mono text-[10px] text-text-muted">
+            <span class="flex items-center gap-1.5 font-bold uppercase text-primary">
+              <span>📊</span> Diagrama Mermaid
+            </span>
+          </div>
+          <div class="mermaid-container flex justify-center overflow-x-auto p-4 bg-bg-app/60">
+            <pre class="mermaid text-xs font-mono text-text-secondary leading-relaxed">${escapedCode}</pre>
+          </div>
+        </div>`
+        codeBlocks.push(blockHtml)
+        return `\n___LOCALLOOP_CODE_BLOCK_${idx}___\n`
+      }
+
       const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm">${
         cleanLang
           ? `<div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtml(cleanLang)}</span></div>`
@@ -539,7 +565,7 @@ export function renderFormattedMarkdown(raw: string): string {
 
   // 4. Normalizar bloques de código emitidos erróneamente en línea con lenguaje (ej. `log [INFO]...` o `html <header...`)
   text = text.replace(
-    /`\s*(log|html|json|ts|typescript|js|javascript|css|bash|sh|shell)\s+([^`]+?)`/g,
+    /`\s*(log|html|json|ts|typescript|js|javascript|css|bash|sh|shell|mermaid)\s+([^`]+?)`/g,
     (_match, lang, code) => {
       const idx = codeBlocks.length
       const cleanLang = lang.trim()
@@ -1281,6 +1307,9 @@ class StreamingQueueBatcher {
     const contentBox = bubble.querySelector<HTMLElement>('#stream-content-box')
     if (contentBox && chunk.contentSoFar) {
       contentBox.innerHTML = renderFormattedMarkdown(chunk.contentSoFar)
+      if (contentBox.querySelector('.mermaid:not([data-processed="true"])')) {
+        void renderMermaidInDom(contentBox)
+      }
     }
 
     // Scroll suave solo si el usuario no ha subido intencionalmente
@@ -1303,6 +1332,9 @@ class StreamingQueueBatcher {
     }
     if (this.isDirty && this.latestChunk && this.root) {
       this.flush()
+    }
+    if (this.root) {
+      void renderMermaidInDom(this.root)
     }
   }
 }
@@ -1900,6 +1932,16 @@ export async function renderWorkspaceScreen(
           document.body.appendChild(viewerDialog)
         }
 
+        const isMd = path.endsWith('.md')
+        let isPreviewMode = isMd
+
+        const renderViewerBody = () => {
+          if (isPreviewMode) {
+            return `<div class="leading-relaxed space-y-3 text-text-primary text-xs select-text">${renderFormattedMarkdown(fileData.content)}</div>`
+          }
+          return `<pre class="font-mono text-xs text-text-secondary whitespace-pre-wrap leading-relaxed select-text">${escapeHtml(fileData.numberedContent)}</pre>`
+        }
+
         viewerDialog.innerHTML = `
           <div class="flex items-center justify-between border-b border-border-default pb-3 shrink-0">
             <div class="flex items-center gap-2.5 min-w-0">
@@ -1908,6 +1950,13 @@ export async function renderWorkspaceScreen(
               <span class="rounded bg-bg-app px-2 py-0.5 font-mono text-[10px] text-text-muted">${fileData.totalLines} líneas</span>
             </div>
             <div class="flex items-center gap-2">
+              ${
+                isMd
+                  ? `<button id="toggle-file-preview-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-3 py-1.5 text-xs font-semibold text-primary hover:bg-bg-elevated transition">
+                      <span>${isPreviewMode ? '🔢 Ver Código' : '👁️ Vista Previa'}</span>
+                    </button>`
+                  : ''
+              }
               <button id="copy-file-content-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-3 py-1.5 text-xs font-semibold text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition">
                 <span>📋 Copiar</span>
               </button>
@@ -1919,10 +1968,35 @@ export async function renderWorkspaceScreen(
               </button>
             </div>
           </div>
-          <div class="flex-1 overflow-auto mt-4 rounded-xl border border-border-default bg-bg-app p-4">
-            <pre class="font-mono text-xs text-text-secondary whitespace-pre-wrap leading-relaxed select-text">${escapeHtml(fileData.numberedContent)}</pre>
+          <div id="file-viewer-body-container" class="flex-1 overflow-auto mt-4 rounded-xl border border-border-default bg-bg-app p-4">
+            ${renderViewerBody()}
           </div>
         `
+
+        const updateViewerBody = () => {
+          const bodyContainer = viewerDialog!.querySelector('#file-viewer-body-container')
+          if (!bodyContainer) return
+          bodyContainer.innerHTML = renderViewerBody()
+          if (isPreviewMode) {
+            void renderMermaidInDom(bodyContainer)
+          }
+          const toggleBtn = viewerDialog!.querySelector<HTMLButtonElement>('#toggle-file-preview-btn')
+          if (toggleBtn) {
+            toggleBtn.innerHTML = `<span>${isPreviewMode ? '🔢 Ver Código' : '👁️ Vista Previa'}</span>`
+          }
+        }
+
+        if (isMd && isPreviewMode) {
+          const bodyContainer = viewerDialog.querySelector('#file-viewer-body-container')
+          if (bodyContainer) {
+            void renderMermaidInDom(bodyContainer)
+          }
+        }
+
+        viewerDialog.querySelector('#toggle-file-preview-btn')?.addEventListener('click', () => {
+          isPreviewMode = !isPreviewMode
+          updateViewerBody()
+        })
 
         viewerDialog.querySelector('#copy-file-content-btn')?.addEventListener('click', async () => {
           await navigator.clipboard.writeText(fileData.content)
@@ -2285,6 +2359,9 @@ export async function renderWorkspaceScreen(
       await renderWorkspaceScreen(root, sessionId, rerender)
     }
   })
+
+  // Renderizado de diagramas Mermaid en los mensajes existentes
+  void renderMermaidInDom(root)
 }
 
 export { renderWorkspaceScreen as renderAgentWorkspace }

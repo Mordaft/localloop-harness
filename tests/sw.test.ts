@@ -8,7 +8,7 @@ console.log('--- Iniciando pruebas de Service Worker y Caché Estática (LocalLo
 assert.ok(CACHE_NAME.startsWith('localloop-'))
 assert.ok(Array.isArray(APP_SHELL) && APP_SHELL.length >= 4)
 
-// 1. App Shell y bundles de Vite deben cachearse
+// 1. App Shell y bundles de Vite deben cachearse (incluyendo CDN de Mermaid)
 for (const url of [
   'http://localhost:5173/',
   'http://localhost:5173/index.html',
@@ -16,6 +16,7 @@ for (const url of [
   'http://localhost:5173/favicon.svg',
   'http://localhost:5173/assets/index-abc123.js',
   'http://localhost:5173/assets/style-abc123.css',
+  'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs',
 ]) {
   assert.equal(
     isStaticRequest({ method: 'GET', url, headers: new Headers() }),

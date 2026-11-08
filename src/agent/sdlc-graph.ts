@@ -22,6 +22,7 @@ import { getLlmConfig } from '../llm/llm-config'
 import { getEngramToolSpecs, getSessionCallbacks } from './agent-graph'
 import { FsWriteMode } from '../enums'
 import { RuntimeSkillLoader } from './skills/runtime-loader'
+import { generateMermaidDag } from '../mermaid'
 import {
   SDLCState,
   type BusinessUseCase,
@@ -1628,6 +1629,8 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
       `* **Hito 3 (Transición & Auditoría):** Convivencia con sistemas existentes, verificación E2E y auditoría de resultados de negocio.\n\n` +
       `#### 2. Grafo de Dependencias Fin-Inicio (DAG)\n` +
       `${compList}\n\n` +
+      `#### 3. Topología Visual del Grafo (Diagrama Mermaid)\n` +
+      `${generateMermaidDag(componentsGraph)}\n\n` +
       `> ⚙️ **Scheduler:** Iniciando el despacho de componentes. Los componentes con dependencias permanecerán bloqueados hasta que sus predecesores alcancen el estado \`VERIFIED\`.`,
     thought: 'Analizando requerimientos de negocio y calculando topología del grafo de dependencias Fin-Inicio...',
   })
@@ -1654,7 +1657,7 @@ ${Object.values(componentsGraph).map((c) => `- ${c.name} (${c.id}) [Estado: ${c.
 
 Genera el informe de la Fase 1 formalizando:
 1. Plan de Hitos de Negocio (WBS)
-2. Grafo de Dependencias Fin-Inicio (DAG) explicando la justificación de precedencia de cada componente.`,
+2. Grafo de Dependencias Fin-Inicio (DAG) explicando la justificación de precedencia de cada componente y representando el grafo visual en un bloque de código Mermaid (\`\`\`mermaid\ngraph TD\n...\`\`\`).`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackPlan,
   })
@@ -2800,7 +2803,9 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
   const p1PlanDoc =
     `# Fase 1: Plan WBS y Grafo de Dependencias Fin-Inicio (DAG)\n\n` +
     `Generado el ${nowIso}\n\n` +
-    `## Grafo de Componentes y Dependencias Fin-Inicio:\n` +
+    `## Diagrama Visual de Dependencias Fin-Inicio (Mermaid):\n` +
+    generateMermaidDag(state.componentsGraph) +
+    `\n\n## Grafo de Componentes y Dependencias Fin-Inicio:\n` +
     Object.values(state.componentsGraph)
       .map(
         (c) =>
@@ -2888,7 +2893,9 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
     `# Landscape de Arquitectura de Componentes Actualizado\n\n` +
     `Generado automáticamente el ${nowIso}\n\n` +
     `## Estándar Arquitectónico: \`${state.marketArchStandard}\`\n\n` +
-    `## Componentes Verificados en Workspace:\n` +
+    `## Diagrama de Arquitectura de Componentes (Mermaid):\n` +
+    generateMermaidDag(state.componentsGraph) +
+    `\n\n## Componentes Verificados en Workspace:\n` +
     Object.values(state.componentsGraph)
       .map(
         (c) =>

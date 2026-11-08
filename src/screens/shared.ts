@@ -2,6 +2,7 @@ import { applyBrandCssVariables, getBrandConfig } from '../config/brand-config'
 import { heroIcon } from '../config/heroicons'
 import { SessionStatus } from '../enums'
 import { t, toggleLanguage } from '../i18n'
+import { updateMermaidTheme } from '../mermaid'
 
 export type NavSection = 'sessions' | 'memory' | 'settings'
 
@@ -9,6 +10,7 @@ export function toggleTheme(): void {
   const isDark = document.documentElement.classList.toggle('dark')
   localStorage.setItem('theme', isDark ? 'dark' : 'light')
   applyBrandCssVariables()
+  updateMermaidTheme(isDark)
 }
 
 export function renderLangToggle(): string {
