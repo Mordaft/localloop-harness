@@ -74,11 +74,21 @@ export interface Phase0ThreeStepData {
   step3: Phase0Step3SolutionArch
 }
 
+export interface GeneratedComponentFile {
+  path: string
+  content: string
+  description?: string
+}
+
 export interface ComponentNode {
   id: string
   name: string
   description: string
   targetPath?: string
+  /** Rutas de todos los archivos generados si el componente es multi-fichero */
+  targetPaths?: string[]
+  /** Ficheros generados con su contenido y descripción */
+  files?: GeneratedComponentFile[]
   targetState?: 'DESIRED' | 'TRANSITION'
   /** IDs de componentes que deben estar en estado VERIFIED antes de poder iniciar este componente (Fin-Inicio) */
   dependsOn: string[]

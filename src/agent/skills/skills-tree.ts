@@ -116,28 +116,28 @@ export const SKILL_TREE: SkillBranch[] = [
         branch: 'branch_3_engineering',
         name: 'Implementador de Componente',
         title: 'Construcción Limpia y Tipada de Código',
-        description: 'Escribe y modifica el código fuente según el diseño aprobado en el workspace.',
+        description: 'Escribe y modifica el código fuente según el diseño aprobado en el workspace, con soporte multi-fichero (TS, HTML, CSS, JSON).',
         allowedTools: ['fs_read_file', 'fs_write_file', 'fs_list_files'],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['approved_design', 'local_contracts'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: Component_Implementer] Estás implementando el código del componente ${state.activeComponentId}. Sigue con rigor el diseño técnico aprobado. Escribe código modular, tipado y documentado.`,
+          `[SKILL: Component_Implementer] Estás implementando el código del componente ${state.activeComponentId}. Sigue con rigor el diseño técnico aprobado. Escribe código modular, tipado y documentado. Si la funcionalidad requiere estructura web (PWA, interfaz visual o componentes relacionados), genera los archivos necesarios (.ts, .html, .css, .webmanifest) invocando fs_write_file para cada uno.`,
       },
       {
         id: 'UnitTest_Engineer',
         branch: 'branch_3_engineering',
         name: 'Ingeniero de Pruebas Unitarias',
         title: 'Verificación Automatizada Unitaria en Sandbox',
-        description: 'Crea y ejecuta suites unitarias en Sandbox JS. Emite evidencias de ejecución.',
-        allowedTools: ['run_sandboxed_js', 'fs_read_file', 'emit_unit_evidence'],
+        description: 'Crea y ejecuta suites unitarias en Sandbox JS o Browser Iframe Sandbox. Emite evidencias de ejecución y capturas visuales de DOM.',
+        allowedTools: ['run_sandboxed_js', 'run_browser_sandbox', 'fs_read_file', 'emit_unit_evidence'],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['unit_tests', 'spec_contracts'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: UnitTest_Engineer] Eres el responsable de pruebas unitarias de ${state.activeComponentId}. Ejecuta los tests en Sandbox JS y valida cobertura y aserciones. Solo si tienen éxito emite la evidencia de PASS.`,
+          `[SKILL: UnitTest_Engineer] Eres el responsable de pruebas unitarias de ${state.activeComponentId}. Ejecuta los tests en Sandbox JS o en Browser Iframe Sandbox si el componente incluye DOM, HTML o Canvas. Valida cobertura, aserciones y evidencias visuales. Solo si tienen éxito emite la evidencia de PASS.`,
       },
     ],
   },

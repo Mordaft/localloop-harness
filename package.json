@@ -8,7 +8,7 @@
     "dev": "vite --open",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "jiti tests/llm-client.test.ts && jiti tests/indexeddb-saver.test.ts && jiti tests/engram-memory.test.ts && jiti tests/agent-graph.test.ts && jiti tests/fs-tools.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/browser-sandbox-and-decomposition.test.ts && jiti tests/sdlc-graph.test.ts && jiti tests/streaming-queue-and-stepper.test.ts",
+    "test": "jiti tests/llm-client.test.ts && jiti tests/indexeddb-saver.test.ts && jiti tests/engram-memory.test.ts && jiti tests/agent-graph.test.ts && jiti tests/fs-tools.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/browser-sandbox-and-decomposition.test.ts && jiti tests/sdlc-graph.test.ts && jiti tests/streaming-queue-and-stepper.test.ts && jiti tests/tetris-pwa-multi-file.test.ts",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
