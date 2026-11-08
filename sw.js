@@ -1,4 +1,4 @@
-const SW_VERSION = '1793537848252'
+const SW_VERSION = '1794178133171'
 const CACHE_NAME = `localloop-shell-${SW_VERSION}`
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
 
@@ -93,8 +93,13 @@ function isStaticRequest(request) {
     return false
   }
 
-  // Permitir recursos estáticos de fuentes de Google (Roboto, Inter, Space Grotesk)
-  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+  // Permitir recursos estáticos de fuentes de Google (Roboto, Inter, Space Grotesk) y CDNs (Mermaid)
+  if (
+    url.hostname === 'fonts.googleapis.com' ||
+    url.hostname === 'fonts.gstatic.com' ||
+    url.hostname === 'cdn.jsdelivr.net' ||
+    url.hostname === 'cdnjs.cloudflare.com'
+  ) {
     return true
   }
 
