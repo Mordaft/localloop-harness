@@ -2170,14 +2170,32 @@ async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDL
   const llmUnitReport = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 3: Pruebas Unitarias Sandbox — ${compId} [Skill: ${resolvedSkill.skill.name}]`,
-    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Ingeniero de Calidad y Pruebas Automatizadas de LocalLoop. Redacta el informe de resultados de las pruebas unitarias y evidencias visuales en Sandbox.`,
-    userPrompt: `Componente: ${comp.name} (\`${compId}\`)
-Entorno de Verificación: ${isBrowserComp ? 'Browser Iframe Sandbox (Evidencias Visuales)' : 'Sandbox JS Seguro'}
-Resultado: Superado.
-Logs de Sandbox:
-${unitEvidence.logs?.join('\n') || 'Aserciones de contratos y lógica superadas.'}
-${unitEvidence.domSnapshot ? `\nDOM Snapshot:\n${unitEvidence.domSnapshot.slice(0, 500)}` : ''}
-Genera el informe de verificación unitaria en Markdown.`,
+    systemPrompt:
+      `${resolvedSkill.systemPrompt}\n\n` +
+      `Eres el Ingeniero de Calidad y Pruebas Automatizadas de LocalLoop.\n` +
+      `Redacta el informe formal de verificación unitaria en Markdown estructurado y profesional conforme a las siguientes pautas estrictas:\n` +
+      `1. Encabezado principal: ### Informe de Verificación Unitaria: \`${compId}\`\n` +
+      `2. Metadatos del informe en líneas separadas:\n` +
+      `   * **Cliente:** LocalLoop\n` +
+      `   * **Proyecto:** ${state.marketArchStandard || 'Arquitectura LocalLoop'}\n` +
+      `   * **Responsable de QA:** UnitTest_Engineer\n` +
+      `   * **Estado del Componente:** ✅ **PASS**\n` +
+      `3. Secciones numeradas con encabezados Markdown claros (ej. ### 1. Resumen Ejecutivo, ### 2. Detalles del Entorno de Pruebas, ### 3. Resultados de las Pruebas, ### 4. Evidencia Visual, ### 5. Conclusiones y Recomendaciones).\n` +
+      `4. Resultados de las pruebas: DEBEN presentarse en una tabla Markdown estándar GFM con columnas (| ID | Descripción de la Prueba | Resultado | Observaciones |), incluyendo saltos de línea normales entre filas y usando ✅ PASS en la columna Resultado.\n` +
+      `5. Logs y capturas DOM: DEBEN envolverse en bloques de código cercados con triple acento grave (\`\`\`log y \`\`\`html).\n` +
+      `6. NO generes etiquetas HTML crudas ni estilos en línea (no uses <span style="..."> ni <div align="...">); usa exclusivamente Markdown estándar puro.`,
+    userPrompt:
+      `Componente: ${comp.name} (\`${compId}\`)\n` +
+      `Entorno de Verificación: ${isBrowserComp ? 'Browser Iframe Sandbox (DOM, CSS y Renderizado Visual)' : 'Sandbox JS Seguro'}\n` +
+      `Resultado General: Superado (PASS).\n\n` +
+      `Logs de Ejecución Sandbox:\n` +
+      `\`\`\`log\n` +
+      `${unitEvidence.logs?.join('\n') || 'Aserciones de contratos y lógica superadas sin incidencias.'}\n` +
+      `\`\`\`\n` +
+      (unitEvidence.domSnapshot
+        ? `\nSnapshot del DOM Capturado:\n\`\`\`html\n${unitEvidence.domSnapshot.slice(0, 500)}\n\`\`\`\n`
+        : '') +
+      `\nGenera el informe formal de verificación unitaria en Markdown siguiendo rigurosamente las pautas de formato.`,
     tools: resolvedSkill.tools,
     defaultFallback: () => ({
       content:

@@ -36,7 +36,7 @@ let activeStreamBatcher: StreamingQueueBatcher | undefined
 // Estado del Wizard de 3 Pasos de la Fase 0
 let phase0SubStep = 1
 let isMarkdownView = false
-const p0State = {
+export const p0State = {
   featureTitle: 'Emisión de Facturación Electrónica B2B',
   // Paso 1: Negocio
   rawBusinessLanguageText:
@@ -102,14 +102,27 @@ const p0State = {
   ] as SolutionComponentMapping[],
 }
 
-function generateP0Markdown(state: typeof p0State): string {
+export function generateP0Markdown(state: typeof p0State): string {
   let md = `# Especificación de Fase 0: Descubrimiento y Arquitectura\n\n`
   md += `## 1. Necesidades de Negocio\n`
   md += `* **Iniciativa:** ${state.featureTitle}\n`
   md += `* **Narrativa:**\n${state.rawBusinessLanguageText}\n\n`
   md += `### Lista de Necesidades de Negocio\n`
   state.needsList.forEach((n, idx) => {
-    md += `${idx + 1}. **${n.id || `NEED-${idx + 1}`}**: ${n.description} *(Impacto: ${n.expectedImpact})*\n`
+    let desc = (n.description || '').trim()
+    let impact = (n.expectedImpact || '').trim()
+    // Auto-recuperar si el impacto quedó incrustado en la descripción
+    if (!impact) {
+      const embeddedMatch = desc.match(/^(.*?)(?:\s*(?:\*\(|\(\*?|\()(?:Impacto|Impact):\s*(.*?)(?:\)\*|\*\)|\))\s*)$/i)
+      if (embeddedMatch) {
+        desc = embeddedMatch[1].trim()
+        impact = embeddedMatch[2].trim()
+        n.description = desc
+        n.expectedImpact = impact
+      }
+    }
+    const impactSuffix = impact ? ` *(Impacto: ${impact})*` : ''
+    md += `${idx + 1}. **${n.id || `NEED-${idx + 1}`}**: ${desc}${impactSuffix}\n`
   })
 
   md += `\n## 2. Arquitectura Empresarial (Caso de Negocio)\n`
@@ -145,20 +158,20 @@ function generateP0Markdown(state: typeof p0State): string {
   return md
 }
 
-function parseP0Markdown(raw: string): void {
+export function parseP0Markdown(raw: string): void {
   if (!raw || raw.trim().length === 0) return
 
-  const titleMatch = raw.match(/\*\s*\*\*Iniciativa:\*\*\s*(.*)/i)
+  const titleMatch = raw.match(/(?:^|\n)\s*(?:\*|-)?\s*\*\*Iniciativa:\*\*\s*(.*)/i)
   if (titleMatch && titleMatch[1]?.trim()) {
     p0State.featureTitle = titleMatch[1].trim()
   }
 
-  const narrativeMatch = raw.match(/\*\s*\*\*Narrativa:\*\*\s*\n([\s\S]*?)(?=\n###|\n##|$)/i)
+  const narrativeMatch = raw.match(/(?:^|\n)\s*(?:\*|-)?\s*\*\*Narrativa:\*\*\s*\r?\n([\s\S]*?)(?=\r?\n###|\r?\n##|$)/i)
   if (narrativeMatch && narrativeMatch[1]?.trim()) {
     p0State.rawBusinessLanguageText = narrativeMatch[1].trim()
   }
 
-  const marcoMatch = raw.match(/\*\s*\*\*Marco Estándar:\*\*\s*([^\n|]+)/i)
+  const marcoMatch = raw.match(/(?:^|\n)\s*(?:\*|-)?\s*\*\*Marco Estándar:\*\*\s*([^\r\n|]+)/i)
   if (marcoMatch && marcoMatch[1]?.trim()) {
     const m = marcoMatch[1].trim()
     if (['C4_AND_CLEAN_ARCHITECTURE', 'HEXAGONAL_ARCHITECTURE', 'DOMAIN_DRIVEN_DESIGN', 'TOGAF_ENTERPRISE_ARCH'].includes(m)) {
@@ -166,60 +179,80 @@ function parseP0Markdown(raw: string): void {
     }
   }
 
-  const mcpMatch = raw.match(/\*\s*\*\*Conexión MCP:\*\*\s*(https?:\/\/[^\s\n]+)/i)
+  const mcpMatch = raw.match(/(?:^|\n)\s*(?:\*|-)?\s*\*\*Conexión MCP:\*\*\s*(https?:\/\/[^\s\r\n]+)/i)
   if (mcpMatch && mcpMatch[1]?.trim()) {
     p0State.mcpUrl = mcpMatch[1].trim()
   }
 
-  const needsMatches = Array.from(raw.matchAll(/\d+\.\s+\*\*([^*]+)\*\*:\s*(.*?)(?:\s*\*\(Impacto:\s*(.*?)\*\))?$/gim))
+  const needsBlockMatch = raw.match(/### Lista de Necesidades de Negocio\s*\r?\n([\s\S]*?)(?=\r?\n##|$)/i)
+  const needsSource = needsBlockMatch ? needsBlockMatch[1] : raw
+
+  const needItemRegex = /^\s*(?:\d+[\.\)]|-|\*)\s+(?:\*\*([^*]+)\*\*:\s*)?(.*?)(?:\s*(?:\*\(|\(\*?|\()(?:Impacto|Impact):\s*(.*?)(?:\)\*|\*\)|\))\s*)?\s*$/gim
+  const needsMatches = Array.from(needsSource.matchAll(needItemRegex))
   if (needsMatches.length > 0) {
-    p0State.needsList = needsMatches.map((m) => ({
-      id: m[1]?.trim() || `NEED-${Math.random().toString(36).slice(2, 6)}`,
-      description: m[2]?.trim() || '',
-      expectedImpact: m[3]?.trim() || '',
-    }))
+    p0State.needsList = needsMatches.map((m, idx) => {
+      let desc = m[2]?.trim() || ''
+      let impact = m[3]?.trim() || ''
+
+      if (!impact) {
+        const embeddedMatch = desc.match(/^(.*?)(?:\s*(?:\*\(|\(\*?|\()(?:Impacto|Impact):\s*(.*?)(?:\)\*|\*\)|\))\s*)$/i)
+        if (embeddedMatch) {
+          desc = embeddedMatch[1].trim()
+          impact = embeddedMatch[2].trim()
+        }
+      }
+
+      return {
+        id: m[1]?.trim() || `NEED-${idx + 1}`,
+        description: desc,
+        expectedImpact: impact,
+      }
+    })
   }
 
-  const asIsBlock = raw.match(/### Situación Actual \(As-Is\)\s*\n([\s\S]*?)(?=\n###|\n##|$)/i)
+  const asIsBlock = raw.match(/### Situación Actual \(As-Is\)\s*\r?\n([\s\S]*?)(?=\r?\n###|\r?\n##|$)/i)
   if (asIsBlock && asIsBlock[1]) {
-    const lines = asIsBlock[1].split('\n').map((l) => l.trim()).filter(Boolean)
-    const titleLine = lines.find((l) => !l.startsWith('-'))
+    const lines = asIsBlock[1].split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const isListItem = (l: string) => /^[-*]\s+/.test(l)
+    const titleLine = lines.find((l) => !isListItem(l))
     if (titleLine) p0State.currentSituationTitle = titleLine
-    const limitLines = lines.filter((l) => l.startsWith('-'))
+    const limitLines = lines.filter((l) => isListItem(l))
     if (limitLines.length > 0) {
       p0State.currentSituationLimitations = limitLines.map((l) =>
-        l.replace(/^-\s*(\[Limitación\]:\s*)?/i, '').trim(),
+        l.replace(/^[-*]\s*(\[Limitación\]:\s*)?/i, '').trim(),
       )
     }
   }
 
-  const toBeBlock = raw.match(/### Situación Deseada \(To-Be\)\s*\n([\s\S]*?)(?=\n###|\n##|$)/i)
+  const toBeBlock = raw.match(/### Situación Deseada \(To-Be\)\s*\r?\n([\s\S]*?)(?=\r?\n###|\r?\n##|$)/i)
   if (toBeBlock && toBeBlock[1]) {
-    const lines = toBeBlock[1].split('\n').map((l) => l.trim()).filter(Boolean)
-    const titleLine = lines.find((l) => !l.startsWith('-'))
+    const lines = toBeBlock[1].split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const isListItem = (l: string) => /^[-*]\s+/.test(l)
+    const titleLine = lines.find((l) => !isListItem(l))
     if (titleLine) p0State.desiredSituationTitle = titleLine
-    const capLines = lines.filter((l) => l.startsWith('-'))
+    const capLines = lines.filter((l) => isListItem(l))
     if (capLines.length > 0) {
       p0State.desiredSituationCapabilities = capLines.map((l) =>
-        l.replace(/^-\s*(\[Capacidad Objetivo\]:\s*)?/i, '').trim(),
+        l.replace(/^[-*]\s*(\[Capacidad Objetivo\]:\s*)?/i, '').trim(),
       )
     }
   }
 
-  const transBlock = raw.match(/### Situación de Transición[^\n]*\s*\n([\s\S]*?)(?=\n###|\n##|$)/i)
+  const transBlock = raw.match(/### Situación de Transición[^\r\n]*\s*\r?\n([\s\S]*?)(?=\r?\n###|\r?\n##|$)/i)
   if (transBlock && transBlock[1]) {
-    const lines = transBlock[1].split('\n').map((l) => l.trim()).filter(Boolean)
-    const titleLine = lines.find((l) => !l.startsWith('-'))
+    const lines = transBlock[1].split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const isListItem = (l: string) => /^[-*]\s+/.test(l)
+    const titleLine = lines.find((l) => !isListItem(l))
     if (titleLine) p0State.transitionSituationTitle = titleLine
-    const mileLines = lines.filter((l) => l.startsWith('-'))
+    const mileLines = lines.filter((l) => isListItem(l))
     if (mileLines.length > 0) {
       p0State.transitionMilestones = mileLines.map((l) =>
-        l.replace(/^-\s*(\[Hito\]:\s*)?/i, '').trim(),
+        l.replace(/^[-*]\s*(\[Hito\]:\s*)?/i, '').trim(),
       )
     }
   }
 
-  const compRegex = /-\s*\*\*\[(CREATE|EVOLVE)\]\s*(.*?)\*\*\s*\(`([^`]+)`\s*-\s*(DESIRED|TRANSITION)\)([\s\S]*?)(?=\n-\s*\*\*\[|\n##|$)/gi
+  const compRegex = /[-*]\s*\*\*\[(CREATE|EVOLVE)\]\s*(.*?)\*\*\s*\(`([^`]+)`\s*-\s*(DESIRED|TRANSITION)\)([\s\S]*?)(?=\r?\n[-*]\s*\*\*\[|\r?\n##|$)/gi
   const compMatches = Array.from(raw.matchAll(compRegex))
   if (compMatches.length > 0) {
     p0State.components = compMatches.map((m) => {
@@ -228,8 +261,8 @@ function parseP0Markdown(raw: string): void {
       const componentId = m[3].trim()
       const targetState = m[4].toUpperCase() as 'DESIRED' | 'TRANSITION'
       const details = m[5] || ''
-      const depsMatch = details.match(/Depende de:\s*([^\n]+)/i)
-      const descMatch = details.match(/Descripción:\s*([^\n]+)/i)
+      const depsMatch = details.match(/Depende de:\s*([^\r\n]+)/i)
+      const descMatch = details.match(/Descripción:\s*([^\r\n]+)/i)
       const dependsOn = depsMatch && depsMatch[1]?.trim() !== 'Ninguno'
         ? depsMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
         : []
@@ -268,6 +301,17 @@ function syncP0StateFromDom(root: HTMLElement): void {
   root.querySelectorAll<HTMLInputElement>('[data-need-impact]').forEach((input) => {
     const idx = Number(input.dataset.needImpact)
     if (p0State.needsList[idx]) p0State.needsList[idx].expectedImpact = input.value
+  })
+
+  // Auto-recuperar si el impacto quedó pegado en el campo de descripción y el impacto está vacío
+  p0State.needsList.forEach((n) => {
+    if (!n.expectedImpact?.trim() && n.description?.trim()) {
+      const embeddedMatch = n.description.match(/^(.*?)(?:\s*(?:\*\(|\(\*?|\()(?:Impacto|Impact):\s*(.*?)(?:\)\*|\*\)|\))\s*)$/i)
+      if (embeddedMatch) {
+        n.description = embeddedMatch[1].trim()
+        n.expectedImpact = embeddedMatch[2].trim()
+      }
+    }
   })
 
   // 2. Arquitectura Empresarial
@@ -400,47 +444,275 @@ function loadExampleTemplate(): void {
   ]
 }
 
-function escapeHtml(raw: string): string {
+export function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
 }
 
-function renderFormattedMarkdown(raw: string): string {
-  let html = escapeHtml(raw)
+function sanitizeCssStyle(rawStyle: string): string {
+  const allowedProps = new Set([
+    'color',
+    'background-color',
+    'background',
+    'font-weight',
+    'font-size',
+    'font-style',
+    'text-decoration',
+    'border-radius',
+    'padding',
+    'margin',
+  ])
+  const rules = rawStyle.split(';')
+  const safeRules: string[] = []
+  for (const rule of rules) {
+    const colonIdx = rule.indexOf(':')
+    if (colonIdx > 0) {
+      const prop = rule.slice(0, colonIdx).trim().toLowerCase()
+      const val = rule.slice(colonIdx + 1).trim()
+      if (prop && val && allowedProps.has(prop)) {
+        if (!/[<>()"']|javascript:/i.test(val)) {
+          safeRules.push(`${prop}: ${val}`)
+        }
+      }
+    }
+  }
+  return safeRules.join('; ')
+}
 
-  // Headers: ### Header
-  html = html.replace(/^### (.*$)/gim, '<h3 class="text-xs font-bold uppercase tracking-wider text-primary mt-3 mb-1.5">$1</h3>')
-  html = html.replace(/^## (.*$)/gim, '<h2 class="text-sm font-bold text-text-primary mt-3 mb-2">$1</h2>')
-  html = html.replace(/^# (.*$)/gim, '<h1 class="text-base font-bold text-text-primary mt-3 mb-2">$1</h1>')
+export function renderFormattedMarkdown(raw: string): string {
+  if (!raw) return ''
 
-  // Negrita: **texto**
-  html = html.replace(/\*\*(.*?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
+  // 1. Extraer bloques de código cercados (fenced code blocks ```...```)
+  const codeBlocks: string[] = []
+  let text = raw.replace(
+    /```([a-zA-Z0-9_\-]+)?(?:\n([\s\S]*?)(?:```|$)|$)/g,
+    (_match, lang, code) => {
+      const idx = codeBlocks.length
+      const cleanLang = (lang || '').trim()
+      const escapedCode = escapeHtml((code ?? '').trimEnd())
+      const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm">${
+        cleanLang
+          ? `<div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtml(cleanLang)}</span></div>`
+          : ''
+      }<pre class="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-text-primary whitespace-pre"><code>${escapedCode}</code></pre></div>`
+      codeBlocks.push(blockHtml)
+      return `\n___LOCALLOOP_CODE_BLOCK_${idx}___\n`
+    },
+  )
 
-  // Código en línea: `código`
-  html = html.replace(/`([^`]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
+  // 2. Extraer spans con estilos o etiquetas de estado antes de escapar
+  const safeSpans: string[] = []
+  text = text.replace(
+    /<span\s+style=(["'])(.*?)\1\s*>(.*?)<\/span>/gi,
+    (_match, _q, style, inner) => {
+      const idx = safeSpans.length
+      const safeStyle = sanitizeCssStyle(style)
+      const spanHtml = `<span style="${escapeHtml(safeStyle)}">${escapeHtml(inner)}</span>`
+      safeSpans.push(spanHtml)
+      return `___LOCALLOOP_SAFE_SPAN_${idx}___`
+    },
+  )
 
-  // Listas ordenadas: 1. Item...
+  // 3. Tablas Markdown (GFM Tables con soporte de alineación)
+  const tables: string[] = []
+  const rawLines = text.split('\n')
+  const newLines: string[] = []
+  let i = 0
+
+  while (i < rawLines.length) {
+    const line = rawLines[i]
+    const nextLine = i + 1 < rawLines.length ? rawLines[i + 1] : ''
+
+    const isHeaderLine = line.includes('|') && line.trim().length > 1
+    const isDelimiterLine =
+      nextLine.includes('|') &&
+      /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(nextLine.trim())
+
+    if (isHeaderLine && isDelimiterLine) {
+      const tableLines: string[] = [line, nextLine]
+      i += 2
+      while (i < rawLines.length) {
+        const rowLine = rawLines[i]
+        if (!rowLine.trim() || !rowLine.includes('|') || /^\s*(#{1,6}\s|---|\*\*\*)/.test(rowLine)) {
+          break
+        }
+        tableLines.push(rowLine)
+        i++
+      }
+
+      const headerRow = tableLines[0]
+      const delimiterRow = tableLines[1]
+      const dataRows = tableLines.slice(2)
+
+      const splitRow = (r: string) => {
+        let trimmed = r.trim()
+        if (trimmed.startsWith('|')) trimmed = trimmed.slice(1)
+        if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1)
+        return trimmed.split('|').map((c) => c.trim())
+      }
+
+      const headers = splitRow(headerRow)
+      const delimiters = splitRow(delimiterRow)
+      const alignments = delimiters.map((d) => {
+        const left = d.startsWith(':')
+        const right = d.endsWith(':')
+        if (left && right) return 'text-center'
+        if (right) return 'text-right'
+        return 'text-left'
+      })
+
+      let tableHtml = `<div class="my-3 overflow-x-auto rounded-xl border border-border-default bg-bg-app/40 shadow-sm"><table class="w-full text-left text-xs border-collapse"><thead><tr class="border-b border-border-default bg-bg-card font-semibold text-text-primary">`
+
+      for (let c = 0; c < headers.length; c++) {
+        const align = alignments[c] || 'text-left'
+        tableHtml += `<th class="py-2.5 px-3 text-[11px] font-bold uppercase tracking-wider text-text-primary ${align}">${escapeHtml(headers[c])}</th>`
+      }
+      tableHtml += `</tr></thead><tbody class="divide-y divide-border-default/50">`
+
+      for (const row of dataRows) {
+        const cells = splitRow(row)
+        tableHtml += `<tr class="hover:bg-primary/[0.04] transition-colors">`
+        for (let c = 0; c < headers.length; c++) {
+          const align = alignments[c] || 'text-left'
+          const cellVal = cells[c] !== undefined ? cells[c] : ''
+          tableHtml += `<td class="py-2 px-3 text-text-secondary ${align}">${escapeHtml(cellVal)}</td>`
+        }
+        tableHtml += `</tr>`
+      }
+
+      tableHtml += `</tbody></table></div>`
+      const tableIdx = tables.length
+      tables.push(tableHtml)
+      newLines.push(`___LOCALLOOP_TABLE_${tableIdx}___`)
+      continue
+    }
+
+    newLines.push(line)
+    i++
+  }
+
+  text = newLines.join('\n')
+
+  // 4. Escapar HTML en el resto del texto
+  let html = escapeHtml(text)
+
+  // 5. Divisores horizontales (--- o *** o ___)
+  html = html.replace(/^\s*([-*_]\s*){3,}\s*$/gim, '<hr class="my-3 border-0 border-t border-border-default" />')
+
+  // 6. Encabezados: # hasta ######
+  html = html.replace(/^######\s+(.*$)/gim, '<h6 class="text-[10px] font-bold uppercase tracking-wider text-text-muted mt-2 mb-1">$1</h6>')
+  html = html.replace(/^#####\s+(.*$)/gim, '<h5 class="text-[11px] font-bold text-text-secondary mt-2 mb-1">$1</h5>')
+  html = html.replace(/^####\s+(.*$)/gim, '<h4 class="text-xs font-bold text-text-primary mt-2 mb-1">$1</h4>')
+  html = html.replace(/^###\s+(.*$)/gim, '<h3 class="text-xs font-bold uppercase tracking-wider text-primary mt-3 mb-1.5">$1</h3>')
+  html = html.replace(/^##\s+(.*$)/gim, '<h2 class="text-sm font-bold text-text-primary mt-3 mb-2">$1</h2>')
+  html = html.replace(/^#\s+(.*$)/gim, '<h1 class="text-base font-bold text-text-primary mt-3 mb-2">$1</h1>')
+
+  // Encabezados con icono o marcador (■ Título o A. Sección)
+  html = html.replace(/^\s*■\s+(.*$)/gim, '<h2 class="text-sm font-bold text-text-primary mt-3 mb-2 flex items-center gap-1.5"><span class="text-primary text-xs">■</span> $1</h2>')
+  html = html.replace(/^\s*([A-Z])\.\s+(.*$)/gim, '<h4 class="text-xs font-bold uppercase tracking-wider text-primary mt-2.5 mb-1"><span class="inline-block w-4 font-mono text-accent">$1.</span> $2</h4>')
+
+  // 7. Citas (> quote)
+  html = html.replace(/^\s*&gt;\s+(.*$)/gim, '<blockquote class="border-l-2 border-primary/60 pl-3 my-2 text-text-secondary italic text-xs">$1</blockquote>')
+
+  // 8. Listas ordenadas con o sin negrita inicial (ej. 1. Item o **1. Resumen...**)
   html = html.replace(
-    /^(\d+)\.\s+(.*$)/gim,
+    /^\s*(\d+)\.\s+(.*$)/gim,
     '<div class="flex items-start gap-2.5 my-1.5"><span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary mt-0.5">$1</span><div class="leading-relaxed text-xs text-text-primary">$2</div></div>',
   )
 
-  // Viñetas anidadas (con 2 o más espacios de sangría):   - Item o   * Item
+  // 9. Viñetas anidadas (con 2 o más espacios de sangría):   - Item o   * Item
   html = html.replace(
     /^\s{2,}[\*\-]\s+(.*$)/gim,
     '<div class="flex items-start gap-2 my-1 ml-4"><span class="h-1.5 w-1.5 rounded-full bg-primary/60 shrink-0 mt-1.5"></span><div class="leading-relaxed text-xs text-text-secondary">$1</div></div>',
   )
 
-  // Viñetas estándar: - Item o * Item
+  // 10. Viñetas estándar: - Item o * Item
   html = html.replace(
     /^\s*[\*\-]\s+(.*$)/gim,
     '<div class="flex items-start gap-2 my-1"><span class="h-1.5 w-1.5 rounded-full bg-primary shrink-0 mt-1.5"></span><div class="leading-relaxed text-xs text-text-primary">$1</div></div>',
   )
 
-  // Párrafos y saltos de línea estructurados
-  html = html.replace(/\n\n+/g, '<div class="h-2"></div>')
+  // 11. Negrita e Itálica
+  html = html.replace(/\*\*(.*?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
+  html = html.replace(/\*([^\*]+)\*/gim, '<em class="italic text-text-secondary">$1</em>')
+
+  // 12. Código en línea: `código`
+  html = html.replace(/`([^`]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
+
+  // 13. Párrafos estructurados (\n\n) y saltos de línea suaves (\n)
+  const renderedLines = html.split('\n')
+  const formattedLines: string[] = []
+  for (let idx = 0; idx < renderedLines.length; idx++) {
+    const cur = renderedLines[idx]
+    const next = idx + 1 < renderedLines.length ? renderedLines[idx + 1] : undefined
+
+    if (!cur.trim()) {
+      formattedLines.push('<div class="h-2"></div>')
+      continue
+    }
+
+    const isBlockTag =
+      cur.startsWith('<h1') ||
+      cur.startsWith('<h2') ||
+      cur.startsWith('<h3') ||
+      cur.startsWith('<h4') ||
+      cur.startsWith('<h5') ||
+      cur.startsWith('<h6') ||
+      cur.startsWith('<div class="flex') ||
+      cur.startsWith('<div class="h-2') ||
+      cur.startsWith('<blockquote') ||
+      cur.startsWith('<hr') ||
+      cur.includes('___LOCALLOOP_TABLE_') ||
+      cur.includes('___LOCALLOOP_CODE_BLOCK_')
+
+    const nextIsBlock =
+      next === undefined ||
+      !next.trim() ||
+      next.startsWith('<h1') ||
+      next.startsWith('<h2') ||
+      next.startsWith('<h3') ||
+      next.startsWith('<h4') ||
+      next.startsWith('<h5') ||
+      next.startsWith('<h6') ||
+      next.startsWith('<div') ||
+      next.startsWith('<blockquote') ||
+      next.startsWith('<hr') ||
+      next.includes('___LOCALLOOP_TABLE_') ||
+      next.includes('___LOCALLOOP_CODE_BLOCK_')
+
+    if (!isBlockTag && !nextIsBlock) {
+      formattedLines.push(cur + '<br />')
+    } else {
+      formattedLines.push(cur)
+    }
+  }
+
+  html = formattedLines.join('\n')
+
+  // Limpiar espaciadores duplicados
+  html = html.replace(/(?:<div class="h-2"><\/div>\s*){2,}/g, '<div class="h-2"></div>')
+
+  // 14. Re-insertar tablas (procesando inline markdown y badges de PASS/FAIL dentro de celdas)
+  html = html.replace(/___LOCALLOOP_TABLE_(\d+)___/g, (_m, id) => {
+    let tbl = tables[Number(id)] || ''
+    tbl = tbl.replace(/\*\*(.*?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
+    tbl = tbl.replace(/`([^`]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
+    tbl = tbl.replace(/✅\s*PASS\b/g, '<span class="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent">✅ PASS</span>')
+    tbl = tbl.replace(/❌\s*FAIL\b/g, '<span class="inline-flex items-center gap-1 rounded bg-coral/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-coral">❌ FAIL</span>')
+    return tbl
+  })
+
+  // 15. Re-insertar bloques de código
+  html = html.replace(/___LOCALLOOP_CODE_BLOCK_(\d+)___/g, (_m, id) => {
+    return codeBlocks[Number(id)] || ''
+  })
+
+  // 16. Re-insertar safe spans
+  html = html.replace(/___LOCALLOOP_SAFE_SPAN_(\d+)___/g, (_m, id) => {
+    return safeSpans[Number(id)] || ''
+  })
 
   return html
 }
