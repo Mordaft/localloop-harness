@@ -11,6 +11,7 @@ export interface LlmConfig {
   maxConcurrency: number
   fsWriteMode: FsWriteModeType
   systemPrompt: string
+  renderThinking: boolean
 }
 
 const STORAGE_KEY = 'localloop-llm-config'
@@ -34,6 +35,7 @@ export const defaultLlmConfig: LlmConfig = {
   maxConcurrency: 2,
   fsWriteMode: FsWriteMode.CONFIRM,
   systemPrompt: defaultSystemPrompt,
+  renderThinking: false,
 }
 
 let workerConfigOverride: LlmConfig | undefined
@@ -68,6 +70,7 @@ export function getLlmConfig(): LlmConfig {
     if (typeof parsed.systemPrompt !== 'string' || !parsed.systemPrompt.trim()) {
       parsed.systemPrompt = defaultSystemPrompt
     }
+    parsed.renderThinking = typeof parsed.renderThinking === 'boolean' ? parsed.renderThinking : false
     return parsed
   } catch {
     return { ...defaultLlmConfig }
@@ -97,6 +100,7 @@ export function saveLlmConfig(config: LlmConfig): LlmConfig {
       : 2,
     fsWriteMode: config.fsWriteMode === FsWriteMode.AUTO ? FsWriteMode.AUTO : FsWriteMode.CONFIRM,
     systemPrompt: config.systemPrompt?.trim() ? config.systemPrompt.trim() : defaultSystemPrompt,
+    renderThinking: Boolean(config.renderThinking),
   }
   workerConfigOverride = normalized
   if (typeof localStorage !== 'undefined') {

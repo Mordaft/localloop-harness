@@ -147,6 +147,10 @@ export interface TranslationDictionary {
     loadingModels: string
     modelsAvailable: string
     modelsError: string
+    renderThinkingLabel: string
+    renderThinkingHint: string
+    renderThinkingEnabled: string
+    renderThinkingDisabled: string
     budgetEyebrow: string
     budgetTitle: string
     budgetDesc: string

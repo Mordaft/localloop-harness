@@ -6,6 +6,7 @@ import {
   restoreSavedWorkspaceDirectory,
 } from '../fs/workspace-fs'
 import { formatText, formatUpdatedTime, t, translateStatus } from '../i18n'
+import { getLlmConfig } from '../llm/llm-config'
 import {
   createSession,
   deleteSession,
@@ -28,11 +29,13 @@ let currentTab: SessionTab = 'active'
 
 function renderThinkingPill(sessionId: number): string {
   const i18n = t()
+  const config = getLlmConfig()
   const state = getSessionThinkingState(sessionId)
   const isThinking = Boolean(state?.isThinking)
   const rawThought = state?.thought ?? ''
-  const snippet =
-    rawThought.length > 90 ? `…${rawThought.slice(-90)}` : rawThought || i18n.sessions.card.agentThinking
+  const snippet = config.renderThinking
+    ? (rawThought.length > 90 ? `…${rawThought.slice(-90)}` : rawThought || i18n.sessions.card.agentThinking)
+    : (state?.phase === 'executing_tools' && state.activeTool ? `${state.activeTool}...` : i18n.sessions.card.agentThinking)
 
   const phaseLabel =
     state?.phase === 'executing_tools'
@@ -56,6 +59,7 @@ export function updateThinkingPillInDom(sessionId: number): void {
   if (!pill) return
 
   const i18n = t()
+  const config = getLlmConfig()
   const state = getSessionThinkingState(sessionId)
   if (!state?.isThinking) {
     pill.classList.add('hidden')
@@ -75,8 +79,15 @@ export function updateThinkingPillInDom(sessionId: number): void {
         : `${i18n.sessions.card.agentThinking}:`
   }
   if (textEl) {
-    const raw = state.thought.trim()
-    textEl.textContent = raw.length > 90 ? `…${raw.slice(-90)}` : raw || i18n.sessions.card.agentThinking
+    if (config.renderThinking) {
+      const raw = state.thought.trim()
+      textEl.textContent = raw.length > 90 ? `…${raw.slice(-90)}` : raw || i18n.sessions.card.agentThinking
+    } else {
+      textEl.textContent =
+        state.phase === 'executing_tools' && state.activeTool
+          ? `${state.activeTool}...`
+          : i18n.sessions.card.agentThinking
+    }
   }
 }
 

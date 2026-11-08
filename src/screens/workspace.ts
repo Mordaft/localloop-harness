@@ -8,6 +8,7 @@ import {
   restoreSavedWorkspaceDirectory,
 } from '../fs/workspace-fs'
 import { t, translateStatus } from '../i18n'
+import { getLlmConfig } from '../llm/llm-config'
 import {
   getSessionById,
   listSessionMessages,
@@ -802,7 +803,7 @@ function renderMessageItem(msg: StoredChatMessage): string {
 
   return `
     <div data-message-role="assistant" data-message-content="${escapeHtml(msg.content)}" class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
-      ${msg.thought
+      ${msg.thought && getLlmConfig().renderThinking
       ? `
             <details class="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
               <summary class="cursor-pointer font-semibold text-primary select-none">Razonamiento del Agente (&lt;think&gt;)</summary>
@@ -1149,6 +1150,8 @@ class StreamingQueueBatcher {
     const scrollContainer = this.root.querySelector<HTMLElement>('#chat-messages-scroll')
     if (!scrollContainer) return
 
+    const config = getLlmConfig()
+
     let bubble = scrollContainer.querySelector<HTMLElement>(`#live-streaming-bubble-${this.sessionId}`)
     if (!bubble) {
       bubble = document.createElement('div')
@@ -1163,10 +1166,15 @@ class StreamingQueueBatcher {
           </div>
           <span class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">Cola Streaming (1000ms Selectivo)</span>
         </div>
+        ${
+          config.renderThinking
+            ? `
         <div id="stream-thought-box" class="hidden rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
           <div class="font-semibold text-primary mb-1 select-none">Razonamiento del Modelo (&lt;think&gt;)</div>
           <pre class="font-mono text-[10px] text-text-muted whitespace-pre-wrap"></pre>
-        </div>
+        </div>`
+            : ''
+        }
         <div id="stream-content-box" class="leading-relaxed space-y-2 text-text-secondary"></div>
       `
       const thinkingPill = scrollContainer.querySelector(`[data-thinking-pill="${this.sessionId}"]`)
@@ -1182,7 +1190,7 @@ class StreamingQueueBatcher {
       if (titleEl) titleEl.textContent = `${chunk.phase}...`
     }
 
-    if (chunk.thought && chunk.thought.trim()) {
+    if (config.renderThinking && chunk.thought && chunk.thought.trim()) {
       const thoughtBox = bubble.querySelector<HTMLElement>('#stream-thought-box')
       const thoughtPre = thoughtBox?.querySelector<HTMLElement>('pre')
       if (thoughtBox && thoughtPre) {
@@ -1240,6 +1248,7 @@ export async function renderWorkspaceScreen(
   }
 
   const handle = getWorkspaceDirectoryHandle()
+  const config = getLlmConfig()
   const running = isSessionRunning(sessionId)
   const thinkingState = getSessionThinkingState(sessionId)
 
@@ -1642,7 +1651,13 @@ export async function renderWorkspaceScreen(
               <div class="min-w-0 flex-1">
                 <span data-thinking-phase="${sessionId}" class="font-bold">Ejecutando ciclo agéntico SDLC...</span>
                 <p data-thinking-text="${sessionId}" class="truncate font-mono text-[11px] text-text-secondary mt-0.5">
-                  ${escapeHtml(thinkingState?.thought ?? 'Procesando paso en LangGraph...')}
+                  ${escapeHtml(
+                    config.renderThinking
+                      ? (thinkingState?.thought ?? 'Procesando paso en LangGraph...')
+                      : (thinkingState?.phase === 'executing_tools' && thinkingState.activeTool
+                          ? `Ejecutando herramienta ${thinkingState.activeTool}...`
+                          : 'Procesando paso en LangGraph...')
+                  )}
                 </p>
               </div>
             </div>
@@ -2150,7 +2165,15 @@ export async function renderWorkspaceScreen(
     }
     const text = root.querySelector(`[data-thinking-text="${sessionId}"]`)
     if (text) {
-      text.textContent = state.thought
+      const cfg = getLlmConfig()
+      if (cfg.renderThinking) {
+        text.textContent = state.thought
+      } else {
+        text.textContent =
+          state.phase === 'executing_tools' && state.activeTool
+            ? `Ejecutando herramienta ${state.activeTool}...`
+            : 'Procesando paso en LangGraph...'
+      }
     }
     updateLifecycleStepperInDom(root, sessionId, state.thought)
   })

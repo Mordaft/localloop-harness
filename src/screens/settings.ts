@@ -85,6 +85,15 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
                   </div>
                   <p id="model-hint" class="mt-1 text-[11px] text-text-muted">${i18n.settings.loadingModels}</p>
                 </div>
+
+                <div class="md:col-span-2">
+                  <label class="mb-1.5 block text-xs font-medium text-text-secondary" for="renderThinking">${i18n.settings.renderThinkingLabel}</label>
+                  <select id="renderThinking" name="renderThinking" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2.5 text-sm text-text-primary outline-none transition focus:border-primary">
+                    <option value="false" ${!config.renderThinking ? 'selected' : ''}>${i18n.settings.renderThinkingDisabled}</option>
+                    <option value="true" ${config.renderThinking ? 'selected' : ''}>${i18n.settings.renderThinkingEnabled}</option>
+                  </select>
+                  <p class="mt-1 text-[11px] text-text-muted">${i18n.settings.renderThinkingHint}</p>
+                </div>
               </div>
 
               <!-- Test connection inside LLM / SLM Engine group -->
@@ -387,6 +396,7 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
       saveLlmConfig({
         baseUrl: String(fd.get('runtimeUrl') ?? config.baseUrl),
         model: String(fd.get('model') ?? config.model),
+        renderThinking: fd.get('renderThinking') === 'true',
         temperature: Number(fd.get('temperature') ?? config.temperature),
         maxTokens: Number(fd.get('maxTokens') ?? config.maxTokens),
         maxTurns: Number(fd.get('maxTurns') ?? config.maxTurns),
