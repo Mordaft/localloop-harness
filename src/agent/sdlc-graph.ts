@@ -1252,6 +1252,24 @@ self.addEventListener('fetch', (event) => {
   );
 });
 `
+    const mainTs = `// PWA Neon Tetris Mobile Bootstrap
+import { TetrisEngine } from './games/tetris-engine';
+import { TetrisView } from './components/tetris-view';
+import { GoogleAdsSlotManager } from './components/google-ads-slot';
+
+export function bootstrapNeonTetris(): void {
+  console.log('[NeonTetris PWA] Aplicación inicializada con controles táctiles y slot de Google Ads.');
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrapNeonTetris);
+  } else {
+    bootstrapNeonTetris();
+  }
+}
+`
+
     const testScriptShell = `
       const canvas = document.querySelector('#tetris-canvas');
       const touch = document.querySelector('#touch-controls');
@@ -1272,6 +1290,7 @@ self.addEventListener('fetch', (event) => {
       },
       files: [
         { path: 'index.html', content: htmlIndex, description: 'Documento Principal PWA Integrado' },
+        { path: 'src/main.ts', content: mainTs, description: 'Punto de Entrada TypeScript Principal de la PWA' },
         { path: 'public/manifest.webmanifest', content: manifestJson, description: 'Web App Manifest PWA' },
         { path: 'public/sw.js', content: swJs, description: 'Service Worker Offline de la PWA' },
       ],
@@ -2062,12 +2081,34 @@ async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDL
       comp.files?.find((f) => f.path.endsWith('.css'))?.content ||
       defaultGen.files?.find((f) => f.path.endsWith('.css'))?.content
 
-    const browserOptions: BrowserSandboxOptions = defaultGen.browserTest || {
-      html: htmlFile || `<div id="${compId}"><h3>${comp.name}</h3></div>`,
-      css: cssFile || '',
-      code: defaultGen.testScript,
-      domSelector: `#${compId}`,
-      selectors: ['#tetris-canvas', '#touch-controls', '.touch-btn', '#google-ads-container', 'ins.adsbygoogle', 'canvas', 'button'],
+    // Recopilar todos los archivos generados en todos los componentes para resolver imports y estilos cruzados
+    const allCompFiles: Array<{ path: string; content: string }> = []
+    for (const c of Object.values(state.componentsGraph)) {
+      if (c.files) {
+        for (const f of c.files) {
+          if (!allCompFiles.some((x) => x.path === f.path)) {
+            allCompFiles.push(f)
+          }
+        }
+      }
+    }
+    if (defaultGen.files) {
+      for (const f of defaultGen.files) {
+        if (!allCompFiles.some((x) => x.path === f.path)) {
+          allCompFiles.push(f)
+        }
+      }
+    }
+
+    const browserOptions: BrowserSandboxOptions = {
+      html: defaultGen.browserTest?.html || htmlFile || `<div id="${compId}"><h3>${comp.name}</h3></div>`,
+      css: (defaultGen.browserTest?.css ? defaultGen.browserTest.css + '\n' : '') + (cssFile || ''),
+      code: defaultGen.browserTest?.code || defaultGen.testScript,
+      files: allCompFiles,
+      domSelector: defaultGen.browserTest?.domSelector || `#${compId}`,
+      selectors: defaultGen.browserTest?.selectors || [
+        '#tetris-canvas', '#touch-controls', '.touch-btn', '#google-ads-container', 'ins.adsbygoogle', 'canvas', 'button',
+      ],
       captureScreenshot: true,
       timeoutMs: 5000,
     }
@@ -2242,6 +2283,17 @@ async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Partial<SDL
       combinedHtml = `<div id="pwa-app-root"><h1>PWA Móvil</h1><div id="tetris-canvas"></div><div id="google-ads-container"></div></div>`
     }
 
+    const allCompFiles: Array<{ path: string; content: string }> = []
+    for (const c of Object.values(state.componentsGraph)) {
+      if (c.files) {
+        for (const f of c.files) {
+          if (!allCompFiles.some((x) => x.path === f.path)) {
+            allCompFiles.push(f)
+          }
+        }
+      }
+    }
+
     const browserRes = await executeBrowserSandbox({
       html: combinedHtml,
       css: combinedCss,
@@ -2256,6 +2308,7 @@ async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Partial<SDL
         console.log('Auditoría E2E de la PWA Móvil completada con éxito.');
         ({ success: true, allComponentsVerified: true });
       `,
+      files: allCompFiles,
       selectors: ['#tetris-canvas', '#touch-controls', '#google-ads-container', '.touch-btn', 'ins.adsbygoogle'],
       captureScreenshot: true,
       timeoutMs: 5000,

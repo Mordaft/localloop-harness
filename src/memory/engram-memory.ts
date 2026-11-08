@@ -233,7 +233,21 @@ export function toReducedScopeSummary(result: ScopeExecutionResult): ReducedScop
   }
 }
 
+let persistentStoreInstance: MemoryStore | undefined
 let persistentEngramInstance: Engram | undefined
+
+/**
+ * Retorna la instancia de almacenamiento MemoryStore compartida (Dexie en IndexedDB o InMemory).
+ */
+export function getPersistentMemoryStore(): MemoryStore {
+  if (!persistentStoreInstance) {
+    persistentStoreInstance =
+      typeof indexedDB !== 'undefined'
+        ? new DexieMemoryStore(ENGRAM_DB_NAME)
+        : new InMemoryEngramStore()
+  }
+  return persistentStoreInstance
+}
 
 /**
  * Returns the persistent `Engram` instance backed by `DexieMemoryStore` in browser/Worker,
@@ -244,13 +258,28 @@ export function getPersistentEngram(customStore?: MemoryStore): Engram {
     return new Engram({ store: customStore })
   }
   if (!persistentEngramInstance) {
-    const store =
-      typeof indexedDB !== 'undefined'
-        ? new DexieMemoryStore(ENGRAM_DB_NAME)
-        : new InMemoryEngramStore()
-    persistentEngramInstance = new Engram({ store })
+    persistentEngramInstance = new Engram({ store: getPersistentMemoryStore() })
   }
   return persistentEngramInstance
+}
+
+/**
+ * Refresca forzosamente el índice Lunr en memoria a partir de la base de datos persistente Dexie/IndexedDB.
+ * Esencial para sincronizar estados entre el Web Worker y el Hilo Principal.
+ */
+export async function refreshPersistentEngram(): Promise<Engram> {
+  const store = getPersistentMemoryStore()
+  const freshEngram = new Engram({ store })
+  persistentEngramInstance = freshEngram
+  try {
+    const internal = freshEngram as unknown as { searchIndex?: { refresh: () => Promise<void> } }
+    if (internal.searchIndex && typeof internal.searchIndex.refresh === 'function') {
+      await internal.searchIndex.refresh()
+    }
+  } catch (err) {
+    console.warn('[Engram] Error al refrescar índice persistente:', err)
+  }
+  return freshEngram
 }
 
 export function createIsolatedEngram(customStore?: MemoryStore): Engram {
@@ -266,6 +295,7 @@ export async function resetEngramMemoryDatabase(): Promise<void> {
     }
     persistentEngramInstance = undefined
   }
+  persistentStoreInstance = undefined
   if (typeof indexedDB !== 'undefined') {
     try {
       await Dexie.delete(ENGRAM_DB_NAME)
@@ -848,6 +878,16 @@ export async function retrieveEngramMemoryContext(
   const engram = getPersistentEngram(params.store)
   const limit = params.limit ?? 4
 
+  // Intentar refrescar el índice en memoria para captar escrituras recientes
+  try {
+    const internal = engram as unknown as { searchIndex?: { refresh: () => Promise<void> } }
+    if (internal.searchIndex && typeof internal.searchIndex.refresh === 'function') {
+      await internal.searchIndex.refresh()
+    }
+  } catch {
+    // ignorar fallo de refresco
+  }
+
   let results: MemorySearchResult[] = []
   const cleanQuery = params.query.replace(/[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚñÑ ]/g, ' ').trim()
 
@@ -883,6 +923,25 @@ export async function retrieveEngramMemoryContext(
         query: '',
         limit,
       })
+    } catch {
+      results = []
+    }
+  }
+
+  // Fallback 3: Consultar directamente las cabeceras en Dexie/IndexedDB si Lunr no devolvió nada
+  if (results.length === 0) {
+    try {
+      const store = params.store ?? getPersistentMemoryStore()
+      const headers = await store.listHeaders()
+      const matching = headers
+        .filter(
+          (h: MemoryHeader) =>
+            !params.project ||
+            h.project === params.project ||
+            h.tags.includes(params.project),
+        )
+        .slice(0, limit)
+      results = matching.map((header: MemoryHeader) => ({ header, score: 0 }))
     } catch {
       results = []
     }

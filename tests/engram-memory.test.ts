@@ -5,6 +5,8 @@ import {
   InMemoryEngramStore,
   createIsolatedEngram,
   fromEngramRef,
+  getPersistentMemoryStore,
+  refreshPersistentEngram,
   retrieveEngramMemoryContext,
   saveEpisodicTurnMemory,
   saveSdlcPhaseArtifact,
@@ -103,6 +105,24 @@ async function runTests() {
   })
   assert.ok(contextStr.includes('MEMORIA EPISÓDICA'))
   assert.ok(contextStr.includes('IPaymentGateway') || contextStr.includes('Turno Sesión #99'))
+
+  // Prueba de sincronización de memoria y refresco para Memory Explorer
+  const sharedStore = getPersistentMemoryStore()
+  const savedShared = await saveEpisodicTurnMemory({
+    sessionId: 101,
+    userPrompt: '¿Cómo funciona la PWA de Tetris?',
+    assistantReply: 'Combina motor de juego, controles táctiles y Google Ads slot.',
+    phase: 'fase_1_plan',
+    store: sharedStore,
+  })
+  assert.ok(savedShared.id)
+
+  const directHeaders = await sharedStore.listHeaders()
+  assert.ok(directHeaders.length > 0, 'listHeaders() debe listar cabeceras directamente desde el store')
+  assert.ok(directHeaders.some((h) => h.id === savedShared.id))
+
+  const refreshedEngram = await refreshPersistentEngram()
+  assert.ok(refreshedEngram, 'refreshPersistentEngram debe devolver una instancia sincronizada')
 
   console.log('✓ Todas las pruebas de Memoria Engram-ts pasaron exitosamente.')
 }

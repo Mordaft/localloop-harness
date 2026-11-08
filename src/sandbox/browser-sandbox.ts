@@ -1,4 +1,5 @@
 import { trace } from '../diagnostics'
+import { getVirtualFile } from '../fs/workspace-fs'
 import type { OpenAiToolSpec } from '../llm/llm-client'
 
 export interface BrowserSandboxElementInfo {
@@ -25,6 +26,7 @@ export interface BrowserSandboxOptions {
   html?: string
   css?: string
   code?: string
+  files?: Array<{ path: string; content: string }>
   domSelector?: string
   selectors?: string[]
   captureScreenshot?: boolean
@@ -185,6 +187,162 @@ function normalizeSelectorList(options: BrowserSandboxOptions): string[] {
   return list
 }
 
+function lookupWorkspaceFile(
+  targetPath: string,
+  files?: Array<{ path: string; content: string }>,
+): string | undefined {
+  if (!targetPath) return undefined
+  const normalized = targetPath.replace(/^\.?\/+/, '').toLowerCase()
+  const basename = normalized.split('/').pop() || normalized
+
+  if (files && files.length > 0) {
+    const exact = files.find(
+      (f) => f.path.replace(/^\.?\/+/, '').toLowerCase() === normalized,
+    )
+    if (exact) return exact.content
+
+    const endsWith = files.find((f) =>
+      f.path.replace(/^\.?\/+/, '').toLowerCase().endsWith(normalized),
+    )
+    if (endsWith) return endsWith.content
+
+    const baseMatch = files.find(
+      (f) => (f.path.split('/').pop() || '').toLowerCase() === basename,
+    )
+    if (baseMatch) return baseMatch.content
+  }
+
+  try {
+    const v1 = getVirtualFile(normalized)
+    if (v1 !== undefined) return v1
+    const v2 = getVirtualFile(targetPath)
+    if (v2 !== undefined) return v2
+    const v3 = getVirtualFile(basename)
+    if (v3 !== undefined) return v3
+  } catch {
+    // Ignore virtual FS lookup failure
+  }
+
+  return undefined
+}
+
+function sanitizeTsForBrowser(code: string): string {
+  return code
+    .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?/gm, '// [import stripped]')
+    .replace(/^import\s+['"][^'"]+['"];?/gm, '// [import stripped]')
+    .replace(/^export\s+(?:default\s+)?/gm, '')
+    .replace(/^(?:export\s+)?(?:interface|type)\s+[\s\S]*?\{[\s\S]*?\}/gm, '')
+}
+
+/**
+ * Preprocesa el HTML y CSS a inyectar en el sandbox del iframe:
+ * 1. Resuelve e inyecta hojas de estilos <link rel="stylesheet"> a partir de los ficheros del workspace,
+ *    y neutraliza enlaces externos relativos para evitar bloqueos CORS con Origin: null.
+ * 2. Resuelve e inyecta scripts <script src="..."> a partir de ficheros del workspace,
+ *    eliminando el atributo `src` para evitar peticiones net::ERR_FAILED al servidor de la app anfitriona.
+ * 3. Extrae el contenido de <body> y estilos embebidos si el código proporcionado es un documento HTML completo.
+ */
+export function resolveSandboxHtmlAndAssets(
+  rawHtml: string,
+  rawCss: string = '',
+  files?: Array<{ path: string; content: string }>,
+): { html: string; css: string; bodyClass?: string } {
+  let inlinedCss = rawCss ? `${rawCss}\n` : ''
+  let workingHtml = rawHtml || ''
+  let extractedBodyClass: string | undefined
+
+  // 1. Resolver o neutralizar <link rel="stylesheet"> y <link rel="manifest">
+  workingHtml = workingHtml.replace(
+    /<link\b([^>]*)\bhref=(["'])([^"']+)\2([^>]*)>/gi,
+    (match, before, _quote, href, after) => {
+      const allAttrs = `${before} ${after}`
+      const isRelStylesheet = /rel=(["'])stylesheet\1/i.test(allAttrs)
+      const isRelManifest = /rel=(["'])manifest\1/i.test(allAttrs)
+
+      if (isRelManifest) {
+        return `<!-- [LocalLoop Sandbox] Manifest omitido en iframe para evitar fallo CORS: ${href} -->`
+      }
+
+      if (isRelStylesheet) {
+        const fileContent = lookupWorkspaceFile(href, files)
+        if (fileContent) {
+          inlinedCss += `\n/* [LocalLoop Sandbox] Hoja de estilos inyectada desde ${href} */\n${fileContent}\n`
+          return `<!-- [LocalLoop Sandbox] Estilos inyectados desde: ${href} -->`
+        }
+        if (!/^https?:\/\//i.test(href)) {
+          return `<!-- [LocalLoop Sandbox] Hoja de estilos relativa no encontrada en workspace (omitida para evitar CORS): ${href} -->`
+        }
+      }
+
+      if (!/^https?:\/\//i.test(href)) {
+        return `<!-- [LocalLoop Sandbox] Enlace relativo omitido: ${href} -->`
+      }
+      return match
+    },
+  )
+
+  // 2. Resolver o neutralizar <script ... src="...">...</script>
+  workingHtml = workingHtml.replace(
+    /<script\b([^>]*)\bsrc=(["'])([^"']+)\2([^>]*)>([\s\S]*?)<\/script>/gi,
+    (_match, before, _quote, src, after) => {
+      if (/^https?:\/\//i.test(src)) {
+        return _match
+      }
+
+      const fileContent = lookupWorkspaceFile(src, files)
+      if (fileContent) {
+        const safeScript = src.endsWith('.ts') ? sanitizeTsForBrowser(fileContent) : fileContent
+        const safeBody = safeScript.replace(/<\/script/gi, '<\\/script')
+        return `<script data-inlined-from="${src}" ${before} ${after}>
+/* [LocalLoop Sandbox] Inyectado desde workspace: ${src} */
+try {
+${safeBody}
+} catch (inlinedScriptErr) {
+  console.warn('[LocalLoop Sandbox] Error ejecutando script inyectado ${src}:', inlinedScriptErr);
+}
+</script>`
+      }
+
+      return `<script data-sandbox-stub="${src}">
+/* [LocalLoop Sandbox] Script no encontrado en workspace: ${src} */
+console.info('[LocalLoop Sandbox] Script relativo simulado para evitar CORS: ${src}');
+</script>`
+    },
+  )
+
+  // 3. Normalizar documentos HTML completos (<!DOCTYPE> o <html>) extrayendo <head> y <body>
+  if (/<html[\s>]/i.test(workingHtml) || /<!DOCTYPE/i.test(workingHtml)) {
+    workingHtml = workingHtml.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_match, styleContent) => {
+      inlinedCss += `\n${styleContent}\n`
+      return ''
+    })
+
+    const bodyOpenMatch = workingHtml.match(/<body\b([^>]*)>/i)
+    if (bodyOpenMatch) {
+      const classMatch = bodyOpenMatch[1].match(/class=(["'])([^"']+)\1/i)
+      if (classMatch) {
+        extractedBodyClass = classMatch[2]
+      }
+    }
+
+    const bodyMatch = workingHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)
+    if (bodyMatch) {
+      workingHtml = bodyMatch[1].trim()
+    } else {
+      workingHtml = workingHtml
+        .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+        .replace(/<\/?(html|head|meta|title)[\s\S]*?>/gi, '')
+        .trim()
+    }
+  }
+
+  return {
+    html: workingHtml,
+    css: inlinedCss.trim(),
+    bodyClass: extractedBodyClass,
+  }
+}
+
 function buildIframeSrcDoc(params: {
   requestId: string
   html: string
@@ -194,6 +352,7 @@ function buildIframeSrcDoc(params: {
   captureScreenshot: boolean
   width: number
   height: number
+  bodyClass?: string
 }): string {
   const safePayload = JSON.stringify({
     requestId: params.requestId,
@@ -203,6 +362,8 @@ function buildIframeSrcDoc(params: {
     width: params.width,
     height: params.height,
   }).replace(/<\/script/gi, '<\\/script')
+
+  const bodyClassAttr = params.bodyClass ? ` class="${params.bodyClass}"` : ''
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -221,7 +382,7 @@ function buildIframeSrcDoc(params: {
     ${params.css}
   </style>
 </head>
-<body>
+<body${bodyClassAttr}>
   <div id="sandbox-root">${params.html}</div>
   <script>
     (function() {
@@ -503,15 +664,22 @@ export async function executeBrowserSandboxInDom(
   hostContainer.appendChild(iframe)
   document.body.appendChild(hostContainer)
 
+  const { html: resolvedHtml, css: resolvedCss, bodyClass } = resolveSandboxHtmlAndAssets(
+    options.html ?? '',
+    options.css ?? '',
+    options.files,
+  )
+
   const srcdoc = buildIframeSrcDoc({
     requestId,
-    html: options.html ?? '',
-    css: options.css ?? '',
+    html: resolvedHtml,
+    css: resolvedCss,
     code: options.code ?? '',
     selectors,
     captureScreenshot,
     width,
     height,
+    bodyClass,
   })
 
   try {
@@ -791,8 +959,14 @@ async function executeVirtualBrowserSandboxFallback(
     return matched
   }
 
-  const rootNode = createVirtualElement('div', { id: 'sandbox-root' }, options.html ?? '')
-  parseHtmlIntoNodes(options.html ?? '')
+  const { html: resolvedHtml } = resolveSandboxHtmlAndAssets(
+    options.html ?? '',
+    options.css ?? '',
+    options.files,
+  )
+
+  const rootNode = createVirtualElement('div', { id: 'sandbox-root' }, resolvedHtml)
+  parseHtmlIntoNodes(resolvedHtml)
 
   const virtualDocument = {
     title: 'Sandbox Iframe',

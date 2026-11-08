@@ -1,6 +1,11 @@
+import type { MemoryHeader } from 'engram-ts'
 import { heroIcon } from '../config/heroicons'
 import { formatUpdatedTime, t } from '../i18n'
-import { getPersistentEngram } from '../memory/engram-memory'
+import {
+  getPersistentEngram,
+  getPersistentMemoryStore,
+  refreshPersistentEngram,
+} from '../memory/engram-memory'
 import { getSharedIndexedDBSaver } from '../memory/indexeddb-saver'
 import { bindLangToggle, renderLangToggle, renderSidebar, toggleTheme } from './shared'
 
@@ -8,13 +13,49 @@ let currentSearchQuery = ''
 
 export async function renderMemoryExplorer(root: HTMLElement, rerender: () => void): Promise<void> {
   const i18n = t()
-  const engram = getPersistentEngram()
+  const engram = await refreshPersistentEngram().catch(() => getPersistentEngram())
+  const store = getPersistentMemoryStore()
   const saver = getSharedIndexedDBSaver()
 
-  const [engramResults, checkpoints] = await Promise.all([
-    engram.search({ query: currentSearchQuery, limit: 60 }).catch(() => []),
-    saver.listAllSummaries().catch(() => []),
-  ])
+  let engramResults: Array<{ header: MemoryHeader; score: number }> = []
+  const q = currentSearchQuery.trim().toLowerCase()
+
+  if (q) {
+    try {
+      engramResults = await engram.search({ query: currentSearchQuery, limit: 60 })
+    } catch {
+      engramResults = []
+    }
+    // Fallback directo sobre IndexedDB si Lunr no encuentra coincidencias
+    if (engramResults.length === 0) {
+      try {
+        const directHeaders = await store.listHeaders()
+        engramResults = directHeaders
+          .filter(
+            (h: MemoryHeader) =>
+              h.title.toLowerCase().includes(q) ||
+              h.type.toLowerCase().includes(q) ||
+              h.project.toLowerCase().includes(q) ||
+              h.tags.some((tag: string) => tag.toLowerCase().includes(q)),
+          )
+          .slice(0, 60)
+          .map((header: MemoryHeader) => ({ header, score: 1 }))
+      } catch {
+        // Ignorar fallo de listHeaders
+      }
+    }
+  } else {
+    // Si no hay búsqueda, consultar directamente a Dexie (IndexedDB)
+    // para obtener las memorias más recientes de forma inmediata sin depender del índice Lunr
+    try {
+      const directHeaders = await store.listHeaders()
+      engramResults = directHeaders.slice(0, 60).map((header: MemoryHeader) => ({ header, score: 0 }))
+    } catch {
+      engramResults = await engram.search({ query: '', limit: 60 }).catch(() => [])
+    }
+  }
+
+  const checkpoints = await saver.listAllSummaries().catch(() => [])
 
   root.innerHTML = `
     <div class="flex min-h-screen bg-bg-app text-text-primary">
@@ -58,9 +99,19 @@ export async function renderMemoryExplorer(root: HTMLElement, rerender: () => vo
                 <h2 class="font-display text-base font-bold text-text-primary">${i18n.memory.engramsTitle}</h2>
                 <p class="text-xs text-text-muted">${i18n.memory.engramsSubtitle}</p>
               </div>
-              <span class="rounded-lg bg-primary/15 px-2.5 py-1 font-mono text-xs font-semibold text-primary">
-                ${engramResults.length}
-              </span>
+              <div class="flex items-center gap-2">
+                <button
+                  id="refresh-memory-btn"
+                  class="flex items-center gap-1 rounded-lg border border-border-default bg-bg-app px-2.5 py-1 text-xs text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary"
+                  title="Sincronizar con IndexedDB"
+                >
+                  ${heroIcon('arrow-path', 'h-3.5 w-3.5')}
+                  <span>Sincronizar</span>
+                </button>
+                <span class="rounded-lg bg-primary/15 px-2.5 py-1 font-mono text-xs font-semibold text-primary">
+                  ${engramResults.length}
+                </span>
+              </div>
             </div>
 
             ${
@@ -93,7 +144,7 @@ export async function renderMemoryExplorer(root: HTMLElement, rerender: () => vo
                                   ${r.header.tags
                                     .slice(0, 4)
                                     .map(
-                                      (tag) =>
+                                      (tag: string) =>
                                         `<span class="rounded border border-border-default bg-bg-app px-1.5 py-0.5 font-mono text-[10px] text-text-muted">${tag}</span>`,
                                     )
                                     .join('')}
@@ -166,10 +217,23 @@ export async function renderMemoryExplorer(root: HTMLElement, rerender: () => vo
 
   bindLangToggle(rerender)
   root.querySelector<HTMLButtonElement>('#theme-toggle')?.addEventListener('click', toggleTheme)
+  root.querySelector<HTMLButtonElement>('#refresh-memory-btn')?.addEventListener('click', () => {
+    rerender()
+  })
 
   const searchInput = root.querySelector<HTMLInputElement>('#memory-search-input')
   searchInput?.addEventListener('change', () => {
     currentSearchQuery = searchInput.value.trim()
     rerender()
+  })
+  searchInput?.addEventListener('search', () => {
+    currentSearchQuery = searchInput.value.trim()
+    rerender()
+  })
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      currentSearchQuery = searchInput.value.trim()
+      rerender()
+    }
   })
 }

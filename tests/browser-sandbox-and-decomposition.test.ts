@@ -11,6 +11,7 @@ import { IndexedDBSaver } from '../src/memory/indexeddb-saver'
 import {
   executeBrowserSandbox,
   getBrowserSandboxToolSpec,
+  resolveSandboxHtmlAndAssets,
 } from '../src/sandbox/browser-sandbox'
 
 console.log(
@@ -334,6 +335,76 @@ async function runTests() {
     } finally {
       globalThis.fetch = originalFetch
     }
+  }
+
+  // Test 4: resolveSandboxHtmlAndAssets inlines workspace assets and neutralizes relative links/scripts
+  // preventing CORS origin: null errors when testing components in the browser iframe sandbox.
+  {
+    const rawHtml = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <link rel="manifest" href="public/manifest.webmanifest">
+  <link rel="stylesheet" href="src/styles/tetris-mobile.css">
+  <link rel="stylesheet" href="src/styles/unknown.css">
+  <style>
+    .local-style { margin: 10px; }
+  </style>
+</head>
+<body class="tetris-mobile-body">
+  <div id="tetris-app">
+    <canvas id="tetris-canvas"></canvas>
+  </div>
+  <script type="module" src="src/main.ts"></script>
+  <script src="src/pwa-shell.js"></script>
+</body>
+</html>`
+
+    const mockFiles = [
+      {
+        path: 'src/styles/tetris-mobile.css',
+        content: '.tetris-mobile-body { background: #0f172a; color: #38bdf8; }',
+      },
+      {
+        path: 'src/main.ts',
+        content: `export function init() { console.log('Init PWA'); }`,
+      },
+    ]
+
+    const resolved = resolveSandboxHtmlAndAssets(rawHtml, '/* initial css */', mockFiles)
+
+    // 1. Inlined stylesheet
+    assert.ok(
+      resolved.css.includes('.tetris-mobile-body { background: #0f172a; color: #38bdf8; }'),
+      'La hoja de estilos existente en mockFiles debe haberse inyectado en css',
+    )
+    assert.ok(
+      resolved.css.includes('.local-style { margin: 10px; }'),
+      'Los estilos <style> dentro de <head> deben extraerse hacia css',
+    )
+
+    // 2. Relative links to stylesheets and manifest stripped / neutralized
+    assert.ok(!resolved.html.includes('href="src/styles/tetris-mobile.css"'))
+    assert.ok(!resolved.html.includes('href="src/styles/unknown.css"'))
+    assert.ok(!resolved.html.includes('href="public/manifest.webmanifest"'))
+
+    // 3. Companion script inlined without keeping relative src attribute
+    assert.ok(!resolved.html.includes('src="src/main.ts"'), 'No debe quedar atributo src="src/main.ts"')
+    assert.ok(resolved.html.includes('Init PWA'), 'El contenido de src/main.ts debe estar inyectado inline')
+
+    // 4. Unknown relative script neutralized with stub and no src attribute
+    assert.ok(!resolved.html.includes('src="src/pwa-shell.js"'), 'No debe quedar atributo src="src/pwa-shell.js"')
+    assert.ok(
+      resolved.html.includes('data-sandbox-stub="src/pwa-shell.js"'),
+      'El script desconocido debe sustituirse por un stub inofensivo sin generar peticiones CORS',
+    )
+
+    // 5. Body structure and class preserved
+    assert.equal(resolved.bodyClass, 'tetris-mobile-body')
+    assert.ok(resolved.html.includes('id="tetris-app"'))
+    assert.ok(resolved.html.includes('id="tetris-canvas"'))
+    assert.ok(!resolved.html.includes('<!DOCTYPE'), 'No debe quedar etiqueta doctype en el fragmento')
+    assert.ok(!resolved.html.includes('<html'), 'No debe quedar etiqueta html en el fragmento')
   }
 
   console.log(
