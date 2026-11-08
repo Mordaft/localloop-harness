@@ -19,6 +19,7 @@ import {
   cancelAgentSession,
   getSessionThinkingState,
   isSessionRunning,
+  onAgentProgress,
   onAgentStreamChunk,
   onAgentThinking,
   runAgentSessionTurn,
@@ -32,6 +33,7 @@ let isFileDrawerOpen = false
 let selectedFilePath = ''
 let activeStreamListener: (() => void) | undefined
 let activeThinkingListener: (() => void) | undefined
+let activeProgressListener: (() => void) | undefined
 let activeStreamBatcher: StreamingQueueBatcher | undefined
 
 // Estado del Wizard de 3 Pasos de la Fase 0
@@ -1338,13 +1340,22 @@ export async function renderWorkspaceScreen(
 
   // Identificar si estamos en una fase Human-in-the-Loop
   const lastMessage = messages[messages.length - 1]?.content ?? ''
-  const isPhase0Waiting =
-    lastMessage.includes('Fase 0: Descubrimiento') ||
-    messages.length <= 1 ||
-    session.title.includes('Nueva sesión')
   const isPhase4Waiting =
+    (session.status === SessionStatus.WAITING_APPROVAL &&
+      (session.currentPhase === '4_E2E_BUSINESS_AUDIT' ||
+        lastMessage.includes('Aprobación Formal de Negocio') ||
+        lastMessage.includes('Fase 4') ||
+        lastMessage.includes('HITL') ||
+        lastMessage.includes('Auditoría'))) ||
     lastMessage.includes('Fase 4: Solicitud de Aprobación Formal de Negocio') ||
     lastMessage.includes('Aprobación Formal de Negocio')
+
+  const isPhase0Waiting =
+    !isPhase4Waiting &&
+    ((session.status === SessionStatus.WAITING_APPROVAL && session.currentPhase === '0_DISCOVERY_RIGOR') ||
+      lastMessage.includes('Fase 0: Descubrimiento') ||
+      messages.length <= 1 ||
+      session.title.includes('Nueva sesión'))
 
   root.innerHTML = `
     <div class="flex h-screen overflow-hidden bg-bg-app text-text-primary">
@@ -2235,9 +2246,19 @@ export async function renderWorkspaceScreen(
     activeStreamBatcher?.enqueue(evt)
   })
 
+  // Suscripción a avances y finalización de turnos para repintar la UI si cambia el estado (ej. pausa en WAITING_APPROVAL de Fase 4)
+  activeProgressListener?.()
+  activeProgressListener = onAgentProgress(async (sId) => {
+    if (sId !== sessionId) return
+    if (!isSessionRunning(sessionId)) {
+      activeStreamBatcher?.stop()
+      await renderWorkspaceScreen(root, sessionId, rerender)
+    }
+  })
+
   // Suscripción a Thinking del agente para actualizar el stepper y el banner de estado
   activeThinkingListener?.()
-  activeThinkingListener = onAgentThinking((state) => {
+  activeThinkingListener = onAgentThinking(async (state) => {
     if (state.sessionId !== sessionId) return
     const pill = root.querySelector(`[data-thinking-pill="${sessionId}"]`)
     if (pill) {
@@ -2257,6 +2278,12 @@ export async function renderWorkspaceScreen(
       }
     }
     updateLifecycleStepperInDom(root, sessionId, state.thought, state.sdlcPhase)
+
+    // Si el turno finalizó su procesamiento y la sesión ya no está corriendo, asegurar refresco completo
+    if (!state.isThinking && !isSessionRunning(sessionId)) {
+      activeStreamBatcher?.stop()
+      await renderWorkspaceScreen(root, sessionId, rerender)
+    }
   })
 }
 

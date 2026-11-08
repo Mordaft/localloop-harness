@@ -1520,13 +1520,22 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
   if (Object.keys(componentsGraph).length === 0) {
     if (state.phase0Data?.step3?.featureComponentMappings && state.phase0Data.step3.featureComponentMappings.length > 0) {
       for (const comp of state.phase0Data.step3.featureComponentMappings) {
+        const rawDeps = Array.isArray(comp.dependsOn)
+          ? comp.dependsOn
+          : typeof comp.dependsOn === 'string'
+            ? (comp.dependsOn as string).split(',')
+            : []
+        const cleanDeps = rawDeps
+          .map((d: string) => String(d).trim().replace(/^[`'"]+|[`'"]+$/g, ''))
+          .filter(Boolean)
+
         componentsGraph[comp.componentId] = {
           id: comp.componentId,
           name: comp.name,
           description: comp.description,
           targetState: comp.targetState,
-          dependsOn: comp.dependsOn || [],
-          status: comp.dependsOn && comp.dependsOn.length > 0 ? 'BLOCKED' : 'READY',
+          dependsOn: cleanDeps,
+          status: cleanDeps.length > 0 ? 'BLOCKED' : 'READY',
         }
       }
     } else {
@@ -1672,16 +1681,46 @@ Genera el informe de la Fase 1 formalizando:
  */
 async function node_component_scheduler(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
   trace('[SDLCGraph] Evaluando estado de dependencias Fin-Inicio en el grafo...')
-  const graph = { ...state.componentsGraph }
+  const graph: Record<string, ComponentNode> = {}
+  for (const [k, v] of Object.entries(state.componentsGraph || {})) {
+    graph[k] = { ...v, dependsOn: [...(v.dependsOn || [])] }
+  }
+
+  // Búsqueda flexible de dependencias (por ID exacto, ID insensible a mayúsculas o Nombre de componente)
+  const findComp = (depRef: string): ComponentNode | undefined => {
+    const clean = depRef.trim().replace(/^[`'"]+|[`'"]+$/g, '')
+    if (!clean) return undefined
+    if (graph[clean]) return graph[clean]
+    const lower = clean.toLowerCase()
+    const byLowerId = Object.values(graph).find((c) => c.id.toLowerCase() === lower)
+    if (byLowerId) return byLowerId
+    const byName = Object.values(graph).find(
+      (c) => c.name.toLowerCase() === lower || c.name.toLowerCase().includes(lower),
+    )
+    if (byName) return byName
+    return undefined
+  }
+
   let nextComponentId: string | null = null
 
   // 1. Desbloquear componentes cuyas dependencias estén todas en VERIFIED
   for (const compId of Object.keys(graph)) {
     const comp = graph[compId]
     if (comp.status === 'BLOCKED') {
-      const allDepsVerified = comp.dependsOn.every((depId) => graph[depId]?.status === 'VERIFIED')
+      const validDeps = comp.dependsOn
+        .map((d) => d.trim().replace(/^[`'"]+|[`'"]+$/g, ''))
+        .filter(Boolean)
+
+      const allDepsVerified =
+        validDeps.length === 0 ||
+        validDeps.every((depRef) => {
+          const depComp = findComp(depRef)
+          return depComp ? depComp.status === 'VERIFIED' : true
+        })
+
       if (allDepsVerified) {
         comp.status = 'READY'
+        trace(`[SDLCGraph] Componente ${compId} desbloqueado a estado READY (todas las dependencias Fin-Inicio satisfechas).`)
       }
     }
     if (comp.status === 'READY' && !nextComponentId) {
@@ -1689,9 +1728,10 @@ async function node_component_scheduler(state: SDLCStateType): Promise<Partial<S
     }
   }
 
-  // Si hay un componente listo para abordar
+  // 2. Si hay un componente listo para abordar
   if (nextComponentId) {
     graph[nextComponentId].status = 'IN_DESIGN'
+    trace(`[SDLCGraph] Scheduler despachando siguiente componente: ${nextComponentId} (IN_DESIGN).`)
     return {
       componentsGraph: graph,
       activeComponentId: nextComponentId,
@@ -1700,13 +1740,32 @@ async function node_component_scheduler(state: SDLCStateType): Promise<Partial<S
     }
   }
 
-  // Si todos los componentes están en estado VERIFIED, avanzamos a Fase 4 (E2E)
+  // 3. Si todos los componentes están en estado VERIFIED, avanzamos a Fase 4 (E2E)
   const allVerified = Object.values(graph).every((c) => c.status === 'VERIFIED')
   if (allVerified && Object.keys(graph).length > 0) {
+    trace('[SDLCGraph] Todos los componentes han alcanzado estado VERIFIED. Avanzando a Fase 4 (E2E y Aprobación Formal de Negocio)...')
     return {
+      componentsGraph: graph,
       activeComponentId: null,
       currentPhase: '4_E2E_BUSINESS_AUDIT',
       activeSkill: 'E2EAutomation_Runner',
+    }
+  }
+
+  // 4. Mecanismo de rescate: si no hay componente READY pero quedan componentes no verificados (posible bloqueo por ID no encontrado)
+  if (!nextComponentId && !allVerified && Object.keys(graph).length > 0) {
+    trace('[SDLCGraph] Advertencia: Posible estancamiento en dependencias. Desbloqueando componente restante para continuar...', {
+      statuses: Object.fromEntries(Object.entries(graph).map(([k, v]) => [k, v.status])),
+    })
+    const unverifiedComp = Object.values(graph).find((c) => c.status !== 'VERIFIED')
+    if (unverifiedComp) {
+      unverifiedComp.status = 'IN_DESIGN'
+      return {
+        componentsGraph: graph,
+        activeComponentId: unverifiedComp.id,
+        activeSkill: 'ComponentTechnical_Designer',
+        currentPhase: '2_TECHNICAL_DESIGN_GATE',
+      }
     }
   }
 
@@ -2484,7 +2543,7 @@ async function node_phase4_business_compile(state: SDLCStateType): Promise<Parti
     sessionId: state.sessionId,
     phaseName: `Fase 4: Auditoría de Negocio (HITL) — [Skill: ${resolvedSkill.skill.name}]`,
     sdlcPhase: '4_E2E_BUSINESS_AUDIT',
-    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Auditor de Resultados de Negocio de LocalLoop. Redacta el informe ejecutivo para el stakeholder de negocio solicitando su aprobación formal (HITL).`,
+    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Auditor de Resultados de Negocio de LocalLoop. Redacta el informe ejecutivo para el stakeholder de negocio solicitando su aprobación formal (HITL).\nImportante: Incluye obligatoriamente el encabezado "### ⚖️ Fase 4: Solicitud de Aprobación Formal de Negocio (HITL)" al inicio.`,
     userPrompt: `Casos de Uso: ${state.useCases.map((u) => u.title).join(', ')}
 Componentes construidos: ${Object.keys(state.componentsGraph).join(', ')}
 Suites unitarias: ${Object.keys(state.unitEvidences).length}
@@ -2494,9 +2553,16 @@ Genera la solicitud formal de Aprobación de Negocio en Markdown.`,
     defaultFallback: fallbackAudit,
   })
 
+  const rawAuditContent = llmAudit.content.trim()
+  const formattedAuditContent =
+    rawAuditContent.includes('Aprobación Formal de Negocio') ||
+    rawAuditContent.includes('Fase 4: Solicitud de Aprobación Formal')
+      ? rawAuditContent
+      : `### ⚖️ Fase 4: Solicitud de Aprobación Formal de Negocio (HITL)\n\n${rawAuditContent}`
+
   const approvalRequestMessage = {
     role: 'assistant' as const,
-    content: llmAudit.content,
+    content: formattedAuditContent,
     thought: llmAudit.thought,
   }
 

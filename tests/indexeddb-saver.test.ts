@@ -1,4 +1,4 @@
-import { emptyCheckpoint } from '@langchain/langgraph-checkpoint'
+import { emptyCheckpoint } from '@langchain/langgraph'
 import assert from 'node:assert/strict'
 import { IndexedDBSaver } from '../src/memory/indexeddb-saver'
 
