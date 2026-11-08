@@ -182,13 +182,10 @@ export interface TranslationDictionary {
     fontFamilyLabel: string
     logoSvgLabel: string
     resetBrandBtn: string
-    promptsEyebrow: string
-    promptsTitle: string
-    promptsDesc: string
-    systemPromptLabel: string
-    systemPromptHint: string
     statusNotice: string
     testBtn: string
+    testConnectionTesting: string
+    testConnectionSuccess: string
     saveBtn: string
     savedSuccess: string
     saveBtnSuccess: string

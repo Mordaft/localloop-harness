@@ -31,12 +31,18 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
       ${renderSidebar('settings')}
 
       <div class="flex flex-1 flex-col">
-        <header class="flex items-center justify-between border-b border-border-default bg-bg-app/85 px-8 py-5 backdrop-blur">
+        <header class="sticky top-0 z-30 flex items-center justify-between border-b border-border-default bg-bg-app/90 px-8 py-4 backdrop-blur shadow-sm">
           <div>
             <p class="text-xs uppercase tracking-[0.2em] text-primary">${i18n.settings.eyebrow}</p>
             <h1 class="font-display text-2xl font-bold text-text-primary">${i18n.settings.title}</h1>
           </div>
-          <div class="flex items-center gap-2.5">
+          <div class="flex items-center gap-3">
+            <span id="header-status" class="hidden text-xs font-medium md:inline"></span>
+            <button type="submit" form="llm-settings-form" id="save-llm-btn-header" class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-md shadow-primary/20 transition hover:opacity-95 active:scale-95" title="${i18n.settings.saveBtn}">
+              ${heroIcon('check-circle', 'h-3.5 w-3.5')}
+              <span>${i18n.settings.saveBtn}</span>
+            </button>
+            <div class="h-4 w-px bg-border-default"></div>
             <span class="rounded-lg border border-border-default bg-bg-card px-3 py-1.5 text-xs text-text-secondary">${i18n.settings.localOnly}</span>
             ${renderLangToggle()}
             <button id="theme-toggle" class="rounded-lg border border-border-default bg-bg-card p-2 text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary" title="${i18n.common.toggleTheme}">
@@ -79,6 +85,18 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
                   </div>
                   <p id="model-hint" class="mt-1 text-[11px] text-text-muted">${i18n.settings.loadingModels}</p>
                 </div>
+              </div>
+
+              <!-- Test connection inside LLM / SLM Engine group -->
+              <div class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
+                <div class="flex items-center gap-2.5">
+                  <button type="button" id="test-llm-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-3.5 py-2 text-xs font-medium text-text-primary transition hover:border-primary/40 hover:bg-bg-elevated active:scale-95">
+                    ${heroIcon('bolt', 'h-3.5 w-3.5 text-primary')}
+                    <span>${i18n.settings.testBtn}</span>
+                  </button>
+                  <span id="test-llm-status" class="text-xs"></span>
+                </div>
+                <span class="text-[11px] text-text-muted">OpenAI /v1 specification</span>
               </div>
             </section>
 
@@ -151,33 +169,13 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
               </div>
             </section>
 
-            <!-- 4. System Prompt -->
-            <section class="rounded-2xl border border-border-default bg-bg-card p-6">
-              <div class="mb-4 border-b border-border-subtle pb-4">
-                <p class="text-xs uppercase tracking-widest text-primary">${i18n.settings.promptsEyebrow}</p>
-                <h2 class="mt-1 font-display text-lg font-bold text-text-primary">${i18n.settings.promptsTitle}</h2>
-                <p class="mt-0.5 text-xs text-text-muted">${i18n.settings.promptsDesc}</p>
-              </div>
-              <div>
-                <label class="mb-1.5 block text-xs font-medium text-text-secondary" for="systemPrompt">${i18n.settings.systemPromptLabel}</label>
-                <textarea id="systemPrompt" name="systemPrompt" rows="4" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2.5 text-sm text-text-primary outline-none focus:border-primary" required>${config.systemPrompt}</textarea>
-                <p class="mt-1 text-[11px] text-text-muted">${i18n.settings.systemPromptHint}</p>
-              </div>
-            </section>
-
-            <!-- Save & Test Controls -->
-            <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-bg-card px-5 py-4">
+            <!-- Save Controls (Sticky docked bottom bar) -->
+            <div class="sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-bg-card/95 px-5 py-3.5 backdrop-blur shadow-xl">
               <p id="settings-status" class="text-xs text-text-muted">${i18n.settings.statusNotice}</p>
-              <div class="flex items-center gap-2.5">
-                <button type="button" id="test-llm-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-3.5 py-2 text-xs font-medium text-text-primary transition hover:border-primary/40 hover:bg-bg-elevated">
-                  ${heroIcon('bolt', 'h-3.5 w-3.5 text-primary')}
-                  <span>${i18n.settings.testBtn}</span>
-                </button>
-                <button type="submit" id="save-llm-btn" class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-primary/20 transition hover:opacity-95">
-                  ${heroIcon('check-circle', 'h-3.5 w-3.5')}
-                  <span>${i18n.settings.saveBtn}</span>
-                </button>
-              </div>
+              <button type="submit" id="save-llm-btn" class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-primary/20 transition hover:opacity-95 active:scale-95">
+                ${heroIcon('check-circle', 'h-3.5 w-3.5')}
+                <span>${i18n.settings.saveBtn}</span>
+              </button>
             </div>
           </form>
 
@@ -314,6 +312,12 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
   const modelSelect = root.querySelector<HTMLSelectElement>('#model')!
   const modelHint = root.querySelector<HTMLElement>('#model-hint')!
   const statusEl = root.querySelector<HTMLElement>('#settings-status')!
+  const headerStatusEl = root.querySelector<HTMLElement>('#header-status')
+  const testLlmBtn = root.querySelector<HTMLButtonElement>('#test-llm-btn')
+  const testLlmStatus = root.querySelector<HTMLElement>('#test-llm-status')
+  const saveBtnHeader = root.querySelector<HTMLButtonElement>('#save-llm-btn-header')
+  const saveBtnBottom = root.querySelector<HTMLButtonElement>('#save-llm-btn')
+  const saveBtns = [saveBtnHeader, saveBtnBottom].filter((b): b is HTMLButtonElement => !!b)
 
   async function populateModelsList(selectedModel?: string) {
     const url = runtimeUrlInput.value.trim()
@@ -342,36 +346,104 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
     void populateModelsList()
   })
 
-  root.querySelector<HTMLButtonElement>('#test-llm-btn')?.addEventListener('click', async () => {
+  testLlmBtn?.addEventListener('click', async () => {
+    const url = runtimeUrlInput.value.trim()
+    if (!url) {
+      if (testLlmStatus) {
+        testLlmStatus.textContent = i18n.settings.errorRequired
+        testLlmStatus.className = 'text-xs font-medium text-red-500'
+      }
+      return
+    }
+
+    if (testLlmBtn) testLlmBtn.disabled = true
+    if (testLlmStatus) {
+      testLlmStatus.textContent = i18n.settings.testConnectionTesting
+      testLlmStatus.className = 'text-xs text-text-muted animate-pulse'
+    }
+
     try {
-      const res = await testLlmConnection({ baseUrl: runtimeUrlInput.value.trim() })
+      const res = await testLlmConnection({ baseUrl: url })
       const count = res.data?.length ?? 0
-      statusEl.textContent = `Conexión verificada (${count} modelo(s) disponibles).`
-      statusEl.className = 'text-xs font-medium text-accent'
+      if (testLlmStatus) {
+        testLlmStatus.textContent = formatText(i18n.settings.testConnectionSuccess, { count })
+        testLlmStatus.className = 'text-xs font-medium text-accent'
+      }
+      void populateModelsList()
     } catch (err) {
-      statusEl.textContent = err instanceof Error ? err.message : i18n.settings.errorTest
-      statusEl.className = 'text-xs font-medium text-red-500'
+      if (testLlmStatus) {
+        testLlmStatus.textContent = err instanceof Error ? `✕ ${err.message}` : `✕ ${i18n.settings.errorTest}`
+        testLlmStatus.className = 'text-xs font-medium text-red-500'
+      }
+    } finally {
+      if (testLlmBtn) testLlmBtn.disabled = false
     }
   })
 
   root.querySelector<HTMLFormElement>('#llm-settings-form')?.addEventListener('submit', (ev) => {
     ev.preventDefault()
     const fd = new FormData(ev.currentTarget as HTMLFormElement)
-    saveLlmConfig({
-      baseUrl: String(fd.get('runtimeUrl') ?? config.baseUrl),
-      model: String(fd.get('model') ?? config.model),
-      temperature: Number(fd.get('temperature') ?? config.temperature),
-      maxTokens: Number(fd.get('maxTokens') ?? config.maxTokens),
-      maxTurns: Number(fd.get('maxTurns') ?? config.maxTurns),
-      maxTokenBudget: Number(fd.get('maxTokenBudget') ?? config.maxTokenBudget),
-      maxDepth: Number(fd.get('maxDepth') ?? config.maxDepth),
-      maxConcurrency: Number(fd.get('maxConcurrency') ?? config.maxConcurrency),
-      fsWriteMode: (fd.get('fsWriteMode') as FsWriteModeType) ?? FsWriteMode.CONFIRM,
-      systemPrompt: String(fd.get('systemPrompt') ?? config.systemPrompt),
-    })
-    syncWorkerEnvironment()
-    statusEl.textContent = i18n.settings.savedSuccess
-    statusEl.className = 'text-xs font-medium text-accent'
+    try {
+      saveLlmConfig({
+        baseUrl: String(fd.get('runtimeUrl') ?? config.baseUrl),
+        model: String(fd.get('model') ?? config.model),
+        temperature: Number(fd.get('temperature') ?? config.temperature),
+        maxTokens: Number(fd.get('maxTokens') ?? config.maxTokens),
+        maxTurns: Number(fd.get('maxTurns') ?? config.maxTurns),
+        maxTokenBudget: Number(fd.get('maxTokenBudget') ?? config.maxTokenBudget),
+        maxDepth: Number(fd.get('maxDepth') ?? config.maxDepth),
+        maxConcurrency: Number(fd.get('maxConcurrency') ?? config.maxConcurrency),
+        fsWriteMode: (fd.get('fsWriteMode') as FsWriteModeType) ?? FsWriteMode.CONFIRM,
+        systemPrompt: config.systemPrompt,
+      })
+      syncWorkerEnvironment()
+
+      const successNotice = i18n.settings.savedSuccess
+      const btnSuccessText = i18n.settings.saveBtnSuccess
+
+      if (statusEl) {
+        statusEl.textContent = successNotice
+        statusEl.className = 'text-xs font-medium text-accent'
+      }
+      if (headerStatusEl) {
+        headerStatusEl.textContent = successNotice
+        headerStatusEl.className = 'hidden text-xs font-medium text-accent md:inline'
+      }
+
+      saveBtns.forEach((btn) => {
+        const span = btn.querySelector('span')
+        if (span) span.textContent = btnSuccessText
+        btn.classList.add('bg-accent')
+        btn.classList.remove('bg-primary')
+      })
+
+      setTimeout(() => {
+        if (statusEl) {
+          statusEl.textContent = i18n.settings.statusNotice
+          statusEl.className = 'text-xs text-text-muted'
+        }
+        if (headerStatusEl) {
+          headerStatusEl.textContent = ''
+          headerStatusEl.className = 'hidden text-xs text-text-muted md:inline'
+        }
+        saveBtns.forEach((btn) => {
+          const span = btn.querySelector('span')
+          if (span) span.textContent = i18n.settings.saveBtn
+          btn.classList.remove('bg-accent')
+          btn.classList.add('bg-primary')
+        })
+      }, 3000)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : i18n.settings.errorSave
+      if (statusEl) {
+        statusEl.textContent = errorMsg
+        statusEl.className = 'text-xs font-medium text-red-500'
+      }
+      if (headerStatusEl) {
+        headerStatusEl.textContent = errorMsg
+        headerStatusEl.className = 'hidden text-xs font-medium text-red-500 md:inline'
+      }
+    }
   })
 
   root.querySelector<HTMLFormElement>('#mcp-add-form')?.addEventListener('submit', async (ev) => {
