@@ -36,6 +36,7 @@ export interface AgentLoopCallbacks {
     sessionId: number
     thought: string
     phase: 'thinking' | 'executing_tools' | 'completed'
+    sdlcPhase?: string
     activeTool?: string
     turnsUsed?: number
     maxTurns?: number

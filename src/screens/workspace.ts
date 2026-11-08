@@ -26,7 +26,7 @@ import {
   type AgentStreamChunkEvent,
 } from '../worker/agent-bridge'
 import { bindLangToggle, renderLangToggle, renderSidebar, statusClass, toggleTheme } from './shared'
-import type { Phase0ThreeStepData, SolutionComponentMapping } from '../agent/sdlc-state'
+import type { Phase0ThreeStepData, SdlcPhase, SolutionComponentMapping } from '../agent/sdlc-state'
 
 let isFileDrawerOpen = false
 let selectedFilePath = ''
@@ -826,8 +826,22 @@ export interface SdlcPhaseItem {
   status: PhaseLifecycleStatus
 }
 
+export function phaseToNumber(phase?: SdlcPhase | string): number {
+  if (!phase) return -1
+  if (phase === 'COMPLETED') return 7
+  if (phase.startsWith('0_')) return 0
+  if (phase.startsWith('1_')) return 1
+  if (phase.startsWith('2_')) return 2
+  if (phase.startsWith('3_')) return 3
+  if (phase.startsWith('4_')) return 4
+  if (phase.startsWith('5_')) return 5
+  if (phase.startsWith('6_')) return 6
+  return -1
+}
+
 export function computeSdlcPhasesState(params: {
   sessionStatus: SessionStatusType
+  currentPhase?: SdlcPhase | string
   turnsUsed: number
   messages: StoredChatMessage[]
   running: boolean
@@ -836,173 +850,213 @@ export function computeSdlcPhasesState(params: {
   thinkingThought?: string
   liveStreamPhase?: string
 }): SdlcPhaseItem[] {
-  const { sessionStatus, turnsUsed, messages, running, thinkingThought, liveStreamPhase } = params
+  const { sessionStatus, currentPhase, turnsUsed, messages, running, thinkingThought, liveStreamPhase } = params
 
-  const isCompleted = sessionStatus === SessionStatus.COMPLETED
-
-  const lastMsg = messages[messages.length - 1]?.content ?? ''
-  const isPhase0Waiting =
-    !isCompleted &&
-    (lastMsg.includes('Fase 0: Descubrimiento') || messages.length <= 1)
-  const isPhase4Waiting =
-    !isCompleted &&
-    (lastMsg.includes('Fase 4: Solicitud de Aprobación Formal de Negocio') ||
-      lastMsg.includes('Aprobación Formal de Negocio') ||
-      sessionStatus === SessionStatus.WAITING_APPROVAL)
-
-  // Historial global de mensajes acumulados
   const allText = messages.map((m) => m.content).join('\n')
-  const liveIndicator = `${liveStreamPhase || ''} ${thinkingThought || ''}`.toLowerCase()
+  const lastMsg = messages[messages.length - 1]?.content ?? ''
 
-  const hasP0Done =
-    isCompleted ||
+  // Detección acumulada a partir de los mensajes registrados en el chat
+  const msgHasP6 =
+    allText.includes('Fase 6') ||
+    allText.includes('Fase 5 & 6') ||
+    allText.includes('Informe de Entrega Final') ||
+    allText.includes('Ciclo de Desarrollo LocalLoop - Fase 6 Finalizada') ||
+    allText.includes('Ciclo de desarrollo completado') ||
+    allText.includes('LANDSCAPE.md') ||
+    allText.includes('MANUAL_DE_PROCESOS.md')
+
+  const msgHasP5 =
+    msgHasP6 ||
+    allText.includes('Fase 5') ||
+    allText.includes('Resiliencia') ||
+    allText.includes('Causa Raíz') ||
+    allText.includes('RCA')
+
+  const msgHasP4 =
+    msgHasP5 ||
+    allText.includes('Fase 4') ||
+    allText.includes('Integración E2E') ||
+    allText.includes('Auditoría de Negocio') ||
+    allText.includes('Aprobación Formal de Negocio') ||
+    allText.includes('Aprobación de Negocio') ||
+    allText.includes('Aprobación formal de negocio')
+
+  const msgHasP3 =
+    msgHasP4 ||
+    allText.includes('Fase 3') ||
+    allText.includes('Pruebas Unitarias') ||
+    allText.includes('Informe de Verificación Unitaria') ||
+    allText.includes('Construcción') ||
+    allText.includes('Sandbox JS') ||
+    allText.includes('VERIFIED')
+
+  const msgHasP2 =
+    msgHasP3 ||
+    allText.includes('Fase 2') ||
+    allText.includes('Diseño Técnico') ||
+    allText.includes('Gatekeeper') ||
+    allText.includes('Dictamen') ||
+    allText.includes('DEBT-')
+
+  const msgHasP1 =
+    msgHasP2 ||
+    allText.includes('Fase 1') ||
+    allText.includes('Alineamiento') ||
+    allText.includes('Grafo de Dependencias') ||
+    allText.includes('DAG') ||
+    allText.includes('Plan WBS')
+
+  const msgHasP0 =
+    msgHasP1 ||
     allText.includes('Definición Formal de Fase 0') ||
-    allText.includes('Fase 1: Alineamiento') ||
-    (turnsUsed >= 1 && !isPhase0Waiting)
+    allText.includes('Fase 0') ||
+    allText.includes('Descubrimiento') ||
+    turnsUsed >= 1
 
-  const hasP1Done =
-    isCompleted ||
-    allText.includes('Fase 2: Diseño') ||
-    allText.includes('Fase 2: Dictamen Gatekeeper')
+  const isCompleted =
+    sessionStatus === SessionStatus.COMPLETED ||
+    currentPhase === 'COMPLETED' ||
+    (!running && msgHasP6)
 
-  const hasP2Done =
-    isCompleted ||
-    allText.includes('Fase 3: Construcción') ||
-    allText.includes('Fase 3: Pruebas Unitarias')
+  // 1. Si la sesión ha finalizado completamente (Fase 6 concluida)
+  if (isCompleted) {
+    return [
+      { id: 0, label: '0. Descubrimiento', sublabel: 'HITL 1', status: 'completed' },
+      { id: 1, label: '1. Estrategia & Plan', sublabel: 'DAG', status: 'completed' },
+      { id: 2, label: '2. Diseño & Gatekeeper', sublabel: 'Clean Arch', status: 'completed' },
+      { id: 3, label: '3. Construcción & Unit', sublabel: 'Sandbox JS', status: 'completed' },
+      { id: 4, label: '4. E2E & Negocio', sublabel: 'HITL 2', status: 'completed' },
+      { id: 5, label: '5. Resiliencia', sublabel: 'RCA / Deuda', status: 'completed' },
+      { id: 6, label: '6. Cierre & Docs', sublabel: 'doc/ y src/', status: 'completed' },
+    ]
+  }
 
-  const hasP3Done =
-    isCompleted ||
-    allText.includes('Fase 4: Integración E2E') ||
-    allText.includes('Fase 4: Solicitud de Aprobación')
-
-  const hasP4Done =
-    isCompleted ||
-    allText.includes('Aprobación formal de negocio concedida') ||
-    allText.includes('Fase 5 & 6: Cierre') ||
-    allText.includes('Fase 6')
-
-  const hasP5Done =
-    isCompleted ||
-    allText.includes('Fase 5 & 6: Cierre') ||
-    allText.includes('Fase 6')
-
-  const hasP6Done = isCompleted || allText.includes('Ciclo de desarrollo completado con éxito')
-
-  // Identificación precisa de la fase en tiempo real mientras el modelo genera deltas
-  let activeLivePhaseNumber = -1
+  // 2. Identificación de la fase activa por Streaming / Thinking en tiempo real
+  const liveIndicator = `${liveStreamPhase || ''} ${thinkingThought || ''}`.toLowerCase()
+  let livePhaseNumber = -1
   if (running) {
     if (
       liveIndicator.includes('fase 6') ||
       liveIndicator.includes('fase 5 & 6') ||
-      liveIndicator.includes('cierre y proyección') ||
+      liveIndicator.includes('cierre') ||
+      liveIndicator.includes('proyección') ||
       liveIndicator.includes('sincronizador de documentación')
     ) {
-      activeLivePhaseNumber = 6
-    } else if (liveIndicator.includes('fase 5') || liveIndicator.includes('resiliencia')) {
-      activeLivePhaseNumber = 5
+      livePhaseNumber = 6
+    } else if (liveIndicator.includes('fase 5') || liveIndicator.includes('resiliencia') || liveIndicator.includes('rca')) {
+      livePhaseNumber = 5
     } else if (
       liveIndicator.includes('fase 4') ||
       liveIndicator.includes('integración e2e') ||
-      liveIndicator.includes('auditoría de negocio')
+      liveIndicator.includes('auditoría de negocio') ||
+      liveIndicator.includes('aprobación formal')
     ) {
-      activeLivePhaseNumber = 4
+      livePhaseNumber = 4
     } else if (
       liveIndicator.includes('fase 3') ||
       liveIndicator.includes('construcción') ||
       liveIndicator.includes('pruebas unitarias') ||
       liveIndicator.includes('sandbox js') ||
-      liveIndicator.includes('typescript')
+      liveIndicator.includes('browser iframe') ||
+      liveIndicator.includes('verificado') ||
+      liveIndicator.includes('unittest_engineer') ||
+      liveIndicator.includes('component_implementer')
     ) {
-      activeLivePhaseNumber = 3
+      livePhaseNumber = 3
     } else if (
       liveIndicator.includes('fase 2') ||
       liveIndicator.includes('diseño técnico') ||
-      liveIndicator.includes('gatekeeper')
+      liveIndicator.includes('gatekeeper') ||
+      liveIndicator.includes('contratos')
     ) {
-      activeLivePhaseNumber = 2
+      livePhaseNumber = 2
     } else if (
       liveIndicator.includes('fase 1') ||
       liveIndicator.includes('alineamiento') ||
       liveIndicator.includes('dag') ||
-      liveIndicator.includes('planificación')
+      liveIndicator.includes('planificación') ||
+      liveIndicator.includes('estrategia')
     ) {
-      activeLivePhaseNumber = 1
-    } else if (liveIndicator.includes('fase 0') || liveIndicator.includes('descubrimiento')) {
-      activeLivePhaseNumber = 0
+      livePhaseNumber = 1
+    } else if (
+      liveIndicator.includes('fase 0') ||
+      liveIndicator.includes('descubrimiento') ||
+      liveIndicator.includes('cuestionario') ||
+      liveIndicator.includes('projectrigor_interviewer')
+    ) {
+      livePhaseNumber = 0
     }
   }
 
-  // Estado Fase 0
-  let p0Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP0Done || activeLivePhaseNumber > 0) {
-    p0Status = 'completed'
-  } else if (isPhase0Waiting) {
-    p0Status = 'waiting'
-  } else if (running && (activeLivePhaseNumber === 0 || activeLivePhaseNumber === -1)) {
-    p0Status = 'active'
+  const explicitPhaseNum = phaseToNumber(currentPhase)
+
+  // Determinar la fase meta/objetivo más alta alcanzada
+  let activePhase = explicitPhaseNum >= 0 ? explicitPhaseNum : -1
+  if (livePhaseNumber >= 0) {
+    activePhase = Math.max(activePhase, livePhaseNumber)
+  }
+  if (activePhase < 0) {
+    if (msgHasP6) activePhase = 6
+    else if (msgHasP5) activePhase = 5
+    else if (msgHasP4) activePhase = 4
+    else if (msgHasP3) activePhase = 3
+    else if (msgHasP2) activePhase = 2
+    else if (msgHasP1) activePhase = 1
+    else if (msgHasP0) activePhase = 0
+    else activePhase = 0
   }
 
-  // Estado Fase 1
-  let p1Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP1Done || activeLivePhaseNumber > 1) {
-    p1Status = 'completed'
-  } else if (activeLivePhaseNumber === 1 || (running && hasP0Done && !hasP1Done && activeLivePhaseNumber <= 1)) {
-    p1Status = 'active'
-  } else if (hasP0Done && !hasP1Done && !running) {
-    p1Status = allText.includes('Fase 1: Alineamiento') ? 'completed' : 'pending'
-  }
+  // 3. Evaluar estados Human-in-the-Loop (WAITING_APPROVAL)
+  const isPhase4Waiting =
+    sessionStatus === SessionStatus.WAITING_APPROVAL &&
+    (activePhase >= 4 || msgHasP3 || lastMsg.includes('Aprobación') || lastMsg.includes('HITL'))
 
-  // Estado Fase 2
-  let p2Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP2Done || activeLivePhaseNumber > 2) {
-    p2Status = 'completed'
-  } else if (activeLivePhaseNumber === 2 || (running && hasP1Done && !hasP2Done && activeLivePhaseNumber <= 2)) {
-    p2Status = 'active'
-  }
+  const isPhase0Waiting =
+    (sessionStatus === SessionStatus.WAITING_APPROVAL && !isPhase4Waiting) ||
+    (!running && turnsUsed === 0 && (lastMsg.includes('Fase 0') || messages.length <= 1))
 
-  // Estado Fase 3
-  let p3Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP3Done || activeLivePhaseNumber > 3) {
-    p3Status = 'completed'
-  } else if (activeLivePhaseNumber === 3 || (running && hasP2Done && !hasP3Done && activeLivePhaseNumber <= 3)) {
-    p3Status = 'active'
-  }
-
-  // Estado Fase 4
-  let p4Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP4Done || activeLivePhaseNumber > 4) {
-    p4Status = 'completed'
-  } else if (isPhase4Waiting) {
-    p4Status = 'waiting'
-  } else if (activeLivePhaseNumber === 4 || (running && hasP3Done && !hasP4Done && activeLivePhaseNumber <= 4)) {
-    p4Status = 'active'
-  }
-
-  // Estado Fase 5
-  let p5Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP5Done || activeLivePhaseNumber > 5) {
-    p5Status = 'completed'
-  } else if (activeLivePhaseNumber === 5) {
-    p5Status = 'active'
-  }
-
-  // Estado Fase 6
-  let p6Status: PhaseLifecycleStatus = 'pending'
-  if (isCompleted || hasP6Done) {
-    p6Status = 'completed'
-  } else if (activeLivePhaseNumber === 6 || (running && hasP4Done && !isCompleted)) {
-    p6Status = 'active'
-  }
-
-  return [
-    { id: 0, label: '0. Descubrimiento', sublabel: 'HITL 1', status: p0Status },
-    { id: 1, label: '1. Estrategia & Plan', sublabel: 'DAG', status: p1Status },
-    { id: 2, label: '2. Diseño & Gatekeeper', sublabel: 'Clean Arch', status: p2Status },
-    { id: 3, label: '3. Construcción & Unit', sublabel: 'Sandbox JS', status: p3Status },
-    { id: 4, label: '4. E2E & Negocio', sublabel: 'HITL 2', status: p4Status },
-    { id: 5, label: '5. Resiliencia', sublabel: 'RCA / Deuda', status: p5Status },
-    { id: 6, label: '6. Cierre & Docs', sublabel: 'doc/ y src/', status: p6Status },
+  const phases: SdlcPhaseItem[] = [
+    { id: 0, label: '0. Descubrimiento', sublabel: 'HITL 1', status: 'pending' },
+    { id: 1, label: '1. Estrategia & Plan', sublabel: 'DAG', status: 'pending' },
+    { id: 2, label: '2. Diseño & Gatekeeper', sublabel: 'Clean Arch', status: 'pending' },
+    { id: 3, label: '3. Construcción & Unit', sublabel: 'Sandbox JS', status: 'pending' },
+    { id: 4, label: '4. E2E & Negocio', sublabel: 'HITL 2', status: 'pending' },
+    { id: 5, label: '5. Resiliencia', sublabel: 'RCA / Deuda', status: 'pending' },
+    { id: 6, label: '6. Cierre & Docs', sublabel: 'doc/ y src/', status: 'pending' },
   ]
+
+  for (let i = 0; i <= 6; i++) {
+    if (i < activePhase) {
+      phases[i].status = 'completed'
+    } else if (i === activePhase) {
+      if (i === 0 && isPhase0Waiting) {
+        phases[i].status = 'waiting'
+      } else if (i === 4 && isPhase4Waiting) {
+        phases[i].status = 'waiting'
+      } else if (running) {
+        phases[i].status = 'active'
+      } else {
+        // En estado idle / pausado, si los mensajes ya cubren esta fase
+        if (
+          (i === 0 && msgHasP0) ||
+          (i === 1 && msgHasP1) ||
+          (i === 2 && msgHasP2) ||
+          (i === 3 && msgHasP3) ||
+          (i === 4 && msgHasP4) ||
+          (i === 5 && msgHasP5) ||
+          (i === 6 && msgHasP6)
+        ) {
+          phases[i].status = 'completed'
+        } else {
+          phases[i].status = 'pending'
+        }
+      }
+    } else {
+      phases[i].status = 'pending'
+    }
+  }
+
+  return phases
 }
 
 export function renderLifecycleStepperHtml(phases: SdlcPhaseItem[]): string {
@@ -1061,6 +1115,7 @@ export function updateLifecycleStepperInDom(
   root: HTMLElement,
   sessionId: number,
   livePhase?: string,
+  sdlcPhase?: SdlcPhase | string,
 ): void {
   const container = root.querySelector<HTMLElement>('#sdlc-lifecycle-stepper')
   if (!container) return
@@ -1076,15 +1131,37 @@ export function updateLifecycleStepperInDom(
     createdAt: new Date().toISOString(),
   }))
 
-  const headerStatusEl = root.querySelector('#session-title-header')?.parentElement
-  const isCompleted = headerStatusEl?.textContent?.includes('Completado') ?? false
+  const statusBadge = root.querySelector<HTMLElement>('[data-session-status]')
+  const rawStatus = statusBadge?.dataset.sessionStatus || container.dataset.sessionStatus
+  const storedStatus = rawStatus !== undefined && rawStatus !== '' ? (Number(rawStatus) as SessionStatusType) : undefined
+
+  let sessionStatus: SessionStatusType = SessionStatus.IDLE
+  if (storedStatus === SessionStatus.COMPLETED) {
+    sessionStatus = SessionStatus.COMPLETED
+  } else if (storedStatus === SessionStatus.WAITING_APPROVAL) {
+    sessionStatus = SessionStatus.WAITING_APPROVAL
+  } else if (running) {
+    sessionStatus = SessionStatus.RUNNING
+  } else if (storedStatus !== undefined) {
+    sessionStatus = storedStatus
+  }
+
+  const currentPhase =
+    (sdlcPhase as SdlcPhase) ||
+    (thinkingState?.sdlcPhase as SdlcPhase) ||
+    (container.dataset.currentPhase as SdlcPhase) ||
+    undefined
+
+  if (currentPhase) {
+    container.dataset.currentPhase = currentPhase
+  }
+  if (storedStatus !== undefined) {
+    container.dataset.sessionStatus = String(storedStatus)
+  }
 
   const phases = computeSdlcPhasesState({
-    sessionStatus: isCompleted
-      ? SessionStatus.COMPLETED
-      : running
-        ? SessionStatus.RUNNING
-        : SessionStatus.IDLE,
+    sessionStatus,
+    currentPhase,
     turnsUsed: messageTexts.length,
     messages: messageTexts,
     running,
@@ -1286,7 +1363,7 @@ export async function renderWorkspaceScreen(
               <h1 id="session-title-header" class="truncate font-display text-base font-bold text-text-primary" title="${escapeHtml(session.title)}">
                 ${escapeHtml(session.title)}
               </h1>
-              <span class="rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(session.status)}">
+              <span data-session-status="${session.status}" class="rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(session.status)}">
                 ${translateStatus(session.status)}
               </span>
               <span class="rounded-md border border-border-default bg-bg-card px-2.5 py-0.5 font-mono text-[11px] text-text-muted" title="Thread GUID">
@@ -1314,10 +1391,14 @@ export async function renderWorkspaceScreen(
           <p class="text-xs text-text-muted font-medium">
             ${escapeHtml(session.goal || 'Ciclo de Vida de Software Guiado por Árbol de Habilidades y Arquitectura Empresarial')}
           </p>
-          <div id="sdlc-lifecycle-stepper" class="flex items-center gap-2 overflow-x-auto text-[11px] font-medium py-1 scrollbar-none">
+          <div id="sdlc-lifecycle-stepper"
+               data-session-status="${session.status}"
+               data-current-phase="${session.currentPhase || ''}"
+               class="flex items-center gap-2 overflow-x-auto text-[11px] font-medium py-1 scrollbar-none">
             ${renderLifecycleStepperHtml(
     computeSdlcPhasesState({
       sessionStatus: session.status,
+      currentPhase: session.currentPhase,
       turnsUsed: session.turnsUsed,
       messages: visibleMessages,
       running,
@@ -2175,7 +2256,7 @@ export async function renderWorkspaceScreen(
             : 'Procesando paso en LangGraph...'
       }
     }
-    updateLifecycleStepperInDom(root, sessionId, state.thought)
+    updateLifecycleStepperInDom(root, sessionId, state.thought, state.sdlcPhase)
   })
 }
 

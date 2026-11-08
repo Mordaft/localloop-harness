@@ -31,6 +31,7 @@ import {
   type ProjectProgressEvent,
   type RcaDiagnosis,
   type SDLCStateType,
+  type SdlcPhase,
   type TechnicalDebtRecord,
   type TechnicalDesignProposal,
 } from './sdlc-state'
@@ -44,13 +45,14 @@ import {
 async function streamLlmPhase(params: {
   sessionId: number | undefined
   phaseName: string
+  sdlcPhase?: SdlcPhase
   systemPrompt: string
   userPrompt: string
   tools?: OpenAiToolSpec[]
   toolChoice?: 'auto' | 'required' | 'none'
   defaultFallback: () => { content: string; thought?: string }
 }): Promise<{ content: string; thought?: string; toolCalls: ParsedToolCall[] }> {
-  const { sessionId, phaseName, systemPrompt, userPrompt, defaultFallback } = params
+  const { sessionId, phaseName, sdlcPhase, systemPrompt, userPrompt, defaultFallback } = params
   const callbacks = sessionId ? getSessionCallbacks(sessionId) : undefined
   const config = getLlmConfig()
 
@@ -86,6 +88,7 @@ async function streamLlmPhase(params: {
       sessionId,
       thought: `Consultando modelo LLM ${config.model} (${config.baseUrl}) con herramientas [${publishedTools.map((t) => t.function.name).join(', ')}] para ${phaseName}...`,
       phase: 'thinking',
+      sdlcPhase,
     })
     callbacks.onStreamChunk?.({
       sessionId,
@@ -115,6 +118,7 @@ async function streamLlmPhase(params: {
             sessionId,
             thought,
             phase: 'thinking',
+            sdlcPhase,
           })
           callbacks?.onStreamChunk?.({
             sessionId,
@@ -151,6 +155,7 @@ async function streamLlmPhase(params: {
             thought: `Ejecutando herramienta ${tc.name}...`,
             phase: 'executing_tools',
             activeTool: tc.name,
+            sdlcPhase,
           })
         }
         try {
@@ -248,6 +253,7 @@ async function emitSDLCProgress(
   sessionId: number | undefined,
   message: { role: 'assistant'; content: string; thought?: string },
   thinkingText?: string,
+  sdlcPhase?: SdlcPhase,
 ): Promise<void> {
   if (!sessionId) return
   try {
@@ -263,6 +269,7 @@ async function emitSDLCProgress(
         sessionId,
         thought: thinkingText,
         phase: 'executing_tools',
+        sdlcPhase,
       })
     }
     callbacks?.onStepUpdate?.(sessionId)
@@ -1624,6 +1631,7 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
   const llmPlan = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 1: Alineamiento DAG — [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '1_STRATEGY_AND_PLAN',
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Gobierno y Planificación de Software de LocalLoop. Tu misión es estructurar el WBS y el grafo de dependencias estrictas Fin-Inicio (DAG) para una iniciativa empresarial. Responde en Markdown estructurado y profesional con tono riguroso de ingeniería.`,
     userPrompt: `Iniciativa: ${state.phase0Data?.step1?.rawBusinessLanguageText || state.useCases[0]?.title || 'Desarrollo de Software'}
 Estándar de Arquitectura: ${state.marketArchStandard}
@@ -1648,7 +1656,7 @@ Genera el informe de la Fase 1 formalizando:
     thought: llmPlan.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, phase1Msg, 'Formalizado Plan y DAG Fin-Inicio')
+  await emitSDLCProgress(state.sessionId, phase1Msg, 'Formalizado Plan y DAG Fin-Inicio', '1_STRATEGY_AND_PLAN')
 
   return {
     componentsGraph,
@@ -1808,6 +1816,7 @@ async function node_phase2_gatekeeper(state: SDLCStateType): Promise<Partial<SDL
   const llmGatekeeper = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 2: Dictamen Gatekeeper — ${compId} [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '2_TECHNICAL_DESIGN_GATE',
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Gatekeeper de Arquitectura Empresarial de LocalLoop. Tu función es auditar el diseño técnico del componente frente a los estándares de arquitectura (${state.marketArchStandard}). Si se trata de un componente de transición (adapter/convivencia), evalúa y documenta formalmente la Deuda Técnica con su riesgo y plan de mitigación.`,
     userPrompt: `Componente: ${comp.name} (\`${compId}\`)
 Propuesta Técnica: ${chosenProposal.approachName}
@@ -1844,7 +1853,7 @@ Genera el informe y dictamen formal del Gatekeeper en Markdown.`,
     thought: llmGatekeeper.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, gatekeeperMsg, `Aprobado diseño de ${compId} en Gatekeeper`)
+  await emitSDLCProgress(state.sessionId, gatekeeperMsg, `Aprobado diseño de ${compId} en Gatekeeper`, '2_TECHNICAL_DESIGN_GATE')
 
   if (state.sessionId) {
     try {
@@ -2043,6 +2052,7 @@ Guarda los archivos en el workspace.`,
   return {
     componentsGraph: compGraph,
     activeSkill: 'UnitTest_Engineer',
+    currentPhase: '3_COMPONENT_CONSTRUCTION',
   }
 }
 
@@ -2170,6 +2180,7 @@ async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDL
   const llmUnitReport = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 3: Pruebas Unitarias Sandbox — ${compId} [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '3_COMPONENT_CONSTRUCTION',
     systemPrompt:
       `${resolvedSkill.systemPrompt}\n\n` +
       `Eres el Ingeniero de Calidad y Pruebas Automatizadas de LocalLoop.\n` +
@@ -2230,7 +2241,7 @@ async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDL
     thought: llmUnitReport.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, phase3Msg, verifiedSummary)
+  await emitSDLCProgress(state.sessionId, phase3Msg, verifiedSummary, '3_COMPONENT_CONSTRUCTION')
 
   if (state.sessionId) {
     try {
@@ -2263,6 +2274,7 @@ async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDL
     unitEvidences: { ...state.unitEvidences, [compId]: unitEvidence },
     progressEvents: [...state.progressEvents, progressEvent],
     activeComponentId: null, // Liberamos el componente activo para volver al scheduler
+    currentPhase: '3_COMPONENT_CONSTRUCTION',
     messages: [...state.messages, phase3Msg],
   }
 }
@@ -2395,6 +2407,7 @@ async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Partial<SDL
   const llmE2e = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 4: Integración E2E en Sandbox — [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '4_E2E_BUSINESS_AUDIT',
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Ingeniero de Automatización E2E de LocalLoop. Tu función es auditar la integración completa de los componentes en Sandbox.`,
     userPrompt: `Flujo E2E: ${state.useCases.map((u) => u.title).join(' ➔ ')}
 Componentes verificados: ${Object.keys(state.componentsGraph).join(', ')}
@@ -2415,6 +2428,7 @@ Genera el informe de integración E2E en Markdown.`,
     state.sessionId,
     e2eMsg,
     `Ejecutando integración E2E en ${hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'}...`,
+    '4_E2E_BUSINESS_AUDIT',
   )
 
   if (state.sessionId) {
@@ -2435,6 +2449,7 @@ Genera el informe de integración E2E en Markdown.`,
   return {
     e2eEvidences: e2eReport,
     activeSkill: 'BusinessOutcome_Auditor',
+    currentPhase: '4_E2E_BUSINESS_AUDIT',
     messages: [...state.messages, e2eMsg],
   }
 }
@@ -2468,6 +2483,7 @@ async function node_phase4_business_compile(state: SDLCStateType): Promise<Parti
   const llmAudit = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 4: Auditoría de Negocio (HITL) — [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '4_E2E_BUSINESS_AUDIT',
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Auditor de Resultados de Negocio de LocalLoop. Redacta el informe ejecutivo para el stakeholder de negocio solicitando su aprobación formal (HITL).`,
     userPrompt: `Casos de Uso: ${state.useCases.map((u) => u.title).join(', ')}
 Componentes construidos: ${Object.keys(state.componentsGraph).join(', ')}
@@ -2484,7 +2500,7 @@ Genera la solicitud formal de Aprobación de Negocio en Markdown.`,
     thought: llmAudit.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, approvalRequestMessage, 'Esperando Aprobación Formal de Negocio...')
+  await emitSDLCProgress(state.sessionId, approvalRequestMessage, 'Esperando Aprobación Formal de Negocio...', '4_E2E_BUSINESS_AUDIT')
 
   if (state.sessionId) {
     try {
@@ -2506,6 +2522,7 @@ Genera la solicitud formal de Aprobación de Negocio en Markdown.`,
   }
 
   return {
+    currentPhase: '4_E2E_BUSINESS_AUDIT',
     messages: [...state.messages, approvalRequestMessage],
   }
 }
@@ -2603,7 +2620,12 @@ async function node_phase5_resilience(state: SDLCStateType): Promise<Partial<SDL
       `> 🔁 **Realimentación:** El ciclo retorna a la Fase 1 para re-planificar el sprint con las nuevas especificaciones.`,
   }
 
-  await emitSDLCProgress(state.sessionId, resilienceMsg, 'Ejecutando bucle de resiliencia RCA...')
+  await emitSDLCProgress(
+    state.sessionId,
+    resilienceMsg,
+    'Ejecutando bucle de resiliencia RCA...',
+    '5_STRATEGIC_RESILIENCE',
+  )
 
   if (state.sessionId) {
     try {
@@ -2932,6 +2954,7 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
   const llmCompletion = await streamLlmPhase({
     sessionId: state.sessionId,
     phaseName: `Fase 5 & 6: Cierre y Proyección Documental — [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '6_DOCUMENTATION_PROJECTION',
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Sincronizador de Documentación de LocalLoop. Redacta el resumen final del ciclo de desarrollo completado.
 Todos los documentos han sido generados en "doc/" (con subcarpetas por fase) y en la raíz.`,
     userPrompt: `Componentes verificados: ${Object.keys(state.componentsGraph).join(', ')}
@@ -2947,7 +2970,12 @@ Genera el mensaje de felicitación y resumen final de entrega en Markdown.`,
     thought: llmCompletion.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, completionMsg, 'Finalizando ciclo y proyectando documentación...')
+  await emitSDLCProgress(
+    state.sessionId,
+    completionMsg,
+    'Finalizando ciclo y proyectando documentación...',
+    '6_DOCUMENTATION_PROJECTION',
+  )
 
   return {
     messages: [...state.messages, completionMsg],

@@ -105,5 +105,60 @@ assert(
 const htmlCompleted = renderLifecycleStepperHtml(phasesCompleted)
 assert(!htmlCompleted.includes('animate-pulse'), 'Ninguna fase debe tener animate-pulse al completar')
 
+// 5. Prueba de que en Fase 3 durante la ejecución de herramientas (pensamiento sin palabra clave) NO salta a Fase 0
+const phases3RunningWithToolThought = computeSdlcPhasesState({
+  sessionStatus: SessionStatus.RUNNING,
+  currentPhase: '3_COMPONENT_CONSTRUCTION',
+  turnsUsed: 3,
+  messages: [
+    {
+      sessionId: 1,
+      role: 'assistant',
+      content: 'Fase 1: Alineamiento DAG completado.',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      sessionId: 1,
+      role: 'assistant',
+      content: 'Fase 2: Dictamen Gatekeeper aprobado.',
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  running: true,
+  liveStreamPhase: undefined,
+  thinkingThought: 'Ejecutando herramienta run_sandboxed_js...',
+})
+
+assert.strictEqual(phases3RunningWithToolThought[0].status, 'completed', 'Fase 0 debe estar completada')
+assert.strictEqual(phases3RunningWithToolThought[1].status, 'completed', 'Fase 1 debe estar completada')
+assert.strictEqual(phases3RunningWithToolThought[2].status, 'completed', 'Fase 2 debe estar completada')
+assert.strictEqual(phases3RunningWithToolThought[3].status, 'active', 'Fase 3 debe permanecer activa, NO saltar a Fase 0')
+assert.strictEqual(phases3RunningWithToolThought[4].status, 'pending', 'Fase 4 debe estar pendiente')
+
+// 6. Prueba de que tras Fase 6 con mensaje final generado por LLM en vivo no vuelve a Fase 0
+const phasesCompletedLiveLlm = computeSdlcPhasesState({
+  sessionStatus: SessionStatus.IDLE,
+  currentPhase: 'COMPLETED',
+  turnsUsed: 8,
+  messages: [
+    {
+      sessionId: 1,
+      role: 'assistant',
+      content:
+        '# Informe de Entrega Final: Sistema de Facturación Electrónica (LocalLoop)\n' +
+        'Estado del Proyecto: COMPLETADO Y VERIFICADO\n' +
+        '¡Felicidades al Equipo de Desarrollo!\n' +
+        'Ciclo de Desarrollo LocalLoop - Fase 6 Finalizada.',
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  running: false,
+})
+
+assert(
+  phasesCompletedLiveLlm.every((p) => p.status === 'completed'),
+  'Todas las fases deben estar en completed tras el cierre de Fase 6',
+)
+
 console.log('✅ Todas las pruebas de Stepper Dinámico y Estado de Fases pasaron exitosamente.')
 

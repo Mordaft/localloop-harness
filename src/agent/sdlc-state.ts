@@ -226,7 +226,12 @@ export const SDLCState = Annotation.Root({
     default: () => ({}),
   }),
   technicalDebtList: Annotation<TechnicalDebtRecord[]>({
-    reducer: (curr, next) => (next ? [...curr, ...next] : curr),
+    reducer: (curr, next) => {
+      if (!next) return curr
+      const existingIds = new Set(curr.map((r) => r.id))
+      const newItems = next.filter((r) => !existingIds.has(r.id))
+      return [...curr, ...newItems]
+    },
     default: () => [],
   }),
   unitEvidences: Annotation<Record<string, AtomicTestEvidence>>({
@@ -252,7 +257,12 @@ export const SDLCState = Annotation.Root({
 
   // FASE 6 / Proyección Desacoplada hacia entregables humanos
   progressEvents: Annotation<ProjectProgressEvent[]>({
-    reducer: (curr, next) => (next ? [...curr, ...next] : curr),
+    reducer: (curr, next) => {
+      if (!next) return curr
+      const existingIds = new Set(curr.map((e) => e.id))
+      const newItems = next.filter((e) => !existingIds.has(e.id))
+      return [...curr, ...newItems]
+    },
     default: () => [],
   }),
 

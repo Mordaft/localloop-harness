@@ -10,6 +10,7 @@ import {
 import { getLlmConfig } from '../llm/llm-config'
 import { getPersistentEngram, resetEngramMemoryDatabase } from './engram-memory'
 import { CHECKPOINT_DB_NAME, getSharedIndexedDBSaver } from './indexeddb-saver'
+import type { SdlcPhase } from '../agent/sdlc-state'
 
 export interface AgentSession {
   id?: number
@@ -19,6 +20,7 @@ export interface AgentSession {
   workspaceName: string
   skill: string
   status: SessionStatusType
+  currentPhase?: SdlcPhase
   turnsUsed: number
   maxTurns: number
   tokensUsed: number
@@ -169,7 +171,7 @@ export async function updateSessionTitle(id: number, title: string): Promise<voi
 
 export async function updateSessionMetrics(
   id: number,
-  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model' | 'title' | 'skill'>>,
+  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model' | 'title' | 'skill' | 'currentPhase'>>,
 ): Promise<void> {
   const updated = new Date().toISOString()
   if (database) {

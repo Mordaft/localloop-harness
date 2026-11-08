@@ -4,7 +4,7 @@ import {
   unregisterSessionCallbacks,
 } from '../agent/agent-graph'
 import { compiledSDLCGraph } from '../agent/sdlc-graph'
-import type { Phase0ThreeStepData } from '../agent/sdlc-state'
+import type { Phase0ThreeStepData, SdlcPhase } from '../agent/sdlc-state'
 import { trace } from '../diagnostics'
 import { SessionStatus, type SessionStatus as SessionStatusType } from '../enums'
 import type { ChatMessage } from '../llm/llm-client'
@@ -21,6 +21,7 @@ export interface AgentThinkingState {
   isThinking: boolean
   thought: string
   phase: 'thinking' | 'executing_tools' | 'completed'
+  sdlcPhase?: SdlcPhase | string
   activeTool?: string
   turnsUsed?: number
   maxTurns?: number
@@ -104,6 +105,7 @@ export async function executeSessionTurn(
         isThinking: info.phase !== 'completed',
         thought: info.thought,
         phase: info.phase,
+        sdlcPhase: (info as any).sdlcPhase,
         activeTool: info.activeTool,
         turnsUsed: info.turnsUsed,
         maxTurns: info.maxTurns,
@@ -130,6 +132,31 @@ export async function executeSessionTurn(
         const updatePayload: Record<string, any> = {
           messages: historyMessages,
         }
+        const lowerPrompt = userPrompt.toLowerCase()
+        if (
+          lowerPrompt.includes('rechazo') ||
+          lowerPrompt.includes('rechazar') ||
+          lowerPrompt.includes('reject')
+        ) {
+          updatePayload.businessApproval = {
+            approved: false,
+            stakeholderComments: userPrompt.trim(),
+            evaluatedAt: new Date().toISOString(),
+          }
+        } else if (
+          lowerPrompt.includes('aprobación') ||
+          lowerPrompt.includes('aprobacion') ||
+          lowerPrompt.includes('aprobado') ||
+          lowerPrompt.includes('concedida') ||
+          lowerPrompt.includes('approve')
+        ) {
+          updatePayload.businessApproval = {
+            approved: true,
+            stakeholderComments: userPrompt.trim(),
+            evaluatedAt: new Date().toISOString(),
+          }
+        }
+
         if (phase0Data) {
           updatePayload.phase0Data = phase0Data
           if (phase0Data.step2?.marketStandard) {
@@ -185,6 +212,7 @@ export async function executeSessionTurn(
         status: resolvedStatus,
         turnsUsed: (session.turnsUsed || 0) + 1,
         tokensUsed: session.tokensUsed || 0,
+        currentPhase: finalState.currentPhase,
       })
 
       hooks.onThinking?.({
@@ -192,6 +220,7 @@ export async function executeSessionTurn(
         isThinking: false,
         thought: '',
         phase: 'completed',
+        sdlcPhase: finalState.currentPhase,
         updatedAt: Date.now(),
       })
       hooks.onStepUpdate?.(sessionId)
