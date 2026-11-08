@@ -202,6 +202,8 @@ export async function executeSessionTurn(
       let resolvedStatus: SessionStatusType = SessionStatus.COMPLETED
       if (finalState.currentPhase === '0_DISCOVERY_RIGOR' && !finalState.discoveryCompleted) {
         resolvedStatus = SessionStatus.WAITING_APPROVAL
+      } else if (finalState.currentPhase === '1_STRATEGY_AND_PLAN' && !finalState.phase1FrameworkAgreed) {
+        resolvedStatus = SessionStatus.WAITING_APPROVAL
       } else if (finalState.currentPhase === '4_E2E_BUSINESS_AUDIT' && !finalState.businessApproval) {
         resolvedStatus = SessionStatus.WAITING_APPROVAL
       } else if (finalState.currentPhase !== 'COMPLETED') {

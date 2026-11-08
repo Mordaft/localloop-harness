@@ -1,6 +1,6 @@
 import { END, START, StateGraph } from '@langchain/langgraph'
 import { trace } from '../diagnostics'
-import { writeWorkspaceFileDirect } from '../fs/workspace-fs'
+import { readWorkspaceFile, writeWorkspaceFileDirect } from '../fs/workspace-fs'
 import { executeFileSystemTool, getFileSystemToolSpecs } from '../fs/fs-tools'
 import {
   executeBrowserSandbox,
@@ -29,6 +29,7 @@ import {
   type ComponentNode,
   type GatekeeperDecision,
   type GeneratedComponentFile,
+  type ProjectFrameworkConfig,
   type ProjectProgressEvent,
   type RcaDiagnosis,
   type SDLCStateType,
@@ -526,7 +527,7 @@ export class BillingCoreEngine {
       code,
       testScript,
       files: [
-        { path: 'src/modules/comp_billing_core.ts', content: code, description: 'Motor Core de Facturación' },
+        { path: comp.targetPath || 'src/modules/comp_billing_core.ts', content: code, description: 'Motor Core de Facturación' },
       ],
     }
   } else if (
@@ -587,7 +588,7 @@ export class DigitalSignatureService {
       code,
       testScript,
       files: [
-        { path: 'src/modules/comp_digital_signature.ts', content: code, description: 'Servicio de Firma Criptográfica' },
+        { path: comp.targetPath || 'src/modules/comp_digital_signature.ts', content: code, description: 'Servicio de Firma Criptográfica' },
       ],
     }
   } else if (
@@ -645,7 +646,7 @@ export class LegacyErpAdapter {
       code,
       testScript,
       files: [
-        { path: `src/modules/${comp.id}.ts`, content: code, description: 'Adaptador de Transición ERP' },
+        { path: comp.targetPath || `src/modules/${comp.id}.ts`, content: code, description: 'Adaptador de Transición ERP' },
       ],
     }
   } else if (
@@ -842,6 +843,43 @@ export class TetrisEngine {
       if (state.board.length !== 20 || state.board[0].length !== 10) throw new Error('Dimensiones de tablero inválidas');
       ({ pass: true, assertions: 4, state: { score: state.score, lines: state.lines } });
     `
+    const vitestEngineTest = `import { describe, it, expect, beforeEach } from 'vitest';
+import { TetrisEngine } from '../src/games/tetris-engine';
+
+describe('TetrisEngine (Reglas SRS y Matriz)', () => {
+  let engine: TetrisEngine;
+
+  beforeEach(() => {
+    engine = new TetrisEngine();
+  });
+
+  it('inicializa un tablero vacío de 10 columnas por 20 filas', () => {
+    const state = engine.getState();
+    expect(state.board.length).toBe(20);
+    expect(state.board[0].length).toBe(10);
+    expect(state.score).toBe(0);
+    expect(state.gameOver).toBe(false);
+  });
+
+  it('genera una pieza y permite moverla a la izquierda y derecha', () => {
+    const spawned = engine.spawnPiece('T');
+    expect(spawned).toBe(true);
+    expect(engine.move('LEFT')).toBe(true);
+    expect(engine.move('RIGHT')).toBe(true);
+  });
+
+  it('permite rotar la pieza', () => {
+    engine.spawnPiece('T');
+    expect(engine.rotate()).toBe(true);
+  });
+
+  it('hardDrop baja la pieza hasta el fondo', () => {
+    engine.spawnPiece('I');
+    const dropped = engine.hardDrop();
+    expect(dropped).toBeGreaterThan(0);
+  });
+});
+`
     return {
       className,
       code: engineCode,
@@ -849,6 +887,7 @@ export class TetrisEngine {
       files: [
         { path: 'src/games/tetris-types.ts', content: typesCode, description: 'Tipos e Interfaces del Motor Tetris' },
         { path: 'src/games/tetris-engine.ts', content: engineCode, description: 'Lógica Central del Motor Tetris' },
+        { path: 'tests/tetris-engine.test.ts', content: vitestEngineTest, description: 'Pruebas Unitarias Vitest del Motor Tetris' },
       ],
     }
   } else if (
@@ -1020,8 +1059,30 @@ body.tetris-mobile-body {
 
   public render(matrix: number[][]): void {
     if (!this.ctx || !this.canvas) return;
-    this.ctx.fillStyle = '#020617';
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, w, h);
+
+    const rows = matrix.length;
+    const cols = matrix[0] ? matrix[0].length : 10;
+    const cellW = w / cols;
+    const cellH = h / rows;
+
+    const colors = ['', '#38bdf8', '#0ea5e9', '#06b6d4', '#14b8a6', '#22c55e', '#a855f7', '#ec4899'];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const val = matrix[r][c];
+        if (val > 0) {
+          ctx.fillStyle = colors[val] || '#38bdf8';
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 6;
+          ctx.fillRect(c * cellW + 1, r * cellH + 1, cellW - 2, cellH - 2);
+        }
+      }
+    }
+    ctx.shadowBlur = 0;
   }
 }
 `
@@ -1141,6 +1202,29 @@ export class GoogleAdsSlotManager {
       console.log('Espacio publicitario de Google Ads verificado y protegido contra CLS.');
       ({ pass: true, adSlotVerified: true, client: adClient });
     `
+    const vitestAdsTest = `import { describe, it, expect, beforeEach } from 'vitest';
+import { GoogleAdsSlotManager } from '../src/components/google-ads-slot';
+
+describe('GoogleAdsSlotManager (Prevención CLS)', () => {
+  let manager: GoogleAdsSlotManager;
+
+  beforeEach(() => {
+    manager = new GoogleAdsSlotManager();
+  });
+
+  it('genera markup seguro con altura mínima fijada', () => {
+    const markup = manager.renderSlotMarkup();
+    expect(markup).toContain('id="google-ads-container"');
+    expect(markup).toContain('class="google-ads-slot-wrapper"');
+    expect(markup).toContain('data-ad-client="ca-pub-1234567890123456"');
+  });
+
+  it('valida que el contenedor respete la altura mínima contra CLS', () => {
+    const fakeEl = { getBoundingClientRect: () => ({ height: 60 }) } as any;
+    expect(manager.verifyLayoutShiftSafe(fakeEl)).toBe(true);
+  });
+});
+`
     return {
       className,
       code: tsAds,
@@ -1158,6 +1242,7 @@ export class GoogleAdsSlotManager {
         { path: 'src/components/google-ads-slot.ts', content: tsAds, description: 'Gestor del Espacio Publicitario Google Ads' },
         { path: 'public/ads-slot.html', content: htmlAds, description: 'Markup del Contenedor de Anuncios' },
         { path: 'src/styles/ads-slot.css', content: cssAds, description: 'Estilos de Prevención de CLS para Publicidad' },
+        { path: 'tests/google-ads-slot.test.ts', content: vitestAdsTest, description: 'Pruebas Unitarias Vitest del Slot Google Ads' },
       ],
     }
   } else if (
@@ -1262,11 +1347,87 @@ self.addEventListener('fetch', (event) => {
 `
     const mainTs = `// PWA Neon Tetris Mobile Bootstrap
 import { TetrisEngine } from './games/tetris-engine';
-import { TetrisView } from './components/tetris-view';
+import { TetrisMobileView } from './components/tetris-view';
 import { GoogleAdsSlotManager } from './components/google-ads-slot';
 
+export class NeonTetrisApp {
+  private engine: TetrisEngine;
+  private view: TetrisMobileView;
+  private adsManager: GoogleAdsSlotManager;
+  private tickInterval: any = null;
+
+  constructor() {
+    this.engine = new TetrisEngine();
+    this.view = new TetrisMobileView();
+    this.adsManager = new GoogleAdsSlotManager();
+  }
+
+  public start(): void {
+    console.log('[NeonTetris] Iniciando juego PWA y componentes...');
+
+    // 1. Montar vista Canvas y controles táctiles
+    this.view.mount('#tetris-canvas', '#touch-controls');
+
+    // 2. Conectar controles táctiles con el motor
+    this.view.onInput((action) => {
+      if (this.engine.getState().gameOver) {
+        this.engine = new TetrisEngine();
+        this.engine.spawnPiece('T');
+      } else {
+        if (action === 'LEFT') this.engine.move('LEFT');
+        else if (action === 'RIGHT') this.engine.move('RIGHT');
+        else if (action === 'ROTATE') this.engine.rotate();
+        else if (action === 'DROP') this.engine.hardDrop();
+      }
+      this.updateUI();
+    });
+
+    // 3. Conectar teclado para pruebas en PC (Flechas y Espacio)
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); this.engine.move('LEFT'); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); this.engine.move('RIGHT'); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); this.engine.rotate(); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); this.engine.move('DOWN'); }
+        else if (e.key === ' ') { e.preventDefault(); this.engine.hardDrop(); }
+        this.updateUI();
+      });
+    }
+
+    // 4. Iniciar pieza y bucle de juego
+    this.engine.spawnPiece('T');
+    this.updateUI();
+    this.tickInterval = setInterval(() => {
+      if (!this.engine.getState().gameOver && !this.engine.getState().paused) {
+        this.engine.tick();
+        this.updateUI();
+      }
+    }, 800);
+
+    // 5. Inicializar slot de Google Ads protegido contra CLS
+    this.adsManager.initializeAdSlot('google-ads-container', {
+      adClient: 'ca-pub-1234567890123456',
+      adSlot: '9876543210',
+      format: 'horizontal',
+      minHeightPx: 50,
+    });
+  }
+
+  private updateUI(): void {
+    const state = this.engine.getState();
+    this.view.render(state.board);
+    const scoreEl = document.getElementById('score-val');
+    const linesEl = document.getElementById('lines-val');
+    const levelEl = document.getElementById('level-val');
+    if (scoreEl) scoreEl.textContent = String(state.score);
+    if (linesEl) linesEl.textContent = String(state.lines);
+    if (levelEl) levelEl.textContent = String(state.level);
+  }
+}
+
 export function bootstrapNeonTetris(): void {
-  console.log('[NeonTetris PWA] Aplicación inicializada con controles táctiles y slot de Google Ads.');
+  const app = new NeonTetrisApp();
+  app.start();
 }
 
 if (typeof document !== 'undefined') {
@@ -1332,7 +1493,7 @@ export class ${className} {
       ({ pass: true, assertions: 3 });
     `
     const files: GeneratedComponentFile[] = [
-      { path: `src/modules/${comp.id}.ts`, content: code, description: comp.name },
+      { path: comp.targetPath || `src/modules/${comp.id}.ts`, content: code, description: comp.name },
     ]
     if (isUi) {
       files.push({
@@ -1619,6 +1780,15 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
     )
     .join('\n')
 
+  // Si el marco de referencia ya fue formalizado previamente, avanzamos directamente
+  if (state.phase1FrameworkAgreed) {
+    return {
+      componentsGraph,
+      projectPlan,
+      currentPhase: '2_TECHNICAL_DESIGN_GATE',
+    }
+  }
+
   const fallbackPlan = () => ({
     content:
       `### 📋 Fase 1: Alineamiento Estratégico y Planificación (DAG Fin-Inicio)\n\n` +
@@ -1631,8 +1801,21 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
       `${compList}\n\n` +
       `#### 3. Topología Visual del Grafo (Diagrama Mermaid)\n` +
       `${generateMermaidDag(componentsGraph)}\n\n` +
-      `> ⚙️ **Scheduler:** Iniciando el despacho de componentes. Los componentes con dependencias permanecerán bloqueados hasta que sus predecesores alcancen el estado \`VERIFIED\`.`,
-    thought: 'Analizando requerimientos de negocio y calculando topología del grafo de dependencias Fin-Inicio...',
+      `#### 4. Marco de Referencia del Desarrollo y Estructura Propuesta\n` +
+      `Para enmarcar el desarrollo propongo el siguiente marco de trabajo estándar:\n` +
+      `* **Framework sugerido:** \`HTML5 + TypeScript + TailwindCSS\` (o la tecnología que prefieras: Angular con Material, React con Vite, etc.)\n` +
+      `* **Estructura prevista:**\n` +
+      `  - \`src/components/\`: Componentes modulares de interfaz y lógica.\n` +
+      `  - \`src/services/\`: Servicios de aplicación, orquestación y adaptadores.\n` +
+      `  - Raíz del proyecto: Archivos base (\`package.json\`, \`tsconfig.json\`) y scripts de setup (\`setup.cmd\` y \`setup.sh\`).\n\n` +
+      `💬 **Iteración con el Usuario (Fase 1 - Marco de Referencia):**\n` +
+      `Por favor, indícame en el chat si estás de acuerdo con esta propuesta técnica o qué tecnología y framework prefieres emplear (ej. Angular con Material, React, HTML5+TS+Tailwind, etc.).\n` +
+      `Una vez acordado el marco tecnológico:\n` +
+      `1. Generaré los scripts \`setup.cmd\` y \`setup.sh\` en la raíz del workspace con las instrucciones de uso.\n` +
+      `2. Crearé los archivos base de configuración del proyecto en tu workspace.\n` +
+      `3. Fijaré las rutas canónicas del código para que los agentes posteriores sitúen sus componentes.\n\n` +
+      `> ⚙️ **Pausa de Fase 1:** Esperando tu respuesta en el chat para formalizar el setup e iniciar la construcción.`,
+    thought: 'Analizando requerimientos de negocio, calculando topología del grafo Fin-Inicio y preparando propuesta de marco tecnológico...',
   })
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
@@ -1657,7 +1840,9 @@ ${Object.values(componentsGraph).map((c) => `- ${c.name} (${c.id}) [Estado: ${c.
 
 Genera el informe de la Fase 1 formalizando:
 1. Plan de Hitos de Negocio (WBS)
-2. Grafo de Dependencias Fin-Inicio (DAG) explicando la justificación de precedencia de cada componente y representando el grafo visual en un bloque de código Mermaid (\`\`\`mermaid\ngraph TD\n...\`\`\`).`,
+2. Grafo de Dependencias Fin-Inicio (DAG) explicando la justificación de precedencia de cada componente y representando el grafo visual en un bloque de código Mermaid (\`\`\`mermaid\ngraph TD\n...\`\`\`).
+3. Marco de Referencia del Desarrollo y Estructura Propuesta (ej. HTML5+TypeScript+TailwindCSS, Angular con Material, React, etc.).
+4. Pregunta de iteración abierta al usuario para que confirme o elija el framework en el chat antes de generar los scripts setup.cmd y setup.sh.`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackPlan,
   })
@@ -1668,13 +1853,555 @@ Genera el informe de la Fase 1 formalizando:
     thought: llmPlan.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, phase1Msg, 'Formalizado Plan y DAG Fin-Inicio', '1_STRATEGY_AND_PLAN')
+  await emitSDLCProgress(state.sessionId, phase1Msg, 'Propuesta de Plan y Marco de Referencia (Esperando Feedback)', '1_STRATEGY_AND_PLAN')
 
   return {
     componentsGraph,
     projectPlan,
-    currentPhase: '2_TECHNICAL_DESIGN_GATE',
+    currentPhase: '1_STRATEGY_AND_PLAN',
+    phase1FrameworkAgreed: false,
     messages: [...state.messages, phase1Msg],
+  }
+}
+
+export interface FrameworkStackResolution {
+  framework: string
+  frameworkKey: string
+  packageManager: 'pnpm' | 'npm' | 'yarn' | 'bun'
+  bundler: 'vite' | 'webpack' | 'esbuild' | 'none'
+  testRunner: 'vitest' | 'jest' | 'node:test'
+  devCommand: string
+  buildCommand: string
+  testCommand: string
+  componentsDir: string
+  servicesDir: string
+  structureSummary: string
+  packageJson: Record<string, unknown>
+  tsconfigJson: Record<string, unknown>
+  extraConfigFiles: Array<{ path: string; content: string; reason: string }>
+  setupCmdContent: string
+  setupShContent: string
+  startCmdContent: string
+  startShContent: string
+}
+
+export function resolveFrameworkStack(userText: string, contextInitiative = ''): FrameworkStackResolution {
+  const text = `${userText} ${contextInitiative}`.toLowerCase()
+
+  // 1. Gestor de paquetes
+  let packageManager: 'pnpm' | 'npm' | 'yarn' | 'bun' = 'npm'
+  if (/\bpnpm\b/i.test(text)) {
+    packageManager = 'pnpm'
+  } else if (/\byarn\b/i.test(text)) {
+    packageManager = 'yarn'
+  } else if (/\bbun\b/i.test(text)) {
+    packageManager = 'bun'
+  }
+
+  // 2. Bundler
+  let bundler: 'vite' | 'webpack' | 'esbuild' | 'none' = 'none'
+  if (/\bvite\b/i.test(text) || /\bphaser\b/i.test(text) || /\breact\b/i.test(text) || /\bvue\b/i.test(text)) {
+    bundler = 'vite'
+  } else if (/\bwebpack\b/i.test(text)) {
+    bundler = 'webpack'
+  } else if (/\besbuild\b/i.test(text)) {
+    bundler = 'esbuild'
+  }
+
+  // 3. Test Runner
+  let testRunner: 'vitest' | 'jest' | 'node:test' = 'node:test'
+  if (/\bvitest\b/i.test(text) || bundler === 'vite') {
+    testRunner = 'vitest'
+  } else if (/\bjest\b/i.test(text)) {
+    testRunner = 'jest'
+  }
+
+  // 4. Tecnologías y Frameworks
+  const hasAngular = /\bangular\b/i.test(text)
+  const hasReact = /\breact\b/i.test(text)
+  const hasVue = /\bvue\b/i.test(text)
+  const hasPhaser = /\bphaser\b/i.test(text) || /\bjuego(?:s)?\b/i.test(text) || /\bgame\b/i.test(text)
+  const hasTailwind = /\btailwind(?:css)?\b/i.test(text)
+
+  let framework = 'HTML5 + TypeScript + TailwindCSS'
+  let frameworkKey = 'html5_ts_tailwind'
+  let componentsDir = 'src/components'
+  let servicesDir = 'src/services'
+
+  if (hasAngular) {
+    framework = 'Angular con Material'
+    frameworkKey = 'angular_material'
+    componentsDir = 'src/app/components'
+    servicesDir = 'src/app/services'
+    bundler = 'none'
+    testRunner = 'node:test'
+    packageManager = packageManager === 'pnpm' ? 'pnpm' : 'npm'
+  } else if (hasReact) {
+    framework = 'React + TypeScript' + (hasTailwind ? ' + TailwindCSS' : '')
+    frameworkKey = 'react_ts'
+    componentsDir = 'src/components'
+    servicesDir = 'src/services'
+    bundler = 'vite'
+  } else if (hasVue) {
+    framework = 'Vue 3 + TypeScript'
+    frameworkKey = 'vue_ts'
+    componentsDir = 'src/components'
+    servicesDir = 'src/services'
+    bundler = 'vite'
+  } else if (hasPhaser) {
+    framework = 'HTML5 + Vanilla TypeScript + Phaser' + (hasTailwind ? ' + TailwindCSS' : '')
+    frameworkKey = 'phaser_ts'
+    componentsDir = 'src/components'
+    servicesDir = 'src/services'
+    bundler = 'vite'
+  }
+
+  // 5. Scripts de ejecución
+  const devCommand = bundler === 'vite' ? 'vite' : 'node dist/main.js'
+  const buildCommand = bundler === 'vite' ? 'tsc && vite build' : 'tsc'
+  const testCommand = testRunner === 'vitest' ? 'vitest run' : testRunner === 'jest' ? 'jest' : 'node --test'
+
+  // 6. Dependencias de producción y desarrollo
+  const dependencies: Record<string, string> = {}
+  const devDependencies: Record<string, string> = {
+    typescript: '^5.4.0',
+  }
+
+  if (hasPhaser) {
+    dependencies['phaser'] = '^3.80.1'
+  }
+  if (hasAngular) {
+    dependencies['@angular/core'] = '^18.0.0'
+    dependencies['@angular/material'] = '^18.0.0'
+  }
+  if (hasReact) {
+    dependencies['react'] = '^18.3.1'
+    dependencies['react-dom'] = '^18.3.1'
+    devDependencies['@types/react'] = '^18.3.1'
+    devDependencies['@types/react-dom'] = '^18.3.1'
+    if (bundler === 'vite') {
+      devDependencies['@vitejs/plugin-react'] = '^4.2.1'
+    }
+  }
+  if (hasVue) {
+    dependencies['vue'] = '^3.4.0'
+    if (bundler === 'vite') {
+      devDependencies['@vitejs/plugin-vue'] = '^5.0.0'
+    }
+  }
+
+  if (bundler === 'vite') {
+    devDependencies['vite'] = '^5.2.0'
+  }
+  if (testRunner === 'vitest') {
+    devDependencies['vitest'] = '^1.6.0'
+  }
+  if (hasTailwind) {
+    devDependencies['tailwindcss'] = '^3.4.3'
+    devDependencies['postcss'] = '^8.4.38'
+    devDependencies['autoprefixer'] = '^10.4.19'
+  }
+
+  const packageJson = {
+    name: 'localloop-app',
+    version: '0.1.0',
+    private: true,
+    type: 'module',
+    description: `Proyecto generado por LocalLoop SDLC - ${framework}`,
+    scripts: {
+      dev: devCommand,
+      build: buildCommand,
+      start: bundler === 'vite' ? (packageManager === 'pnpm' ? 'pnpm dev' : 'npm run dev') : 'node dist/main.js',
+      test: testCommand,
+      ...(bundler === 'vite' ? { preview: 'vite preview' } : {}),
+    },
+    dependencies,
+    devDependencies,
+    ...(packageManager === 'pnpm' ? { pnpm: { onlyBuiltDependencies: ['esbuild'] } } : {}),
+  }
+
+  const tsconfigJson = {
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'ESNext',
+      moduleResolution: 'bundler',
+      lib: ['ES2022', 'DOM', 'DOM.Iterable'],
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      strict: true,
+      skipLibCheck: true,
+    },
+    include: ['src/**/*', 'tests/**/*'],
+  }
+
+  const extraConfigFiles: Array<{ path: string; content: string; reason: string }> = []
+
+  if (bundler === 'vite') {
+    extraConfigFiles.push({
+      path: 'vite.config.ts',
+      content: `import { defineConfig } from 'vite';
+
+export default defineConfig({
+  server: {
+    port: 3000,
+    open: true,
+  },
+  test: {
+    globals: true,
+    environment: 'node',
+  },
+});
+`,
+      reason: 'Configuración del Bundler y Servidor de Desarrollo Vite',
+    })
+  }
+
+  if (hasTailwind) {
+    extraConfigFiles.push({
+      path: 'tailwind.config.js',
+      content: `/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx,html}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+`,
+      reason: 'Configuración TailwindCSS',
+    })
+    extraConfigFiles.push({
+      path: 'postcss.config.js',
+      content: `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+`,
+      reason: 'Configuración PostCSS para Tailwind',
+    })
+  }
+
+  const structureSummary = `- Marco Tecnológico: \`${framework}\`
+- Gestor de Paquetes: \`${packageManager}\` (Bundler: \`${bundler}\`, Tests: \`${testRunner}\`)
+- Código fuente: \`src/\`
+- Componentes: \`${componentsDir}/\`
+- Servicios y adaptadores: \`${servicesDir}/\`
+- Tests unitarios: \`tests/\`
+- Scripts de inicialización: \`setup.cmd\` y \`setup.sh\` en la raíz del workspace
+- Scripts de arranque (Fase 4): \`start.cmd\` y \`start.sh\` en la raíz del workspace`
+
+  // Scripts de Setup
+  const setupCmdContent = `@echo off
+echo ========================================================
+echo   LocalLoop - Setup Inicial del Proyecto
+echo   Marco de Referencia: ${framework}
+echo ========================================================
+echo.
+
+where node >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Node.js no esta instalado o no se encuentra en el PATH.
+    echo Por favor instala Node.js (https://nodejs.org) para continuar.
+    exit /b 1
+)
+
+where ${packageManager} >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    ${
+      packageManager === 'pnpm'
+        ? `echo [AVISO] pnpm no detectado globalmente. Intentando instalar pnpm via npm...
+    call npm install -g pnpm 2>nul
+    where pnpm >nul 2>nul
+    if %ERRORLEVEL% neq 0 (
+        echo [INFO] Usando npx pnpm como alternativa...
+        set PKG_RUNNER=npx pnpm
+    ) else (
+        set PKG_RUNNER=pnpm
+    )`
+        : `echo [AVISO] ${packageManager} no encontrado. Usando npm...
+    set PKG_RUNNER=npm`
+    }
+) else (
+    set PKG_RUNNER=${packageManager}
+)
+
+echo [1/3] Creando estructura de directorios del framework...
+if not exist src mkdir src
+if not exist ${componentsDir.replace(/\//g, '\\')} mkdir ${componentsDir.replace(/\//g, '\\')}
+if not exist ${servicesDir.replace(/\//g, '\\')} mkdir ${servicesDir.replace(/\//g, '\\')}
+if not exist tests mkdir tests
+if not exist public mkdir public
+
+echo [2/3] Instalando dependencias del proyecto via %PKG_RUNNER% install...
+call %PKG_RUNNER% install
+if %ERRORLEVEL% neq 0 (
+    echo [ADVERTENCIA] Fallo la instalacion con %PKG_RUNNER%. Intentando con npm install...
+    call npm install
+) else (
+    echo [OK] Dependencias instaladas correctamente.
+)
+
+echo [3/3] Verificacion del entorno completada.
+echo.
+echo ========================================================
+echo   Setup inicial completado con exito.
+echo   Estructura lista para los agentes de construccion.
+echo   Para arrancar la aplicacion ejecuta: start.cmd o ${packageManager} ${bundler === 'vite' ? 'dev' : 'start'}
+echo ========================================================
+`
+
+  const setupShContent = `#!/usr/bin/env bash
+set -e
+echo "========================================================"
+echo "  LocalLoop - Setup Inicial del Proyecto"
+echo "  Marco de Referencia: ${framework}"
+echo "========================================================"
+echo ""
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "[ERROR] Node.js no está instalado o no se encuentra en el PATH."
+    echo "Por favor instala Node.js (https://nodejs.org) para continuar."
+    exit 1
+fi
+
+PKG_RUNNER="${packageManager}"
+if ! command -v ${packageManager} >/dev/null 2>&1; then
+    echo "[AVISO] ${packageManager} no está disponible en PATH. Usando npm/npx..."
+    PKG_RUNNER="npm"
+fi
+
+echo "[1/3] Creando estructura de directorios del framework..."
+mkdir -p "${componentsDir}" "${servicesDir}" tests public
+
+echo "[2/3] Instalando dependencias del proyecto via $PKG_RUNNER install..."
+$PKG_RUNNER install || npm install || echo "[ADVERTENCIA] La instalación finalizó con advertencias."
+
+echo "[3/3] Verificación del entorno completada."
+echo ""
+echo "========================================================"
+echo "  Setup inicial completado con éxito."
+echo "  Estructura lista para los agentes de construcción."
+echo "  Para arrancar ejecuta: ./start.sh o $PKG_RUNNER ${bundler === 'vite' ? 'dev' : 'start'}"
+echo "========================================================"
+`
+
+  const startCmdContent = `@echo off
+echo ========================================================
+echo   LocalLoop - Arranque de Aplicacion y Prueba E2E
+echo   Marco Tecnologico: ${framework}
+echo ========================================================
+echo.
+
+where ${packageManager} >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    echo Iniciando aplicacion local con ${packageManager} ${bundler === 'vite' ? 'dev' : 'start'}...
+    call ${packageManager} ${bundler === 'vite' ? 'dev' : 'start'}
+    exit /b %ERRORLEVEL%
+)
+
+where npm >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    echo [INFO] Iniciando aplicacion con npm...
+    call npm run dev 2>nul || call npx vite 2>nul || call npm start 2>nul || call npx serve .
+    exit /b %ERRORLEVEL%
+)
+
+echo [ERROR] No se encontro gestor de paquetes (Node.js/npm) en el PATH.
+exit /b 1
+`
+
+  const startShContent = `#!/usr/bin/env bash
+set -e
+echo "========================================================"
+echo "  LocalLoop - Arranque de Aplicación y Prueba E2E"
+echo "  Marco Tecnológico: ${framework}"
+echo "========================================================"
+echo ""
+
+if command -v ${packageManager} >/dev/null 2>&1; then
+    echo "Iniciando aplicación local con ${packageManager} ${bundler === 'vite' ? 'dev' : 'start'}..."
+    ${packageManager} ${bundler === 'vite' ? 'dev' : 'start'}
+    exit 0
+fi
+
+if command -v npm >/dev/null 2>&1; then
+    npm run dev 2>/dev/null || npx vite 2>/dev/null || npm start 2>/dev/null || npx serve .
+    exit 0
+fi
+
+echo "[ERROR] No se encontró gestor de paquetes en el PATH."
+exit 1
+`
+
+  return {
+    framework,
+    frameworkKey,
+    packageManager,
+    bundler,
+    testRunner,
+    devCommand,
+    buildCommand,
+    testCommand,
+    componentsDir,
+    servicesDir,
+    structureSummary,
+    packageJson,
+    tsconfigJson,
+    extraConfigFiles,
+    setupCmdContent,
+    setupShContent,
+    startCmdContent,
+    startShContent,
+  }
+}
+
+/**
+ * NODO 1.2: Confirmación del Marco de Referencia y Generación de Scripts de Setup (HITL 1.5)
+ * Procesa la respuesta en conversación abierta del usuario, genera setup.cmd / setup.sh y archivos base,
+ * e instruye a los agentes de Fase 2 y 3 sobre la ubicación canónica del código.
+ */
+async function node_phase1_confirm_framework(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
+  trace('[SDLCGraph] Confirmando marco de referencia del desarrollo y generando scripts de setup...')
+  const engram = await getPersistentEngram()
+  const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
+
+  // Recuperar la última respuesta del usuario en la conversación abierta
+  const userMessages = state.messages.filter((m) => m.role === 'user')
+  const lastUserText = userMessages[userMessages.length - 1]?.content || ''
+
+  // Resolver marco de referencia de forma dinámica y alineada con la conversación
+  const resolved = resolveFrameworkStack(lastUserText, state.phase0Data?.step1?.rawBusinessLanguageText)
+  const { framework, structureSummary, componentsDir, servicesDir } = resolved
+
+  // 1. Escribir archivos de configuración base del framework en el workspace
+  const packageJsonContent = JSON.stringify(resolved.packageJson, null, 2)
+  const tsconfigContent = JSON.stringify(resolved.tsconfigJson, null, 2)
+
+  // 2. Scripts de Setup (Windows .cmd y Unix .sh) y configuraciones adicionales
+  const filesToWrite = [
+    { path: 'package.json', content: packageJsonContent, reason: 'Configuración base del framework' },
+    { path: 'tsconfig.json', content: tsconfigContent, reason: 'Configuración TypeScript del framework' },
+    { path: 'setup.cmd', content: resolved.setupCmdContent, reason: 'Script de setup inicial para Windows' },
+    { path: 'setup.sh', content: resolved.setupShContent, reason: 'Script de setup inicial para Linux/macOS' },
+    ...resolved.extraConfigFiles,
+  ]
+
+  for (const f of filesToWrite) {
+    try {
+      await executeFileSystemTool(
+        'fs_write_file',
+        { path: f.path, content: f.content, reason: f.reason },
+        { sessionId: state.sessionId || 0, fsWriteMode: FsWriteMode.AUTO, onProposalCreated: callbacks?.onProposalCreated },
+      )
+    } catch {
+      // ignore
+    }
+    await writeWorkspaceFileDirect(f.path, f.content)
+  }
+
+  // 3. Registrar frameworkConfig en memoria persistente Engram
+  const frameworkConfig: ProjectFrameworkConfig = {
+    framework,
+    packageManager: resolved.packageManager,
+    bundler: resolved.bundler,
+    testRunner: resolved.testRunner,
+    devCommand: resolved.devCommand,
+    buildCommand: resolved.buildCommand,
+    testCommand: resolved.testCommand,
+    projectStructureSummary: structureSummary,
+    setupScriptsGenerated: true,
+    setupInstructions: `Para inicializar el proyecto en tu máquina local:
+1. Abre tu terminal en la raíz de la carpeta vinculada.
+2. En Windows ejecuta: \`setup.cmd\`
+3. En Linux/macOS ejecuta: \`chmod +x setup.sh && ./setup.sh\``,
+    startScriptsGenerated: false,
+  }
+
+  await engram.save({
+    title: 'Marco de Referencia del Desarrollo y Estructura del Proyecto',
+    type: 'project_framework_and_structure',
+    project: 'localloop',
+    tags: ['framework', 'tech_stack', 'project_structure', 'setup_scripts'],
+    records: [
+      {
+        title: 'framework_config',
+        content: JSON.stringify(frameworkConfig, null, 2),
+      },
+    ],
+  })
+
+  // 4. Actualizar rutas en el grafo de componentes para guiar a los agentes de Fase 2 y 3
+  const updatedComponents: Record<string, ComponentNode> = { ...state.componentsGraph }
+  for (const compId of Object.keys(updatedComponents)) {
+    const comp = updatedComponents[compId]
+    const isService = comp.id.includes('service') || comp.name.toLowerCase().includes('servicio')
+    const dir = isService ? servicesDir : componentsDir
+    const ext = framework.includes('React') ? 'tsx' : 'ts'
+    comp.targetPath = `${dir}/${comp.id}.${ext}`
+    comp.targetPaths = [comp.targetPath]
+  }
+
+  const fallbackConfirm = () => ({
+    content:
+      `### 🛠️ Fase 1: Marco de Referencia Formalizado y Setup Inicial\n\n` +
+      `He procesado tu feedback y he establecido el marco de desarrollo para el proyecto:\n\n` +
+      `* **Marco Tecnológico:** \`${framework}\`\n` +
+      `* **Estructura Canónica del Proyecto:**\n` +
+      `  - Directorio de Componentes: \`${componentsDir}/\`\n` +
+      `  - Directorio de Servicios y Lógica: \`${servicesDir}/\`\n` +
+      `  - Configuración del Entorno: \`package.json\`, \`tsconfig.json\`\n\n` +
+      `#### 🚀 Scripts de Setup Generados en la Raíz del Workspace\n` +
+      `Se han creado los scripts de inicialización en la raíz de tu proyecto:\n` +
+      `* 🪟 **Windows:** \`setup.cmd\`\n` +
+      `* 🐧 **Linux / macOS:** \`setup.sh\`\n\n` +
+      `**Instrucciones de uso para el usuario:**\n` +
+      `1. Abre una terminal en la raíz de tu carpeta de workspace.\n` +
+      `2. Ejecuta según tu sistema operativo:\n` +
+      `   - En Windows: \`setup.cmd\`\n` +
+      `   - En Linux / macOS: \`chmod +x setup.sh && ./setup.sh\`\n` +
+      `3. El script creará los directorios del proyecto e instalará las dependencias necesarias con \`npm install\`.\n\n` +
+      `> 📍 **Alineamiento de Agentes:** Los agentes de las siguientes fases (Fase 2 de Diseño Técnico y Fase 3 de Construcción) conocen esta estructura y ubicarán sus componentes y contratos en las carpetas fijadas.\n\n` +
+      `Procediendo con el despacho de componentes y la Fase 2...`,
+    thought: 'Formalizando marco de referencia, generando scripts setup.cmd / setup.sh y sincronizando estructura...',
+  })
+
+  const resolvedSkill = RuntimeSkillLoader.resolveContext({
+    ...state,
+    activeSkill: 'GovernanceProject_Planner',
+  })
+
+  const llmConfirm = await streamLlmPhase({
+    sessionId: state.sessionId,
+    phaseName: `Fase 1: Marco de Referencia — [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '1_STRATEGY_AND_PLAN',
+    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Software de LocalLoop. Tu función es formalizar el marco tecnológico acordado con el usuario y confirmar la generación de los scripts de setup inicial (setup.cmd y setup.sh) en la raíz del workspace.`,
+    userPrompt: `Decisión del usuario sobre tecnología: "${lastUserText || 'Aprobada la propuesta estándar'}"
+Marco determinado: ${framework}
+Estructura:
+${structureSummary}
+Scripts generados en raíz: setup.cmd, setup.sh, package.json, tsconfig.json.
+
+Genera el informe de formalización indicándole al usuario cómo usar los scripts de setup y confirmando que los agentes de construcción colocarán su código en las rutas fijadas.`,
+    tools: resolvedSkill.tools,
+    defaultFallback: fallbackConfirm,
+  })
+
+  const confirmMsg = {
+    role: 'assistant' as const,
+    content: llmConfirm.content,
+    thought: llmConfirm.thought,
+  }
+
+  await emitSDLCProgress(state.sessionId, confirmMsg, 'Marco de Referencia y Scripts de Setup Formalizados', '1_STRATEGY_AND_PLAN')
+
+  return {
+    frameworkConfig,
+    phase1FrameworkAgreed: true,
+    currentPhase: '2_TECHNICAL_DESIGN_GATE',
+    componentsGraph: updatedComponents,
+    messages: [...state.messages, confirmMsg],
   }
 }
 
@@ -1960,10 +2687,11 @@ async function node_phase3_implement_component(state: SDLCStateType): Promise<Pa
   compGraph[compId].status = 'IN_BUILD'
 
   const defaultGen = generateComponentCode(comp)
+  const defaultTarget = comp.targetPath || `src/components/${compId}.ts`
   const defaultFiles: GeneratedComponentFile[] =
     defaultGen.files && defaultGen.files.length > 0
       ? defaultGen.files
-      : [{ path: `src/modules/${compId}.ts`, content: defaultGen.code, description: comp.name }]
+      : [{ path: defaultTarget, content: defaultGen.code, description: comp.name }]
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
     ...state,
@@ -1979,7 +2707,12 @@ Soporte multi-fichero activo: Invoca la herramienta "fs_write_file" para cada ar
 ...
 \`\`\`
 o usando comentarios al inicio del bloque como "// File: ruta/archivo.ts".`,
-    userPrompt: `Implementa el componente: ${comp.name} (\`${compId}\`)
+    userPrompt: `Marco Tecnológico Acordado: ${state.frameworkConfig?.framework || 'HTML5 + TypeScript + TailwindCSS'}
+Estructura de Directorios del Proyecto:
+${state.frameworkConfig?.projectStructureSummary || '- src/components/'}
+IMPORTANTE: Sitúa los archivos generados respetando estrictamente esta estructura de directorios y marco técnico.
+
+Implementa el componente: ${comp.name} (\`${compId}\`)
 Responsabilidad: ${comp.description}
 Contratos:
 ${(state.technicalDesigns[compId]?.[0]?.contracts || []).map((c) => c.schema).join('\n\n')}
@@ -2522,6 +3255,167 @@ Genera el informe de integración E2E en Markdown.`,
  */
 async function node_phase4_business_compile(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
   trace('[SDLCGraph] Compilando informe ejecutivo para Aprobación Formal de Negocio (HITL)...')
+  const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
+  const engram = await getPersistentEngram()
+
+  // 1. Generar scripts de arranque en la raíz del workspace para la verificación local E2E
+  const currentFw = state.frameworkConfig?.framework || 'HTML5 + TypeScript + TailwindCSS'
+  const pkgMgr = state.frameworkConfig?.packageManager || 'npm'
+  const bundler = state.frameworkConfig?.bundler || 'none'
+  const isVite = bundler === 'vite'
+
+  const startCmdContent = `@echo off
+echo ========================================================
+echo   LocalLoop - Arranque de Aplicacion y Prueba E2E
+echo   Marco Tecnologico: ${currentFw}
+echo ========================================================
+echo.
+
+where ${pkgMgr} >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    echo Iniciando aplicacion local con ${pkgMgr} ${isVite ? 'dev' : 'start'}...
+    call ${pkgMgr} ${isVite ? 'dev' : 'start'}
+    exit /b %ERRORLEVEL%
+)
+
+where npm >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    echo [INFO] Iniciando aplicacion con npm...
+    call npm run dev 2>nul || call npx vite 2>nul || call npm start 2>nul || call npx serve .
+    exit /b %ERRORLEVEL%
+)
+
+echo [ERROR] No se encontro gestor de paquetes (Node.js/npm) en el PATH.
+exit /b 1
+`
+
+  const startShContent = `#!/usr/bin/env bash
+set -e
+echo "========================================================"
+echo "  LocalLoop - Arranque de Aplicación y Prueba E2E"
+echo "  Marco Tecnológico: ${currentFw}"
+echo "========================================================"
+echo ""
+
+if command -v ${pkgMgr} >/dev/null 2>&1; then
+    echo "Iniciando aplicación local con ${pkgMgr} ${isVite ? 'dev' : 'start'}..."
+    ${pkgMgr} ${isVite ? 'dev' : 'start'}
+    exit 0
+fi
+
+if command -v npm >/dev/null 2>&1; then
+    npm run dev 2>/dev/null || npx vite 2>/dev/null || npm start 2>/dev/null || npx serve .
+    exit 0
+fi
+
+echo "[ERROR] No se encontró gestor de paquetes en el PATH."
+exit 1
+`
+
+  // 2. Generar informe visual E2E y actualizar entry point sólo si no existe aplicación previa
+  const compListItems = Object.values(state.componentsGraph)
+    .map(
+      (c) =>
+        `        <li class="p-3 bg-gray-50 rounded-lg border border-gray-100 flex items-center justify-between">
+          <div>
+            <span class="font-bold text-gray-800">${c.name}</span>
+            <code class="text-xs text-indigo-600 block">${c.id} (${c.targetPath || 'src/components'})</code>
+          </div>
+          <span class="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">${c.status}</span>
+        </li>`,
+    )
+    .join('\n')
+
+  const indexHtmlContent = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="generator" content="LocalLoop SDLC" />
+  <title>LocalLoop App - Verificación E2E</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen p-8">
+  <div class="max-w-4xl mx-auto space-y-6">
+    <header class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold text-indigo-600">LocalLoop SDLC — Aplicación Lista para Prueba E2E</h1>
+        <p class="text-xs text-gray-500 mt-1">Marco Tecnológico: <strong>${currentFw}</strong></p>
+      </div>
+      <span class="px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full">Listo para E2E</span>
+    </header>
+
+    <main class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+      <h2 class="text-sm font-bold text-gray-700 uppercase tracking-wide">Componentes Integrados en la Aplicación</h2>
+      <ul class="space-y-2">
+${compListItems}
+      </ul>
+      <div id="components-viewport" class="mt-6 border-t pt-4">
+        <p class="text-xs text-gray-400">Entorno de verificación local generado por LocalLoop SDLC Graph.</p>
+      </div>
+    </main>
+  </div>
+</body>
+</html>`
+
+  // Preservar index.html si ya existe la aplicación (ej. PWA Tetris o UI desarrollada en Fase 3)
+  const existingIndex = await readWorkspaceFile('index.html').catch(() => null)
+  const isExistingApp = Boolean(
+    existingIndex &&
+      existingIndex.content &&
+      !existingIndex.content.includes('LocalLoop SDLC — Aplicación Lista para Prueba E2E'),
+  )
+
+  const startFiles: Array<{ path: string; content: string; reason: string }> = [
+    { path: 'start.cmd', content: startCmdContent, reason: 'Script de arranque para Windows (Pruebas E2E)' },
+    { path: 'start.sh', content: startShContent, reason: 'Script de arranque para Linux/macOS (Pruebas E2E)' },
+    { path: 'e2e-report.html', content: indexHtmlContent, reason: 'Informe visual de Verificación E2E' },
+  ]
+
+  if (!isExistingApp) {
+    startFiles.push({ path: 'index.html', content: indexHtmlContent, reason: 'Punto de entrada HTML actualizado para verificación E2E' })
+  }
+
+  for (const sf of startFiles) {
+    try {
+      await executeFileSystemTool(
+        'fs_write_file',
+        { path: sf.path, content: sf.content, reason: sf.reason },
+        { sessionId: state.sessionId || 0, fsWriteMode: FsWriteMode.AUTO, onProposalCreated: callbacks?.onProposalCreated },
+      )
+    } catch {
+      // ignore
+    }
+    await writeWorkspaceFileDirect(sf.path, sf.content)
+  }
+
+  // 3. Actualizar frameworkConfig y guardar en Engram
+  const updatedFrameworkConfig: ProjectFrameworkConfig = {
+    ...(state.frameworkConfig || {
+      framework: currentFw,
+      projectStructureSummary: '- src/components/\n- src/services/',
+      setupScriptsGenerated: true,
+    }),
+    startScriptsGenerated: true,
+    startInstructions: `Para arrancar y probar localmente:
+1. Abre tu terminal en la raíz del workspace.
+2. En Windows ejecuta: \`start.cmd\`
+3. En Linux/macOS ejecuta: \`chmod +x start.sh && ./start.sh\`
+4. Abre la dirección indicada en tu navegador para realizar la verificación E2E.`,
+  }
+
+  await engram.save({
+    title: 'Scripts de Arranque y Verificación E2E',
+    type: 'project_framework_and_structure',
+    project: 'localloop',
+    tags: ['start_scripts', 'e2e_verification', 'framework'],
+    records: [
+      {
+        title: 'start_scripts_config',
+        content: JSON.stringify(updatedFrameworkConfig, null, 2),
+      },
+    ],
+  })
 
   const debts = state.technicalDebtList || []
   const fallbackAudit = () => ({
@@ -2533,8 +3427,20 @@ async function node_phase4_business_compile(state: SDLCStateType): Promise<Parti
       `* **Pruebas Unitarias en Sandbox JS:** ${Object.keys(state.unitEvidences).length} suites ejecutadas con 100% éxito.\n` +
       `* **Pruebas Integradas E2E:** Aserciones superadas satisfactoriamente.\n` +
       `* **Deuda Técnica en Plan de Proyecto:** ${debts.length > 0 ? `${debts.length} ítems registrados (${debts.map((d) => `\`${d.id}\``).join(', ')}).` : '0 ítems de deuda.'}\n\n` +
+      `#### 🚀 Scripts de Arranque Generados en la Raíz del Workspace\n` +
+      `Para tu verificación local interactiva se han generado los scripts de arranque:\n` +
+      `* 🪟 **Windows:** \`start.cmd\`\n` +
+      `* 🐧 **Linux / macOS:** \`start.sh\`\n\n` +
+      `**Ficheros del framework actualizados para la prueba:**\n` +
+      `* Se ha actualizado \`index.html\` integrando y enlazando los componentes construidos.\n\n` +
+      `**Instrucciones para la prueba del usuario:**\n` +
+      `1. Abre tu terminal en la raíz de tu carpeta de workspace.\n` +
+      `2. Ejecuta según tu sistema operativo:\n` +
+      `   - En Windows: \`start.cmd\`\n` +
+      `   - En Linux / macOS: \`chmod +x start.sh && ./start.sh\`\n` +
+      `3. Abre el navegador en la URL indicada por el servidor local para realizar la prueba E2E.\n\n` +
       `Por favor, revisa las evidencias anteriores y confirma la **Aprobación Formal de Negocio** en el panel inferior para proceder a la Fase 5 (Cierre & Documentación), o pulsa Rechazar para activar el bucle de Resiliencia (RCA).`,
-    thought: 'Compilando informe ejecutivo y balance de deuda técnica para aprobación de negocio...',
+    thought: 'Compilando informe ejecutivo, balance de deuda técnica y scripts de arranque para aprobación de negocio...',
   })
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
@@ -2551,7 +3457,9 @@ async function node_phase4_business_compile(state: SDLCStateType): Promise<Parti
 Componentes construidos: ${Object.keys(state.componentsGraph).join(', ')}
 Suites unitarias: ${Object.keys(state.unitEvidences).length}
 Deuda técnica: ${debts.map((d) => `${d.id} (${d.riskLevel})`).join(', ') || '0 ítems'}
-Genera la solicitud formal de Aprobación de Negocio en Markdown.`,
+Scripts de arranque generados en la raíz: start.cmd y start.sh
+Ficheros actualizados: index.html
+Genera la solicitud formal de Aprobación de Negocio en Markdown detallando cómo el usuario debe usar start.cmd o start.sh para probar la aplicación.`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackAudit,
   })
@@ -2592,6 +3500,7 @@ Genera la solicitud formal de Aprobación de Negocio en Markdown.`,
 
   return {
     currentPhase: '4_E2E_BUSINESS_AUDIT',
+    frameworkConfig: updatedFrameworkConfig,
     messages: [...state.messages, approvalRequestMessage],
   }
 }
@@ -2821,7 +3730,13 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
     `\n## Hitos del Plan de Proyecto:\n` +
     (state.projectPlan?.milestones || []).map((m) => `- [${m.completed ? 'x' : ' '}] **${m.id}**: ${m.target}`).join('\n') +
     `\n\n## Backlog de Tareas:\n` +
-    (state.projectPlan?.backlog || []).map((b) => `- **${b.id}** (${b.priority}): ${b.title} [\`${b.status}\`]`).join('\n')
+    (state.projectPlan?.backlog || []).map((b) => `- **${b.id}** (${b.priority}): ${b.title} [\`${b.status}\`]`).join('\n') +
+    (state.frameworkConfig
+      ? `\n\n## Marco de Referencia Tecnológico y Scripts de Inicialización:\n` +
+        `- **Tecnología Acordada:** \`${state.frameworkConfig.framework}\`\n` +
+        `- **Scripts de Setup Generados:** \`setup.cmd\` (Windows) y \`setup.sh\` (Linux/macOS) en la raíz.\n` +
+        `- **Estructura del Proyecto:**\n${state.frameworkConfig.projectStructureSummary}\n`
+      : '')
 
   // 3. Fase 2: Auditoría Gatekeeper & Deuda Técnica
   const p2GatekeeperDoc =
@@ -2856,7 +3771,9 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
     `Generado el ${nowIso}\n\n` +
     `- **Casos de Uso Evaluados:** ${state.useCases.map((u) => u.title).join(' ➔ ')}\n` +
     `- **Cadena de Componentes del DAG:** ${Object.keys(state.componentsGraph).join(' ➔ ')}\n` +
-    `- **Resultado de Integración:** ✅ 100% de Aserciones E2E Superadas en Sandbox JS\n\n` +
+    `- **Resultado de Integración:** ✅ 100% de Aserciones E2E Superadas en Sandbox JS\n` +
+    `- **Scripts de Arranque Generados:** \`start.cmd\` (Windows) y \`start.sh\` (Linux/macOS) en la raíz del workspace\n` +
+    `- **Ficheros de Framework Actualizados:** \`index.html\` y \`package.json\`\n\n` +
     `## Trazabilidad y Logs de Verificación E2E:\n\`\`\`\n` +
     ((state.e2eEvidences?.traceLog || []).join('\n') || 'Simulación E2E completada satisfactoriamente.') +
     `\n\`\`\`\n`
@@ -3013,7 +3930,7 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
       `  - \`doc/fase-6-cierre-entrega/\`: Landscape consolidado y manual de procesos y auditoría.\n` +
       `* 📄 **Documentos Raíz:** \`LANDSCAPE.md\` y \`MANUAL_DE_PROCESOS.md\` sincronizados.\n` +
       `* 📦 **Módulos Generados en Workspace (\`src/\`):**\n` +
-      Object.keys(state.componentsGraph).map((id) => `  - \`src/modules/${id}.ts\``).join('\n') + `\n` +
+      Object.values(state.componentsGraph).map((c) => `  - \`${c.targetPath || `src/modules/${c.id}.ts`}\``).join('\n') + `\n` +
       `* 🧠 **Memoria Episódica engram-ts:** Contratos, diseños, artefactos de cada fase y evidencias indexadas para el LLM.\n\n` +
       `> ✨ **Estado del Sistema:** Todos los hitos han sido completados y validados formalmente por Negocio y Arquitectura.`,
     thought: 'Consolidando artefactos de arquitectura y proyectando documentación modular al workspace...',
@@ -3065,8 +3982,9 @@ const workflow = new StateGraph(SDLCState)
   .addNode('phase0_ask_discovery', node_phase0_ask_discovery)
   .addNode('phase0_process_discovery', node_phase0_process_discovery)
 
-  // Nodo Fase 1
+  // Nodos Fase 1
   .addNode('phase1_strategy_and_plan', node_phase1_strategy_and_plan)
+  .addNode('phase1_confirm_framework', node_phase1_confirm_framework)
 
   // Despachador de Componentes (Fin-Inicio)
   .addNode('component_scheduler', node_component_scheduler)
@@ -3098,7 +4016,10 @@ const workflow = new StateGraph(SDLCState)
 
   .addEdge('phase0_ask_discovery', 'phase0_process_discovery')
   .addEdge('phase0_process_discovery', 'phase1_strategy_and_plan')
-  .addEdge('phase1_strategy_and_plan', 'component_scheduler')
+  .addConditionalEdges('phase1_strategy_and_plan', (state) => {
+    return state.phase1FrameworkAgreed ? 'component_scheduler' : 'phase1_confirm_framework'
+  })
+  .addEdge('phase1_confirm_framework', 'component_scheduler')
 
   // Enrutamiento del Scheduler de Componentes
   .addConditionalEdges('component_scheduler', (state) => {
@@ -3134,11 +4055,12 @@ const workflow = new StateGraph(SDLCState)
   .addEdge('phase6_doc_projection', END)
 
 /**
- * Grafo compilado con los 2 puntos de interrupción Human-in-the-Loop (HITL):
- * 1. Antes de procesar las respuestas de descubrimiento (espera respuesta del usuario & MCP).
- * 2. Antes de evaluar la decisión de negocio tras la compilación de evidencias E2E.
+ * Grafo compilado con los 3 puntos de interrupción Human-in-the-Loop (HITL):
+ * 1. Antes de procesar las respuestas de descubrimiento en Fase 0 (espera respuesta del usuario & MCP).
+ * 2. Antes de confirmar el marco de referencia en Fase 1 (espera feedback del usuario sobre framework y estructura).
+ * 3. Antes de evaluar la decisión de negocio tras la compilación de evidencias E2E en Fase 4.
  */
 export const compiledSDLCGraph = workflow.compile({
   checkpointer: getSharedIndexedDBSaver(),
-  interruptBefore: ['phase0_process_discovery', 'phase4_business_decision'],
+  interruptBefore: ['phase0_process_discovery', 'phase1_confirm_framework', 'phase4_business_decision'],
 })

@@ -132,6 +132,7 @@ async function runTetrisPwaTests() {
 
   await compiledSDLCGraph.updateState(threadConfig, {
     discoveryInputValid: true,
+    phase1FrameworkAgreed: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data,
     useCases,

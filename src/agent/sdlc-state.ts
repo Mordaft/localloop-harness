@@ -137,6 +137,21 @@ export interface FormalBusinessApproval {
   evaluatedAt: string
 }
 
+export interface ProjectFrameworkConfig {
+  framework: string
+  packageManager?: 'pnpm' | 'npm' | 'yarn' | 'bun'
+  bundler?: 'vite' | 'webpack' | 'esbuild' | 'none'
+  testRunner?: 'vitest' | 'jest' | 'node:test'
+  devCommand?: string
+  buildCommand?: string
+  testCommand?: string
+  projectStructureSummary: string
+  setupScriptsGenerated: boolean
+  setupInstructions?: string
+  startScriptsGenerated?: boolean
+  startInstructions?: string
+}
+
 export interface ProjectProgressEvent {
   id: string
   timestamp: string
@@ -210,6 +225,14 @@ export const SDLCState = Annotation.Root({
   }>({
     reducer: (curr, next) => next ?? curr,
     default: () => ({ milestones: [], backlog: [] }),
+  }),
+  frameworkConfig: Annotation<ProjectFrameworkConfig | null>({
+    reducer: (curr, next) => (next ? { ...curr, ...next } : curr),
+    default: () => null,
+  }),
+  phase1FrameworkAgreed: Annotation<boolean>({
+    reducer: (_, next) => next,
+    default: () => false,
   }),
 
   // FASE 2 & 3: Componentes en Curso y Control

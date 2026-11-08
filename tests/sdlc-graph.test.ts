@@ -151,14 +151,52 @@ async function runSDLCGraphTests() {
     throw new Error('La dependencia Fin-Inicio comp_billing_core no se preservó en comp_digital_signature.')
   }
 
-  // 5. Verificar que se alcanzó la Fase 4 y la segunda interrupción (HITL 2 - Aprobación Formal de Negocio)
-  const approvalMsg = run2.messages.find((m: any) => m.content.includes('Fase 4: Solicitud de Aprobación Formal de Negocio'))
+  // 5. Verificar que Fase 1 propuso el marco de referencia y pausó en la interrupción HITL 1.5
+  if (run2.currentPhase !== '1_STRATEGY_AND_PLAN') {
+    throw new Error(`Se esperaba pausa en 1_STRATEGY_AND_PLAN, obtenido: ${run2.currentPhase}`)
+  }
+  console.log('✓ Fase 1 propuso el WBS, DAG y marco de desarrollo y pausó para feedback del usuario.')
+
+  // Reanudar con la respuesta del usuario en conversación abierta confirmando el stack tecnológico
+  console.log('[Test 4.5] Respondiendo en conversación abierta para formalizar framework y generar setup.cmd / setup.sh...')
+  await compiledSDLCGraph.updateState(threadConfig, {
+    messages: [
+      ...run2.messages,
+      { role: 'user', content: 'De acuerdo con HTML5 + TypeScript + TailwindCSS. Procede con el setup.' },
+    ],
+  })
+  const run2b = await compiledSDLCGraph.invoke(null, threadConfig)
+
+  // Validar que setup.cmd y setup.sh fueron generados en la raíz
+  const setupCmd = getVirtualFile('setup.cmd')
+  const setupSh = getVirtualFile('setup.sh')
+  if (!setupCmd || (!setupCmd.includes('setup.cmd') && !setupCmd.includes('LocalLoop'))) {
+    throw new Error('setup.cmd no fue generado en la raíz del workspace')
+  }
+  if (!setupSh || !setupSh.includes('npm install')) {
+    throw new Error('setup.sh no fue generado en la raíz del workspace')
+  }
+  console.log('✓ Scripts de setup (setup.cmd y setup.sh) generados en la raíz del workspace.')
+
+  // 6. Verificar que se alcanzó la Fase 4 y la segunda interrupción (HITL 2 - Aprobación Formal de Negocio)
+  const approvalMsg = run2b.messages.find((m: any) => m.content.includes('Fase 4: Solicitud de Aprobación Formal de Negocio'))
   if (!approvalMsg) {
     throw new Error('Se esperaba solicitud de aprobación formal de negocio en Fase 4')
   }
+
+  // Validar que start.cmd y start.sh fueron generados en la raíz en Fase 4
+  const startCmd = getVirtualFile('start.cmd')
+  const startSh = getVirtualFile('start.sh')
+  if (!startCmd || (!startCmd.includes('start.cmd') && !startCmd.includes('npm'))) {
+    throw new Error('start.cmd no fue generado en la raíz del workspace en Fase 4')
+  }
+  if (!startSh || !startSh.includes('npm')) {
+    throw new Error('start.sh no fue generado en la raíz del workspace en Fase 4')
+  }
+  console.log('✓ Scripts de arranque (start.cmd y start.sh) generados en Fase 4.')
   console.log('✓ Fase 4 compiló evidencias E2E y pausó en la interrupción HITL 2.')
 
-  // 6. Aprobar formalmente y verificar cierre y proyección documental
+  // 7. Aprobar formalmente y verificar cierre y proyección documental
   console.log('[Test 5] Otorgando Aprobación Formal de Negocio para completar Fase 6 (Documentación)...')
   await compiledSDLCGraph.updateState(threadConfig, {
     businessApproval: {

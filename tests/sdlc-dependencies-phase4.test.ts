@@ -23,6 +23,7 @@ async function runDependencyEvaluationTests() {
   // 2. Reanudar con 4 componentes donde el 4to depende de los 3 anteriores con espacios y nombres/IDs variados
   const p0Payload = {
     discoveryInputValid: true,
+    phase1FrameworkAgreed: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data: {
       step1: {

@@ -1382,8 +1382,17 @@ export async function renderWorkspaceScreen(
     lastMessage.includes('Fase 4: Solicitud de Aprobación Formal de Negocio') ||
     lastMessage.includes('Aprobación Formal de Negocio')
 
+  const isPhase1Waiting =
+    !isPhase4Waiting &&
+    session.status === SessionStatus.WAITING_APPROVAL &&
+    (session.currentPhase === '1_STRATEGY_AND_PLAN' ||
+      lastMessage.includes('Iteración con el Usuario (Fase 1 - Marco de Referencia)') ||
+      lastMessage.includes('Pausa de Fase 1') ||
+      lastMessage.includes('Marco de Referencia del Desarrollo'))
+
   const isPhase0Waiting =
     !isPhase4Waiting &&
+    !isPhase1Waiting &&
     ((session.status === SessionStatus.WAITING_APPROVAL && session.currentPhase === '0_DISCOVERY_RIGOR') ||
       lastMessage.includes('Fase 0: Descubrimiento') ||
       messages.length <= 1 ||
@@ -1456,6 +1465,27 @@ export async function renderWorkspaceScreen(
         <!-- Canvas Principal de Conversación -->
         <main class="flex flex-1 flex-col overflow-hidden bg-bg-app">
           <div id="chat-messages-scroll" class="flex-1 overflow-y-auto px-8 py-6 space-y-5">
+            ${!handle
+              ? `
+                  <div class="max-w-3xl w-full rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-sm flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                      <span class="text-amber-500 text-lg">⚠️</span>
+                      <div>
+                        <h4 class="font-bold text-xs text-text-primary">Carpeta física del Workspace no vinculada</h4>
+                        <p class="text-[11px] text-text-secondary mt-0.5">
+                          Para que los scripts <code>setup.cmd</code>, <code>setup.sh</code>, <code>start.cmd</code>, <code>start.sh</code> y el código se escriban en tu equipo, vincula tu carpeta local.
+                        </p>
+                      </div>
+                    </div>
+                    <button id="btn-banner-link-workspace" class="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-bg-card px-4 py-2 text-xs font-bold text-text-primary hover:bg-bg-elevated transition shadow-sm">
+                      ${heroIcon('folder-open', 'h-4 w-4 text-primary')}
+                      <span>Vincular Carpeta</span>
+                    </button>
+                  </div>
+                `
+              : ''
+            }
+
             ${visibleMessages.map((m) => renderMessageItem(m)).join('')}
 
             <!-- WIDGET INTERACTIVO HITL 1: FASE 0 EN 3 PASOS RIGUROSOS -->
@@ -1730,6 +1760,29 @@ export async function renderWorkspaceScreen(
         }
                         `
       }
+                  </div>
+                `
+      : ''
+    }
+
+            <!-- NOTIFICACIÓN HITL: FASE 1 (MARCO DE REFERENCIA DEL DESARROLLO) -->
+            ${isPhase1Waiting
+      ? `
+                  <div class="max-w-3xl w-full rounded-2xl border border-primary/40 bg-bg-card p-5 shadow-sm space-y-3">
+                    <div class="flex items-start gap-3">
+                      <div class="text-primary mt-0.5">
+                        ${heroIcon('chat-bubble-left-right', 'h-5 w-5')}
+                      </div>
+                      <div class="space-y-1">
+                        <h3 class="font-display text-sm font-bold text-text-primary">Marco de Referencia del Desarrollo (Fase 1 - HITL)</h3>
+                        <p class="text-xs text-text-muted">
+                          Revisa la propuesta técnica del agente (WBS, grafo DAG y framework). Responde en el chat inferior indicando si estás de acuerdo o qué tecnología/framework prefieres (ej. <em>HTML5 + TypeScript + Tailwind</em>, <em>Angular con Material</em>, <em>React con Vite</em>, etc.).
+                        </p>
+                      </div>
+                    </div>
+                    <div class="rounded-xl border border-border-default bg-bg-app p-3 text-xs text-text-secondary">
+                      <p>💡 <em>Tras tu mensaje, el agente generará en la raíz del workspace los scripts <code>setup.cmd</code> y <code>setup.sh</code> con instrucciones de ejecución y estructurará el proyecto para los componentes.</em></p>
+                    </div>
                   </div>
                 `
       : ''
@@ -2202,6 +2255,20 @@ export async function renderWorkspaceScreen(
 
   // Función común de envío de Fase 0 (Formulario o Markdown)
   const submitPhase0 = async () => {
+    let activeDir = getWorkspaceDirectoryHandle()
+    if (!activeDir) {
+      try {
+        activeDir = await pickWorkspaceDirectory()
+        syncWorkerEnvironment()
+      } catch (err) {
+        console.warn('Vincular carpeta cancelado:', err)
+      }
+    }
+    if (!activeDir) {
+      alert('Debes indicar y vincular la carpeta física del workspace antes de iniciar la Fase 1.')
+      return
+    }
+
     syncP0StateFromDom(root)
 
     // 1. Guardar título formal de sesión
@@ -2270,6 +2337,17 @@ export async function renderWorkspaceScreen(
     void runAgentSessionTurn(sessionId, promptMessage, phase0ThreeStepPayload)
     await renderWorkspaceScreen(root, sessionId, rerender)
   }
+
+  // Vincular carpeta desde el banner de advertencia si no estaba vinculada
+  root.querySelector<HTMLButtonElement>('#btn-banner-link-workspace')?.addEventListener('click', async () => {
+    try {
+      await pickWorkspaceDirectory()
+      syncWorkerEnvironment()
+      void renderWorkspaceScreen(root, sessionId, rerender)
+    } catch (err) {
+      console.warn('Vincular carpeta cancelado:', err)
+    }
+  })
 
   // Botones finales: Completar Fase 0 (desde Formulario o desde Markdown)
   root.querySelector<HTMLButtonElement>('#btn-complete-phase0')?.addEventListener('click', submitPhase0)

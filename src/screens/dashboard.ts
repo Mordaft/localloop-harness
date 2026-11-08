@@ -291,7 +291,20 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
   })
 
   root.querySelector<HTMLButtonElement>('#new-session-btn')?.addEventListener('click', async () => {
-    const activeDir = getWorkspaceDirectoryHandle()
+    let activeDir = getWorkspaceDirectoryHandle()
+    if (!activeDir) {
+      try {
+        activeDir = await pickWorkspaceDirectory()
+        syncWorkerEnvironment()
+      } catch (err) {
+        console.warn('[FS] Directory picker cancelled or unsupported:', err)
+      }
+    }
+    if (!activeDir) {
+      alert('Debes indicar y vincular la carpeta física del workspace antes de comenzar el proceso de desarrollo.')
+      return
+    }
+
     const sessionGuid =
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
