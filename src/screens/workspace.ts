@@ -484,14 +484,46 @@ function sanitizeCssStyle(rawStyle: string): string {
 export function renderFormattedMarkdown(raw: string): string {
   if (!raw) return ''
 
-  // 1. Extraer bloques de código cercados (fenced code blocks ```...```)
+  // 1. Desacoplar texto preliminar o títulos pegados antes de una tabla colapsada
+  let text = raw.replace(/([^\n|]+)\s+(\|[^\n|]+(?:\|[^\n|]+)+\|\s*\|:?-+:?)/g, '$1\n$2')
+
+  // Desacoplar texto posterior (ej. conclusiones o divisores) pegado al cierre de la última celda de la tabla
+  text = text.replace(/(\|\s*)((?:#{1,6}|---|---|\d+\.|Estado\s+Final|[A-Z]\.)\s+[^\n]+)$/gm, '$1\n$2')
+
+  // 2. Normalización previa de tablas colapsadas en una sola línea (separadas por | | o ||)
+  text = text.replace(/(^|\n)([^\n]*\|:?-+:?[^\n]*)/g, (_match, prefix, line) => {
+    if (/\|\s*\|/.test(line)) {
+      return prefix + line.replace(/\|\s*\|/g, '|\n|')
+    }
+    return prefix + line
+  })
+
+  // 3. Normalización de metadatos colapsados en una sola línea (Cliente: ... Proyecto: ...)
+  text = text.replace(
+    /(^|\n)(Cliente:[^\n]+)/g,
+    (_match, prefix, line) => {
+      const formatted = line
+        .replace(/\s+(Proyecto:)/g, '\n$1')
+        .replace(/\s+(Responsable de QA:)/g, '\n$1')
+        .replace(/\s+(Estado del Componente:)/g, '\n$1')
+      return prefix + formatted
+    },
+  )
+
+  // 3. Extraer bloques de código cercados estándar (```lang\n...``` o ```lang ...```)
   const codeBlocks: string[] = []
-  let text = raw.replace(
-    /```([a-zA-Z0-9_\-]+)?(?:\n([\s\S]*?)(?:```|$)|$)/g,
-    (_match, lang, code) => {
+  text = text.replace(
+    /```([a-zA-Z0-9_\-]+)?(?:\n([\s\S]*?)(?:```|$)|(?:\s+([^\n`][\s\S]*?)(?:```|$))|$)/g,
+    (_match, lang, codeWithNewline, codeInline) => {
       const idx = codeBlocks.length
       const cleanLang = (lang || '').trim()
-      const escapedCode = escapeHtml((code ?? '').trimEnd())
+      let formattedCode = (codeWithNewline ?? codeInline ?? '').trimEnd()
+      if (cleanLang === 'log') {
+        formattedCode = formattedCode.replace(/\s+\[(INFO|WARN|ERROR|SUCCESS)\]/g, '\n[$1]')
+      } else if (cleanLang === 'html' && !formattedCode.includes('\n')) {
+        formattedCode = formattedCode.replace(/>\s*</g, '>\n<')
+      }
+      const escapedCode = escapeHtml(formattedCode)
       const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm">${
         cleanLang
           ? `<div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtml(cleanLang)}</span></div>`
@@ -502,7 +534,26 @@ export function renderFormattedMarkdown(raw: string): string {
     },
   )
 
-  // 2. Extraer spans con estilos o etiquetas de estado antes de escapar
+  // 4. Normalizar bloques de código emitidos erróneamente en línea con lenguaje (ej. `log [INFO]...` o `html <header...`)
+  text = text.replace(
+    /`\s*(log|html|json|ts|typescript|js|javascript|css|bash|sh|shell)\s+([^`]+?)`/g,
+    (_match, lang, code) => {
+      const idx = codeBlocks.length
+      const cleanLang = lang.trim()
+      let formattedCode = code.trim()
+      if (cleanLang === 'log') {
+        formattedCode = formattedCode.replace(/\s+\[(INFO|WARN|ERROR|SUCCESS)\]/g, '\n[$1]')
+      } else if (cleanLang === 'html') {
+        formattedCode = formattedCode.replace(/>\s*</g, '>\n<')
+      }
+      const escapedCode = escapeHtml(formattedCode)
+      const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm"><div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtml(cleanLang)}</span></div><pre class="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-text-primary whitespace-pre"><code>${escapedCode}</code></pre></div>`
+      codeBlocks.push(blockHtml)
+      return `\n___LOCALLOOP_CODE_BLOCK_${idx}___\n`
+    },
+  )
+
+  // 5. Extraer spans con estilos o etiquetas de estado antes de escapar
   const safeSpans: string[] = []
   text = text.replace(
     /<span\s+style=(["'])(.*?)\1\s*>(.*?)<\/span>/gi,
@@ -515,7 +566,7 @@ export function renderFormattedMarkdown(raw: string): string {
     },
   )
 
-  // 3. Tablas Markdown (GFM Tables con soporte de alineación)
+  // 6. Tablas Markdown (GFM Tables con soporte de alineación)
   const tables: string[] = []
   const rawLines = text.split('\n')
   const newLines: string[] = []
