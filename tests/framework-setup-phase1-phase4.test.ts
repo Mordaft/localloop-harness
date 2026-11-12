@@ -117,7 +117,21 @@ async function runFrameworkSetupTests() {
 
   assert.ok(packageJson, 'package.json debe existir en la raíz')
   assert.ok(tsconfigJson, 'tsconfig.json debe existir en la raíz')
-  console.log('✓ setup.cmd, setup.sh, package.json y tsconfig.json verificados exitosamente en la raíz.')
+  const parsedTsConfig = JSON.parse(tsconfigJson)
+  assert.strictEqual(parsedTsConfig.compilerOptions.outDir, './dist', 'tsconfig.json debe incluir outDir: ./dist')
+  assert.strictEqual(parsedTsConfig.compilerOptions.skipLibCheck, true, 'tsconfig.json debe incluir skipLibCheck: true')
+
+  const frameworkConfirmationMsg = runAfterFramework.messages.find(
+    (m) =>
+      m.role === 'assistant' &&
+      (m.content.includes('Marco de Referencia Formalizado') || m.content.includes('Marco Tecnológico Acordado')),
+  )
+  assert.ok(frameworkConfirmationMsg, 'Debe existir mensaje de confirmación del Marco de Referencia')
+  assert.ok(
+    frameworkConfirmationMsg?.content.includes('Prefiero usar Angular con Material'),
+    'La confirmación de Fase 1 debe reflejar explícitamente la respuesta HITL del usuario',
+  )
+  console.log('✓ setup.cmd, setup.sh, package.json, tsconfig.json y reflejo de respuesta HITL verificados exitosamente.')
 
   // 5. Verificar que las rutas de los componentes se asignaron acordes a Angular (src/app/...)
   const customerComp = runAfterFramework.componentsGraph['comp_customer_ui']
@@ -129,10 +143,11 @@ async function runFrameworkSetupTests() {
   // 6. Verificar que el flujo llegó a la pausa de Fase 4 (HITL de Aprobación Formal de Negocio)
   assert.strictEqual(runAfterFramework.currentPhase, '4_E2E_BUSINESS_AUDIT')
 
-  // 7. Verificar generación de start.cmd y start.sh en la raíz y actualización de index.html
+  // 7. Verificar generación de start.cmd, start.sh, src/main.ts e index.html en el workspace
   const startCmd = getVirtualFile('start.cmd')
   const startSh = getVirtualFile('start.sh')
   const indexHtml = getVirtualFile('index.html')
+  const mainTs = getVirtualFile('src/main.ts')
 
   assert.ok(startCmd, 'start.cmd debe existir en la raíz')
   assert.ok(startCmd.includes('start.cmd') || startCmd.includes('LocalLoop') || startCmd.includes('npm'), 'start.cmd debe contener comandos de arranque')
@@ -140,9 +155,15 @@ async function runFrameworkSetupTests() {
   assert.ok(startSh, 'start.sh debe existir en la raíz')
   assert.ok(startSh.includes('#!/usr/bin/env bash'), 'start.sh debe ser script de arranque bash')
 
+  assert.ok(mainTs, 'src/main.ts debe generarse como punto de entrada transpilable')
+  assert.ok(mainTs.includes('bootstrapApplication'), 'src/main.ts debe incluir bootstrapApplication')
+  assert.ok(mainTs.includes('./app/components/comp_customer_ui'), 'src/main.ts debe importar comp_customer_ui')
+  assert.ok(mainTs.includes('./app/services/comp_order_service'), 'src/main.ts debe importar comp_order_service')
+
   assert.ok(indexHtml, 'index.html debe existir en la raíz')
   assert.ok(indexHtml.includes('LocalLoop SDLC'), 'index.html debe contener el punto de montaje')
-  console.log('✓ start.cmd, start.sh e index.html verificados exitosamente en la raíz del workspace.')
+  assert.ok(indexHtml.includes('/src/main.ts'), 'index.html debe enlazar el punto de entrada /src/main.ts')
+  console.log('✓ start.cmd, start.sh, src/main.ts e index.html verificados exitosamente en la raíz del workspace.')
 
   // 8. Aprobar formalmente y verificar cierre en Fase 6
   console.log('[Test 3] Otorgando aprobación formal de negocio...')

@@ -32,7 +32,14 @@ export interface AgentThinkingState {
 export interface SessionRunHooks {
   onThinking?: (state: AgentThinkingState) => void
   onStepUpdate?: (sessionId: number) => void
-  onStreamChunk?: (sessionId: number, contentSoFar: string, delta: string, thought?: string, phase?: string) => void
+  onStreamChunk?: (
+    sessionId: number,
+    contentSoFar: string,
+    delta: string,
+    thought?: string,
+    phase?: string,
+    sdlcPhase?: SdlcPhase | string,
+  ) => void
   onProposalCreated?: (sessionId: number, proposalId: number, path: string) => void
 }
 
@@ -115,7 +122,14 @@ export async function executeSessionTurn(
       })
     },
     onStreamChunk: (chunk) => {
-      hooks.onStreamChunk?.(sessionId, chunk.contentSoFar, chunk.delta, chunk.thought, chunk.phase)
+      hooks.onStreamChunk?.(
+        sessionId,
+        chunk.contentSoFar,
+        chunk.delta,
+        chunk.thought,
+        chunk.phase,
+        chunk.sdlcPhase,
+      )
     },
     onStepUpdate: (id) => {
       hooks.onStepUpdate?.(id)
@@ -128,34 +142,53 @@ export async function executeSessionTurn(
   try {
     if (session.skill === 'ProjectRigor_Interviewer' || session.skill === 'sdlc' || !session.skill || session.skill === 'skill_general') {
       const threadConfig = { configurable: { thread_id: session.threadId } }
+      const currentGraphState = await compiledSDLCGraph.getState(threadConfig).catch(() => null)
+      const currentPhase: string | undefined =
+        (currentGraphState?.values as any)?.currentPhase || session.currentPhase
+      const hasActiveCheckpoint = Boolean(
+        currentGraphState &&
+          ((Array.isArray(currentGraphState.next) && currentGraphState.next.length > 0) ||
+            (currentGraphState.values && Object.keys(currentGraphState.values).length > 0)),
+      )
+
       let finalState: any
-      if (userPrompt && userPrompt.trim().length > 0) {
+      if (userPrompt && userPrompt.trim().length > 0 && hasActiveCheckpoint) {
         const updatePayload: Record<string, any> = {
+          sessionId,
+          threadId: session.threadId,
           messages: historyMessages,
         }
         const lowerPrompt = userPrompt.toLowerCase()
-        if (
-          lowerPrompt.includes('rechazo') ||
-          lowerPrompt.includes('rechazar') ||
-          lowerPrompt.includes('reject')
-        ) {
-          updatePayload.businessApproval = {
-            approved: false,
-            stakeholderComments: userPrompt.trim(),
-            evaluatedAt: new Date().toISOString(),
+        if (currentPhase === '4_E2E_BUSINESS_AUDIT') {
+          if (
+            lowerPrompt.includes('rechazo') ||
+            lowerPrompt.includes('rechazar') ||
+            lowerPrompt.includes('reject') ||
+            lowerPrompt.includes('error') ||
+            lowerPrompt.includes('falla') ||
+            lowerPrompt.includes('fallo') ||
+            lowerPrompt.includes('no funciona') ||
+            lowerPrompt.includes('no transpila') ||
+            lowerPrompt.includes('no compila') ||
+            lowerPrompt.includes('corregir') ||
+            lowerPrompt.includes('arreglar') ||
+            lowerPrompt.includes('rca')
+          ) {
+            updatePayload.businessApproval = {
+              approved: false,
+              stakeholderComments: userPrompt.trim(),
+              evaluatedAt: new Date().toISOString(),
+            }
+          } else {
+            updatePayload.businessApproval = {
+              approved: true,
+              stakeholderComments: userPrompt.trim(),
+              evaluatedAt: new Date().toISOString(),
+            }
           }
-        } else if (
-          lowerPrompt.includes('aprobación') ||
-          lowerPrompt.includes('aprobacion') ||
-          lowerPrompt.includes('aprobado') ||
-          lowerPrompt.includes('concedida') ||
-          lowerPrompt.includes('approve')
-        ) {
-          updatePayload.businessApproval = {
-            approved: true,
-            stakeholderComments: userPrompt.trim(),
-            evaluatedAt: new Date().toISOString(),
-          }
+        } else {
+          // Asegurar que respuestas de Fase 0 o Fase 1 nunca auto-aprueben la Fase 4 por adelantado
+          updatePayload.businessApproval = null
         }
 
         if (phase0Data) {

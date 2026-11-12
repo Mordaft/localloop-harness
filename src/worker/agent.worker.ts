@@ -36,6 +36,7 @@ export type WorkerOutboundMessage =
       delta: string
       thought?: string
       phase?: string
+      sdlcPhase?: string
     }
   | { type: 'PROPOSAL_CREATED'; sessionId: number; proposalId: number; path: string }
   | { type: 'AGENT_COMPLETED'; sessionId: number; status: number | string }
@@ -116,7 +117,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
           {
             onThinking: (state) => postOut({ type: 'AGENT_THINKING', state }),
             onStepUpdate: (id) => postOut({ type: 'AGENT_STEP_UPDATE', sessionId: id }),
-            onStreamChunk: (id, contentSoFar, delta, thought, phase) =>
+            onStreamChunk: (id, contentSoFar, delta, thought, phase, sdlcPhase) =>
               postOut({
                 type: 'AGENT_STREAM_CHUNK',
                 sessionId: id,
@@ -124,6 +125,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 delta,
                 thought,
                 phase,
+                sdlcPhase,
               }),
             onProposalCreated: (sId, proposalId, path) =>
               postOut({ type: 'PROPOSAL_CREATED', sessionId: sId, proposalId, path }),

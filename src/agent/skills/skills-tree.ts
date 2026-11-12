@@ -88,29 +88,29 @@ export const SKILL_TREE: SkillBranch[] = [
         id: 'ComponentTechnical_Designer',
         branch: 'branch_2_design',
         name: 'Diseñador Técnico de Componente',
-        title: 'Elaboración de Opciones de Diseño Técnico',
-        description: 'Propone opciones de diseño técnico, contratos de interfaz y diagramas para un componente específico.',
+        title: 'Consolidación de Especificación y Contratos Técnicos',
+        description: 'Define la especificación técnica definitiva y los contratos TypeScript exportados para un componente específico.',
         allowedTools: ['engram_search', 'search_web_guidance', 'read_web_guidance_doc', 'propose_design_options'],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['contracts', 'interfaces', 'local_scope'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: ComponentTechnical_Designer] Estás diseñando el componente ${state.activeComponentId}. Si el componente involucra HTML, CSS, DOM o APIs del navegador, consulta primero search_web_guidance y read_web_guidance_doc para alinear el diseño con modern-web-guidance. Propón de 1 a 2 opciones de diseño técnico con sus contratos de interfaz y pros/contras.`,
+          `[SKILL: ComponentTechnical_Designer] Estás consolidando el diseño técnico definitivo del componente ${state.activeComponentId} dentro del bucle autónomo de construcción (el usuario ya aprobó la estrategia y el marco tecnológico en la Fase 1). Define el enfoque técnico elegido, las interfaces y clases exportadas en TypeScript y su integración con sus dependencias. IMPORTANTE: Esta es una fase autónoma; NUNCA formules preguntas al usuario ni le pidas elegir entre opciones.`,
       },
       {
         id: 'EnterpriseArch_Gatekeeper',
         branch: 'branch_2_design',
         name: 'Gatekeeper de Arquitectura Empresarial',
-        title: 'Evaluación de Opciones y Registro de Deuda Técnica',
-        description: 'Evalúa diseños técnicos frente a estándares. Si acepta un trade-off, tipifica la deuda y la sincroniza al MCP.',
+        title: 'Auditoría de Contratos y Registro de Deuda Técnica',
+        description: 'Verifica la coherencia de contratos e imports frente al marco acordado y registra deuda técnica transicional cuando aplica.',
         allowedTools: ['search_web_guidance', 'read_web_guidance_doc', 'approve_design', 'reject_with_redesign', 'register_technical_debt_mcp'],
         resolveEngramFilter: () => ({
           scope: 'enterprise_landscape',
           tags: ['enterprise_standards', 'trade_off_policies'],
         }),
         buildSystemPrompt: () =>
-          `[SKILL: EnterpriseArch_Gatekeeper] Eres el guardián de la arquitectura empresarial. Evalúa las opciones de diseño del componente y verifica con search_web_guidance / read_web_guidance_doc el cumplimiento de estándares web modernos cuando aplique. Si apruebas una solución con trade-off, registra formalmente la Deuda Técnica indicando riesgo y plan de amortización futuro.`,
+          `[SKILL: EnterpriseArch_Gatekeeper] Eres el guardián de la arquitectura empresarial en ejecución autónoma. Verifica la consistencia de los contratos TypeScript del componente con sus dependencias y con el marco tecnológico acordado en la Fase 1. Si el componente es de transición o convivencia, registra formalmente la Deuda Técnica indicando riesgo y plan de mitigación. IMPORTANTE: No hagas preguntas al usuario; emite el dictamen técnico directo para habilitar la construcción.`,
       },
     ],
   },
@@ -140,7 +140,7 @@ export const SKILL_TREE: SkillBranch[] = [
           tags: ['approved_design', 'local_contracts'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle iterativo post-aprobación. Antes de escribir HTML, CSS o JS de cliente, usa search_web_guidance y read_web_guidance_doc. Evalúa la complejidad del componente según el diseño técnico aprobado: (A) Si es un componente directo/atómico, impleméntalo directamente invocando fs_write_file para cada archivo necesario; (B) Si requiere descomposición previa en subtareas verificables, invoca plan_and_delegate_tasks o delegate_subagent_scope definiendo las pruebas de aceptación de cada subtarea y consolida el código resultante en el workspace.`,
+          `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle autónomo post-aprobación. Tu prioridad absoluta es generar código TypeScript/HTML/CSS 100% funcional, completo, autocontenido y transpilable sin errores de tipos ni imports rotos. Puedes escribir los archivos directamente invocando fs_write_file o mediante bloques de código anotados (\`\`\`typescript path="src/..."\`). Si decides consultar search_web_guidance, hazlo en 1 sola llamada rápida antes de emitir el código completo. NUNCA dejes stubs vacíos ni pidas confirmación al usuario.`,
       },
       {
         id: 'UnitTest_Engineer',

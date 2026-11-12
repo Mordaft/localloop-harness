@@ -20,6 +20,7 @@ export interface AgentStreamChunkEvent {
   delta: string
   thought?: string
   phase?: string
+  sdlcPhase?: string
 }
 
 type StreamChunkListener = (event: AgentStreamChunkEvent) => void
@@ -82,6 +83,7 @@ function getOrCreateWorker(): Worker | null {
               delta: msg.delta,
               thought: msg.thought,
               phase: msg.phase,
+              sdlcPhase: msg.sdlcPhase,
             })
           }
           break
@@ -206,6 +208,18 @@ export async function runAgentSessionTurn(
       {
         onThinking: (state) => updateThinkingState(state),
         onStepUpdate: (id) => notifyProgress(id),
+        onStreamChunk: (id, contentSoFar, delta, thought, phase, sdlcPhase) => {
+          for (const listener of streamChunkListeners) {
+            listener({
+              sessionId: id,
+              contentSoFar,
+              delta,
+              thought,
+              phase,
+              sdlcPhase,
+            })
+          }
+        },
         onProposalCreated: (sId) => notifyProgress(sId),
       },
       phase0Data,

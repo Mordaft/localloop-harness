@@ -52,6 +52,7 @@ export interface AgentLoopCallbacks {
     delta: string
     thought?: string
     phase?: string
+    sdlcPhase?: string
   }) => void
   onStepUpdate?: (sessionId: number) => void
   onProposalCreated?: (proposalId: number, path: string) => void

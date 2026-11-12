@@ -160,5 +160,56 @@ assert(
   'Todas las fases deben estar en completed tras el cierre de Fase 6',
 )
 
+// 7. Prueba de que el pensamiento <think> con palabras como "cierre", "proyección", "resiliencia" NO hace saltar el stepper al final
+const phases1WithComplexThought = computeSdlcPhasesState({
+  sessionStatus: SessionStatus.RUNNING,
+  currentPhase: '1_STRATEGY_AND_PLAN',
+  turnsUsed: 2,
+  messages: [
+    {
+      sessionId: 1,
+      role: 'assistant',
+      content: '### 🎯 Fase 0: Calibración de Rigor completada',
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  running: true,
+  liveStreamPhase: '1_STRATEGY_AND_PLAN',
+  thinkingThought:
+    'Analizando la proyección de arquitectura, contratos de construcción, resiliencia del sistema y criterios de cierre del proyecto...',
+})
+
+assert.strictEqual(phases1WithComplexThought[0].status, 'completed', 'Fase 0 debe estar completada')
+assert.strictEqual(
+  phases1WithComplexThought[1].status,
+  'active',
+  'Fase 1 debe permanecer activa aunque <think> mencione cierre o proyección',
+)
+assert.strictEqual(
+  phases1WithComplexThought[5].status,
+  'pending',
+  'Fase 5 & 6 NO debe activarse ni saltar al final por palabras en <think>',
+)
+
+// 8. Prueba de estado waiting en Fase 1 (HITL de Marco de Referencia y DAG)
+const phases1Waiting = computeSdlcPhasesState({
+  sessionStatus: SessionStatus.WAITING_APPROVAL,
+  currentPhase: '1_STRATEGY_AND_PLAN',
+  turnsUsed: 2,
+  messages: [
+    {
+      sessionId: 1,
+      role: 'assistant',
+      content: '### 🗺️ Fase 1: Propuesta de Solución Técnica y Grafo de Dependencias (DAG)',
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  running: false,
+})
+
+assert.strictEqual(phases1Waiting[0].status, 'completed', 'Fase 0 debe estar completada al llegar a HITL de Fase 1')
+assert.strictEqual(phases1Waiting[1].status, 'waiting', 'Fase 1 debe estar en estado waiting durante HITL de Fase 1')
+assert.strictEqual(phases1Waiting[1].sublabel, 'DAG / HITL', 'Sublabel de Fase 1 waiting debe ser DAG / HITL')
+
 console.log('✅ Todas las pruebas de Stepper Dinámico y Estado de Fases pasaron exitosamente.')
 
