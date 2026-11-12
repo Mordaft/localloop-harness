@@ -58,16 +58,24 @@ export const SKILL_TREE: SkillBranch[] = [
       {
         id: 'GovernanceProject_Planner',
         branch: 'branch_1_strategy',
-        name: 'Planificador de Proyecto y Dependencias',
-        title: 'Generador del Grafo de Dependencias Fin-Inicio',
-        description: 'Define la estructura de desglose de trabajo y el orden riguroso de dependencias Fin-Inicio.',
-        allowedTools: ['create_components_dag', 'set_quality_gates'],
+        name: 'Arquitecto de Solución Técnica y Planificador DAG',
+        title: 'Evaluación de Requerimientos, Diseño de Solución Técnica y DAG Fin-Inicio',
+        description:
+          'Evalúa los requerimientos técnicos junto a los componentes de alto nivel, diseña la propuesta de solución técnica (contratos, stack, deuda técnica y estrategia de construcción directa o con descomposición) y genera el DAG Fin-Inicio para aprobación HITL.',
+        allowedTools: [
+          'engram_search',
+          'search_web_guidance',
+          'read_web_guidance_doc',
+          'create_components_dag',
+          'propose_design_options',
+          'set_quality_gates',
+        ],
         resolveEngramFilter: () => ({
           scope: 'project_planning',
-          tags: ['wbs', 'dependencies', 'risk_matrix'],
+          tags: ['wbs', 'dependencies', 'risk_matrix', 'contracts'],
         }),
         buildSystemPrompt: () =>
-          `[SKILL: GovernanceProject_Planner] Eres un Project Manager técnico. Genera el grafo de dependencias de componentes con relación Fin-Inicio estricta. Determina qué componentes pueden ejecutarse en paralelo y cuáles están bloqueados hasta la verificación del upstream.`,
+          `[SKILL: GovernanceProject_Planner] Eres el Arquitecto de Soluciones Técnicas y Planificador de LocalLoop. Evalúa los requerimientos funcionales y técnicos junto a la propuesta de componentes de alto nivel. Si la solución incluye interfaz web (HTML, CSS, DOM, PWA), consulta search_web_guidance y read_web_guidance_doc (en 2-3 iteraciones) para basar la arquitectura en buenas prácticas modernas. Diseña una Propuesta de Solución Técnica completa que incluya: (1) Marco tecnológico y estructura del proyecto, (2) Diseño técnico y contratos de interfaz de cada componente, (3) Estrategia de construcción recomendada por componente (Construcción Directa Atómica vs Descomposición Previa en Subtareas con pruebas de aceptación), (4) Grafo de dependencias Fin-Inicio (DAG) y (5) Solicitud de aprobación al usuario antes de iniciar el bucle iterativo de construcción.`,
       },
     ],
   },
@@ -115,15 +123,24 @@ export const SKILL_TREE: SkillBranch[] = [
         id: 'Component_Implementer',
         branch: 'branch_3_engineering',
         name: 'Implementador de Componente',
-        title: 'Construcción Limpia y Tipada de Código',
-        description: 'Escribe y modifica el código fuente según el diseño aprobado en el workspace, con soporte multi-fichero (TS, HTML, CSS, JSON).',
-        allowedTools: ['fs_read_file', 'fs_write_file', 'fs_list_files', 'search_web_guidance', 'read_web_guidance_doc'],
+        title: 'Construcción Iterativa de Componente (Directa o con Descomposición)',
+        description:
+          'Construye cada componente tras la aprobación de la solución técnica, bien de forma directa o realizando una descomposición previa en subtareas con pruebas de aceptación.',
+        allowedTools: [
+          'fs_read_file',
+          'fs_write_file',
+          'fs_list_files',
+          'search_web_guidance',
+          'read_web_guidance_doc',
+          'plan_and_delegate_tasks',
+          'delegate_subagent_scope',
+        ],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['approved_design', 'local_contracts'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: Component_Implementer] Estás implementando el código del componente ${state.activeComponentId}. Antes de escribir HTML, CSS o JS de cliente, usa search_web_guidance para buscar buenas prácticas en modern-web-guidance y read_web_guidance_doc para leer la guía por su ruta relativa. Sigue con rigor el diseño técnico aprobado y escribe código modular, tipado y documentado invocando fs_write_file para cada archivo.`,
+          `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle iterativo post-aprobación. Antes de escribir HTML, CSS o JS de cliente, usa search_web_guidance y read_web_guidance_doc. Evalúa la complejidad del componente según el diseño técnico aprobado: (A) Si es un componente directo/atómico, impleméntalo directamente invocando fs_write_file para cada archivo necesario; (B) Si requiere descomposición previa en subtareas verificables, invoca plan_and_delegate_tasks o delegate_subagent_scope definiendo las pruebas de aceptación de cada subtarea y consolida el código resultante en el workspace.`,
       },
       {
         id: 'UnitTest_Engineer',

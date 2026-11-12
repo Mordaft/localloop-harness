@@ -2,6 +2,7 @@ import { getFileSystemToolSpecs } from '../../fs/fs-tools'
 import type { OpenAiToolSpec } from '../../llm/llm-client'
 import { getWebGuidanceToolSpecs } from '../../memory/web-guidance-manager'
 import { getBrowserSandboxToolSpec, getSandboxToolSpec } from '../../sandbox/code-runner'
+import { getEngramToolSpecs } from '../agent-graph'
 import type { SDLCStateType } from '../sdlc-state'
 import { getSkillDefinition } from './skills-tree'
 import type { EngramContextFilter, SkillDefinition } from './types'
@@ -38,6 +39,11 @@ export function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
 
   // Herramientas de Modern Web Guidance (engram-ts + Lunr)
   for (const spec of getWebGuidanceToolSpecs()) {
+    map.set(spec.function.name, spec)
+  }
+
+  // Herramientas de descomposición y delegación a sub-agentes fractales (engram-ts)
+  for (const spec of getEngramToolSpecs()) {
     map.set(spec.function.name, spec)
   }
 

@@ -10,15 +10,20 @@ import {
   type BrowserSandboxOptions,
 } from '../sandbox/code-runner'
 import {
+  AgentScopeStorage,
   getPersistentEngram,
   retrieveEngramMemoryContext,
   saveEpisodicTurnMemory,
   saveSdlcPhaseArtifact,
+  type AgentSkillName,
+  type ScopeTaskDefinition,
 } from '../memory/engram-memory'
 import { executeWebGuidanceTool, getWebGuidanceToolSpecs, hasLoadedWebGuidanceDocs } from '../memory/web-guidance-manager'
 import { getSharedIndexedDBSaver } from '../memory/indexeddb-saver'
 import { appendSessionMessage } from '../memory/app-db'
 import {
+  SlmConcurrencyGate,
+  procesarNodoScope,
   streamChatCompletion,
   type ChatMessage,
   type OpenAiToolSpec,
@@ -54,7 +59,27 @@ const ITERATIVE_QUERY_TOOLS = new Set([
   'fs_list_dir',
   'fs_list_files',
   'fs_search',
+  'plan_and_delegate_tasks',
+  'delegate_subagent_scope',
 ])
+
+let globalRequireLiveLlm = false
+
+export function setRequireLiveLlm(enabled: boolean): void {
+  globalRequireLiveLlm = enabled
+}
+
+export function getRequireLiveLlm(): boolean {
+  return globalRequireLiveLlm
+}
+
+export interface SubagentComponentDeliverable {
+  taskId: string
+  targetPath: string
+  code: string
+  testCode: string
+  summary: string
+}
 
 /**
  * Realiza una invocación real mediante Streaming SSE al modelo LLM configurado (Ollama, LM Studio, etc.)
@@ -71,12 +96,22 @@ export async function streamLlmPhase(params: {
   tools?: OpenAiToolSpec[]
   toolChoice?: 'auto' | 'required' | 'none'
   maxToolIterations?: number
+  requireLiveLlm?: boolean
   defaultFallback: () => { content: string; thought?: string }
-}): Promise<{ content: string; thought?: string; toolCalls: ParsedToolCall[] }> {
+}): Promise<{
+  content: string
+  thought?: string
+  toolCalls: ParsedToolCall[]
+  subagentDeliverables: SubagentComponentDeliverable[]
+  usedFallback?: boolean
+}> {
   const { sessionId, phaseName, sdlcPhase, systemPrompt, userPrompt, defaultFallback } = params
   const callbacks = sessionId ? getSessionCallbacks(sessionId) : undefined
   const config = getLlmConfig()
   const maxToolIterations = Math.min(3, Math.max(1, params.maxToolIterations ?? 3))
+  const mustUseLiveLlm = Boolean(
+    params.requireLiveLlm ?? callbacks?.requireLiveLlm ?? globalRequireLiveLlm,
+  )
 
   const defaultTools: OpenAiToolSpec[] = [
     ...getFileSystemToolSpecs(),
@@ -125,6 +160,7 @@ export async function streamLlmPhase(params: {
   let accumulatedContent = ''
   let accumulatedThought = ''
   const allExecutedToolCalls: ParsedToolCall[] = []
+  const subagentDeliverables: SubagentComponentDeliverable[] = []
 
   try {
     const conversationMessages: ChatMessage[] = [
@@ -256,6 +292,115 @@ export async function streamLlmPhase(params: {
               domSelector: typeof tc.args.domSelector === 'string' ? tc.args.domSelector : undefined,
             })
             toolResultOutput = JSON.stringify(browserRes)
+          } else if (tc.name === 'plan_and_delegate_tasks' || tc.name === 'delegate_subagent_scope') {
+            const engram = getPersistentEngram()
+            const rawTasks = Array.isArray(tc.args.tasks)
+              ? tc.args.tasks
+              : Array.isArray(tc.args.subtareas)
+                ? tc.args.subtareas
+                : [
+                    {
+                      id: 'subtask_1',
+                      description: String(tc.args.taskDescription ?? tc.args.workGoal ?? 'Subtarea de componente'),
+                      acceptanceTest: String(tc.args.acceptanceTest ?? 'Verificar contrato del componente'),
+                      targetPath: String(tc.args.targetPath ?? 'src/components/module.ts'),
+                      skill: (tc.args.skill as AgentSkillName) ?? 'skill_coder',
+                    },
+                  ]
+
+            const normalizedTasks: ScopeTaskDefinition[] = rawTasks.flatMap(
+              (item, idx): ScopeTaskDefinition[] => {
+                if (!item || typeof item !== 'object') return []
+                const raw = item as Record<string, unknown>
+                return [
+                  {
+                    id_subtarea: String(raw.id ?? raw.id_subtarea ?? `subtask_${idx + 1}`),
+                    descripcion: String(raw.description ?? raw.descripcion ?? `Subtarea #${idx + 1}`),
+                    prueba_aceptacion: String(
+                      raw.acceptanceTest ?? raw.prueba_aceptacion ?? 'Verificar funcionamiento en sandbox',
+                    ),
+                    targetPath: String(raw.targetPath ?? 'src/components/module.ts'),
+                    skill_requerida:
+                      (raw.skill as AgentSkillName) ??
+                      (raw.skill_requerida as AgentSkillName) ??
+                      'skill_coder',
+                    requiere_sub_planificacion: false,
+                  },
+                ]
+              },
+            )
+
+            const rootScopeId = `sdlc_subplan_${sessionId || 0}_${Date.now()}`
+            const rootStorage = new AgentScopeStorage({
+              engram,
+              project: `session-${sessionId || 0}`,
+              filePath: normalizedTasks[0]?.targetPath ?? 'workspace',
+              scopeId: rootScopeId,
+            })
+            await rootStorage.saveSubPlan(
+              normalizedTasks,
+              String(tc.args.workGoal ?? tc.args.taskDescription ?? phaseName),
+            )
+            const gate = new SlmConcurrencyGate(config.maxConcurrency)
+
+            const subResults = await Promise.all(
+              normalizedTasks.map(async (subTask) => {
+                const targetPath = subTask.targetPath ?? 'src/components/module.ts'
+                let codeContent = ''
+                try {
+                  const readRes = await readWorkspaceFile(targetPath)
+                  codeContent = readRes.content
+                } catch {
+                  codeContent = ''
+                }
+                const res = await procesarNodoScope(
+                  subTask,
+                  rootStorage,
+                  {
+                    targetPath,
+                    codeContent,
+                    baseInstructions: enrichedSystemPrompt,
+                    maxDepth: config.maxDepth,
+                    maxConcurrency: config.maxConcurrency,
+                    concurrencyGate: gate,
+                    onThinking: (t) => {
+                      if (sessionId) {
+                        callbacks?.onThinking?.({
+                          sessionId,
+                          thought: t,
+                          phase: 'thinking',
+                          activeTool: tc.name,
+                          sdlcPhase,
+                        })
+                      }
+                    },
+                    signal: callbacks?.signal,
+                  },
+                  false,
+                )
+                if (res.entregable_atomico?.tarea_realizada) {
+                  subagentDeliverables.push({
+                    taskId: subTask.id_subtarea,
+                    targetPath,
+                    code: res.entregable_atomico.tarea_realizada,
+                    testCode: res.entregable_atomico.prueba_automatizada,
+                    summary: res.sumario_ejecutivo,
+                  })
+                }
+                return res
+              }),
+            )
+
+            toolResultOutput = JSON.stringify({
+              status: 'subtasks_completed',
+              count: subResults.length,
+              deliverables: subResults.map((r, i) => ({
+                taskId: normalizedTasks[i]?.id_subtarea,
+                targetPath: normalizedTasks[i]?.targetPath,
+                summary: r.sumario_ejecutivo,
+                atomicDeliverable: r.entregable_atomico,
+              })),
+            })
           } else {
             toolResultOutput = JSON.stringify({ status: 'ok', tool: tc.name, args: tc.args })
           }
@@ -290,6 +435,8 @@ export async function streamLlmPhase(params: {
         content: content || `Herramientas ejecutadas: ${allExecutedToolCalls.map((t) => t.name).join(', ')}.`,
         thought: thought || undefined,
         toolCalls: allExecutedToolCalls,
+        subagentDeliverables,
+        usedFallback: false,
       }
       if (sessionId) {
         try {
@@ -307,11 +454,24 @@ export async function streamLlmPhase(params: {
       }
       return finalMsg
     }
+
+    if (mustUseLiveLlm) {
+      throw new Error(
+        `El servidor LLM local (${config.baseUrl} — modelo "${config.model}") devolvió una respuesta vacía durante "${phaseName}".`,
+      )
+    }
   } catch (err) {
+    if (mustUseLiveLlm) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      trace(`[SDLCGraph] Error crítico conectando con LLM local en sesión activa: ${errMsg}`)
+      throw new Error(
+        `No se pudo conectar con el servidor LLM local en ${config.baseUrl} (modelo "${config.model}") durante "${phaseName}". Inicia o conecta tu motor LLM local (Ollama / LM Studio) y vuelve a intentarlo. Detalle: ${errMsg}`,
+      )
+    }
     trace(`[SDLCGraph] Endpoint LLM no disponible (${err}). Usando motor arquitectónico con streaming interactivo.`)
   }
 
-  // Generador fallback
+  // Generador fallback (solo para pruebas deterministas offline cuando requireLiveLlm es false)
   const fallback = defaultFallback()
   if (sessionId && callbacks?.onStreamChunk) {
     const lines = fallback.content.split('\n')
@@ -348,6 +508,8 @@ export async function streamLlmPhase(params: {
     content: fallback.content,
     thought: fallback.thought,
     toolCalls: [],
+    subagentDeliverables: [],
+    usedFallback: true,
   }
 }
 
@@ -1874,51 +2036,143 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
     }
   }
 
+  // Elaborar la Propuesta de Solución Técnica inicial por componente (contratos, trade-offs, deuda técnica y modo de construcción)
+  const initialTechnicalDesigns: Record<string, TechnicalDesignProposal[]> = {
+    ...(state.technicalDesigns || {}),
+  }
+  const initialGatekeeperDecisions: Record<string, GatekeeperDecision> = {
+    ...(state.gatekeeperDecisions || {}),
+  }
+  const initialDebtList: TechnicalDebtRecord[] = [...(state.technicalDebtList || [])]
+
+  for (const comp of Object.values(componentsGraph)) {
+    if (!initialTechnicalDesigns[comp.id] || initialTechnicalDesigns[comp.id].length === 0) {
+      const design = generateComponentDesign(comp, state.marketArchStandard)
+      initialTechnicalDesigns[comp.id] = [
+        {
+          componentId: comp.id,
+          approachName: design.approachName,
+          isChosen: true,
+          description: design.description,
+          contracts: design.contracts,
+          dependencies: comp.dependsOn || [],
+          tradeOffAnalysis: design.tradeOffAnalysis,
+        },
+      ]
+    }
+
+    if (!initialGatekeeperDecisions[comp.id]) {
+      const isTransition =
+        comp.targetState === 'TRANSITION' ||
+        comp.id.includes('adapter') ||
+        comp.name.toLowerCase().includes('adapter') ||
+        comp.name.toLowerCase().includes('transic')
+      const chosen = initialTechnicalDesigns[comp.id][0]
+      let debtRecord: TechnicalDebtRecord | undefined
+      if (isTransition) {
+        debtRecord = {
+          id: `DEBT-${comp.id.toUpperCase()}`,
+          componentId: comp.id,
+          title: `Deuda Técnica Transicional de Convivencia: ${comp.name}`,
+          description:
+            'Fachada temporal de adaptación para convivencia gradual con sistemas existentes.',
+          riskLevel: 'MEDIO',
+          mitigationPlan: `Desacoplar progresivamente y retirar ${comp.id} al completar la transición.`,
+          syncedToMcp: Boolean(state.mcpServerConfig?.connected),
+          createdAt: new Date().toISOString(),
+        }
+        if (!initialDebtList.some((d) => d.id === debtRecord!.id)) {
+          initialDebtList.push(debtRecord)
+        }
+      }
+      initialGatekeeperDecisions[comp.id] = {
+        componentId: comp.id,
+        status: isTransition ? 'APPROVED_WITH_DEBT' : 'APPROVED',
+        chosenApproachName: chosen.approachName,
+        feedback: isTransition
+          ? 'Propuesta técnica con registro de deuda técnica por componente de transición.'
+          : `Propuesta técnica alineada con ${state.marketArchStandard}.`,
+        debtRecord,
+      }
+    }
+  }
+
   const compList = Object.values(componentsGraph)
-    .map(
-      (c) =>
+    .map((c) => {
+      const prop = initialTechnicalDesigns[c.id]?.[0]
+      const contractSummary =
+        prop?.contracts
+          .map((ct) => `\`${ct.name}\``)
+          .join(', ') || 'Contrato estándar'
+      const requiresDecomp =
+        c.dependsOn.length > 0 ||
+        c.description.length > 90 ||
+        /ui|interfaz|portal|motor|engine|service|orquest/i.test(`${c.name} ${c.description}`)
+      const buildStrategy = requiresDecomp
+        ? 'Descomposición previa en subtareas verificables (`plan_and_delegate_tasks`)'
+        : 'Construcción directa atómica (`fs_write_file` + test unitario)'
+      return (
         `* **\`${c.id}\`** (${c.name}): *Estado inicial:* \`${c.status}\` | *Depende de:* ${
-          c.dependsOn.length > 0 ? c.dependsOn.map((d) => `\`${d}\``).join(', ') : 'Ninguno (Componente Raíz)'
-        }\n  > *Responsabilidad:* ${c.description}`,
-    )
+          c.dependsOn.length > 0
+            ? c.dependsOn.map((d) => `\`${d}\``).join(', ')
+            : 'Ninguno (Componente Raíz)'
+        }\n` +
+        `  > *Responsabilidad:* ${c.description}\n` +
+        `  > *Enfoque Técnico y Contratos:* ${prop?.approachName || 'Modular'} (${contractSummary})\n` +
+        `  > *Estrategia de Construcción:* ${buildStrategy}`
+      )
+    })
     .join('\n')
 
-  // Si el marco de referencia ya fue formalizado previamente, avanzamos directamente
+  // Si el marco de referencia y propuesta técnica ya fueron aprobados previamente, avanzamos directamente al bucle de componentes
   if (state.phase1FrameworkAgreed) {
     return {
       componentsGraph,
       projectPlan,
+      technicalDesigns: initialTechnicalDesigns,
+      gatekeeperDecisions: initialGatekeeperDecisions,
+      technicalDebtList: initialDebtList,
       currentPhase: '2_TECHNICAL_DESIGN_GATE',
     }
   }
 
+  const contractsMarkdown = Object.values(componentsGraph)
+    .map((c) => {
+      const prop = initialTechnicalDesigns[c.id]?.[0]
+      const schemas = prop?.contracts.map((ct) => ct.schema).join('\n\n') || ''
+      return `##### Componente \`${c.id}\` (${c.name})\n* **Enfoque:** ${prop?.approachName}\n* **Trade-offs:** ${prop?.tradeOffAnalysis}\n\`\`\`typescript\n${schemas}\n\`\`\``
+    })
+    .join('\n\n')
+
   const fallbackPlan = () => ({
     content:
-      `### 📋 Fase 1: Alineamiento Estratégico y Planificación (DAG Fin-Inicio)\n\n` +
-      `He analizado la especificación de negocio y arquitectura empresarial. Se ha formalizado el plan de ingeniería y el grafo de dependencias estrictas **Fin-Inicio (Finish-to-Start)**:\n\n` +
+      `### 📋 Fase 1: Evaluación de Requerimientos y Propuesta de Solución Técnica (DAG Fin-Inicio)\n\n` +
+      `He evaluado los requerimientos técnicos y de negocio junto con la propuesta de componentes de alto nivel para diseñar la **Propuesta de Solución Técnica** que servirá de base para el bucle iterativo de construcción:\n\n` +
       `#### 1. Plan de Hitos de Negocio (WBS)\n` +
-      `* **Hito 1 (Fundamentos & Dominio):** Modelado de contratos de interfaz y arquitectura limpia conforme a \`${state.marketArchStandard}\`.\n` +
-      `* **Hito 2 (Ingeniería Modular):** Implementación aislada de código fuente y validación unitaria con aserciones en Sandbox JS.\n` +
-      `* **Hito 3 (Transición & Auditoría):** Convivencia con sistemas existentes, verificación E2E y auditoría de resultados de negocio.\n\n` +
-      `#### 2. Grafo de Dependencias Fin-Inicio (DAG)\n` +
+      `* **Hito 1 (Diseño de Solución Técnica & Contratos):** Modelado de contratos de interfaz y arquitectura limpia conforme a \`${state.marketArchStandard}\`.\n` +
+      `* **Hito 2 (Bucle Iterativo de Construcción de Componentes):** Construcción por componente (directa o mediante descomposición previa en subtareas) y validación unitaria en Sandbox.\n` +
+      `* **Hito 3 (Transición & Auditoría E2E):** Convivencia con sistemas existentes, verificación E2E y auditoría de resultados de negocio.\n\n` +
+      `#### 2. Diseño de Componentes, Estrategia de Construcción y Dependencias Fin-Inicio (DAG)\n` +
       `${compList}\n\n` +
       `#### 3. Topología Visual del Grafo (Diagrama Mermaid)\n` +
       `${generateMermaidDag(componentsGraph)}\n\n` +
-      `#### 4. Marco de Referencia del Desarrollo y Estructura Propuesta\n` +
+      `#### 4. Contratos Técnicos Base Propuestos\n` +
+      `${contractsMarkdown}\n\n` +
+      `#### 5. Marco de Referencia del Desarrollo y Estructura Propuesta\n` +
       `Para enmarcar el desarrollo propongo el siguiente marco de trabajo estándar:\n` +
       `* **Framework sugerido:** \`HTML5 + TypeScript + TailwindCSS\` (o la tecnología que prefieras: Angular con Material, React con Vite, etc.)\n` +
       `* **Estructura prevista:**\n` +
       `  - \`src/components/\`: Componentes modulares de interfaz y lógica.\n` +
       `  - \`src/services/\`: Servicios de aplicación, orquestación y adaptadores.\n` +
       `  - Raíz del proyecto: Archivos base (\`package.json\`, \`tsconfig.json\`) y scripts de setup (\`setup.cmd\` y \`setup.sh\`).\n\n` +
-      `💬 **Iteración con el Usuario (Fase 1 - Marco de Referencia):**\n` +
-      `Por favor, indícame en el chat si estás de acuerdo con esta propuesta técnica o qué tecnología y framework prefieres emplear (ej. Angular con Material, React, HTML5+TS+Tailwind, etc.).\n` +
-      `Una vez acordado el marco tecnológico:\n` +
-      `1. Generaré los scripts \`setup.cmd\` y \`setup.sh\` en la raíz del workspace con las instrucciones de uso.\n` +
-      `2. Crearé los archivos base de configuración del proyecto en tu workspace.\n` +
-      `3. Fijaré las rutas canónicas del código para que los agentes posteriores sitúen sus componentes.\n\n` +
-      `> ⚙️ **Pausa de Fase 1:** Esperando tu respuesta en el chat para formalizar el setup e iniciar la construcción.`,
-    thought: 'Analizando requerimientos de negocio, calculando topología del grafo Fin-Inicio y preparando propuesta de marco tecnológico...',
+      `💬 **Iteración con el Usuario (Fase 1 - Marco de Referencia y Aprobación de Propuesta Técnica):**\n` +
+      `Por favor, revisa esta **Propuesta de Solución Técnica** e indícame en el chat si la apruebas o si deseas ajustar algún componente, contrato o el framework tecnológico (ej. Angular con Material, React, HTML5+TS+Tailwind, etc.).\n` +
+      `Con tu aprobación:\n` +
+      `1. Generaré los scripts \`setup.cmd\` y \`setup.sh\` y archivos base en la raíz del workspace.\n` +
+      `2. Entraremos en el **bucle iterativo de construcción de componentes** siguiendo el DAG Fin-Inicio, abordando cada componente de forma directa o mediante descomposición previa en subtareas verificables.\n\n` +
+      `> ⚙️ **Pausa de Fase 1 (HITL):** Esperando tu aprobación de la propuesta técnica en el chat para formalizar el setup e iniciar el bucle de construcción.`,
+    thought:
+      'Evaluando requerimientos técnicos junto a los componentes de alto nivel, diseñando contratos de solución técnica y preparando propuesta para aprobación HITL...',
   })
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
@@ -1928,27 +2182,86 @@ async function node_phase1_strategy_and_plan(state: SDLCStateType): Promise<Part
 
   const llmPlan = await streamLlmPhase({
     sessionId: state.sessionId,
-    phaseName: `Fase 1: Alineamiento DAG — [Skill: ${resolvedSkill.skill.name}]`,
+    phaseName: `Fase 1: Propuesta de Solución Técnica y DAG — [Skill: ${resolvedSkill.skill.name}]`,
     sdlcPhase: '1_STRATEGY_AND_PLAN',
-    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Gobierno y Planificación de Software de LocalLoop. Tu misión es estructurar el WBS y el grafo de dependencias estrictas Fin-Inicio (DAG) para una iniciativa empresarial. Responde en Markdown estructurado y profesional con tono riguroso de ingeniería.`,
+    maxToolIterations: 3,
+    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Soluciones Técnicas y Planificador de LocalLoop. Tu misión es evaluar los requerimientos técnicos y funcionales de la Fase 0 junto con la propuesta de componentes de alto nivel y diseñar una Propuesta de Solución Técnica completa que debe ser aprobada por el usuario antes de entrar al bucle iterativo de construcción. Si el proyecto involucra tecnologías web (HTML, CSS, DOM, PWA), puedes consultar search_web_guidance y read_web_guidance_doc. Responde en Markdown estructurado y profesional.`,
     userPrompt: `Iniciativa: ${state.phase0Data?.step1?.rawBusinessLanguageText || state.useCases[0]?.title || 'Desarrollo de Software'}
 Estándar de Arquitectura: ${state.marketArchStandard}
-Necesidades de Negocio:
+Necesidades de Negocio y Requerimientos:
 ${state.phase0Data?.step1?.needsList?.map((n) => `- ${n.id}: ${n.description} (Impacto: ${n.expectedImpact})`).join('\n') || 'Definición de funcionalidades base.'}
 Situación Actual As-Is: ${state.phase0Data?.step2?.currentSituation?.title || 'Sistemas legados existentes'}
 Situación Deseada To-Be: ${state.phase0Data?.step2?.desiredSituation?.title || 'Arquitectura modular limpia'}
 Situación de Transición: ${state.phase0Data?.step2?.transitionSituation?.title || 'No requerida'}
-Componentes Identificados:
-${Object.values(componentsGraph).map((c) => `- ${c.name} (${c.id}) [Estado: ${c.targetState || 'DESIRED'} | Depende de: ${c.dependsOn.join(', ') || 'Ninguno'}]`).join('\n')}
+Propuesta de Componentes de Alto Nivel:
+${Object.values(componentsGraph).map((c) => `- ${c.name} (${c.id}) [Estado: ${c.targetState || 'DESIRED'} | Depende de: ${c.dependsOn.join(', ') || 'Ninguno'}]: ${c.description}`).join('\n')}
 
-Genera el informe de la Fase 1 formalizando:
-1. Plan de Hitos de Negocio (WBS)
-2. Grafo de Dependencias Fin-Inicio (DAG) explicando la justificación de precedencia de cada componente y representando el grafo visual en un bloque de código Mermaid (\`\`\`mermaid\ngraph TD\n...\`\`\`).
-3. Marco de Referencia del Desarrollo y Estructura Propuesta (ej. HTML5+TypeScript+TailwindCSS, Angular con Material, React, etc.).
-4. Pregunta de iteración abierta al usuario para que confirme o elija el framework en el chat antes de generar los scripts setup.cmd y setup.sh.`,
+Elabora la Propuesta de Solución Técnica completa para aprobación del usuario incluyendo:
+1. Evaluación Técnica de Requerimientos y Plan de Hitos (WBS)
+2. Diseño de la Solución Técnica por Componente: contratos/interfaces principales, responsabilidades técnicas, análisis de trade-offs y si cada componente se construirá de forma directa o mediante descomposición previa en subtareas verificables.
+3. Grafo de Dependencias Fin-Inicio (DAG) explicando la precedencia de cada componente y representándolo en un bloque Mermaid (\`\`\`mermaid\ngraph TD\n...\`\`\`).
+4. Marco de Referencia del Desarrollo y Estructura Propuesta (ej. HTML5+TypeScript+TailwindCSS, Angular con Material, React, etc.).
+5. Solicitud explícita de aprobación al usuario (Iteración con el Usuario - Marco de Referencia y Propuesta Técnica) para pasar al bucle iterativo de construcción de componentes.`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackPlan,
   })
+
+  // Si el LLM invocó create_components_dag o propose_design_options durante el análisis, aplicamos sus ajustes
+  for (const tc of llmPlan.toolCalls) {
+    if (tc.name === 'create_components_dag' && Array.isArray(tc.args.components)) {
+      for (const rawComp of tc.args.components) {
+        if (!rawComp || typeof rawComp !== 'object') continue
+        const rc = rawComp as Record<string, unknown>
+        const cid = String(rc.id || '').trim()
+        if (!cid) continue
+        const deps = Array.isArray(rc.dependsOn) ? rc.dependsOn.map(String) : []
+        componentsGraph[cid] = {
+          id: cid,
+          name: String(rc.name || componentsGraph[cid]?.name || cid),
+          description: String(rc.description || componentsGraph[cid]?.description || ''),
+          targetState: componentsGraph[cid]?.targetState || 'DESIRED',
+          dependsOn: deps,
+          status: deps.length > 0 ? 'BLOCKED' : 'READY',
+        }
+        if (!initialTechnicalDesigns[cid]) {
+          const gen = generateComponentDesign(componentsGraph[cid], state.marketArchStandard)
+          initialTechnicalDesigns[cid] = [
+            {
+              componentId: cid,
+              approachName: gen.approachName,
+              isChosen: true,
+              description: gen.description,
+              contracts: gen.contracts,
+              dependencies: deps,
+              tradeOffAnalysis: gen.tradeOffAnalysis,
+            },
+          ]
+        }
+      }
+    } else if (tc.name === 'propose_design_options' && Array.isArray(tc.args.approaches)) {
+      const targetCompId = String(
+        tc.args.componentId || Object.keys(componentsGraph)[0] || '',
+      ).trim()
+      if (targetCompId && componentsGraph[targetCompId] && tc.args.approaches.length > 0) {
+        const firstApp = tc.args.approaches[0] as Record<string, unknown>
+        const baseGen = generateComponentDesign(
+          componentsGraph[targetCompId],
+          state.marketArchStandard,
+        )
+        initialTechnicalDesigns[targetCompId] = [
+          {
+            componentId: targetCompId,
+            approachName: String(firstApp.approachName || baseGen.approachName),
+            isChosen: true,
+            description: String(firstApp.description || baseGen.description),
+            contracts: baseGen.contracts,
+            dependencies: componentsGraph[targetCompId].dependsOn || [],
+            tradeOffAnalysis: String(firstApp.tradeOffs || baseGen.tradeOffAnalysis),
+          },
+        ]
+      }
+    }
+  }
 
   const phase1Msg = {
     role: 'assistant' as const,
@@ -1956,11 +2269,19 @@ Genera el informe de la Fase 1 formalizando:
     thought: llmPlan.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, phase1Msg, 'Propuesta de Plan y Marco de Referencia (Esperando Feedback)', '1_STRATEGY_AND_PLAN')
+  await emitSDLCProgress(
+    state.sessionId,
+    phase1Msg,
+    'Propuesta de Solución Técnica y Marco de Referencia (Esperando Aprobación HITL)',
+    '1_STRATEGY_AND_PLAN',
+  )
 
   return {
     componentsGraph,
     projectPlan,
+    technicalDesigns: initialTechnicalDesigns,
+    gatekeeperDecisions: initialGatekeeperDecisions,
+    technicalDebtList: initialDebtList,
     currentPhase: '1_STRATEGY_AND_PLAN',
     phase1FrameworkAgreed: false,
     messages: [...state.messages, phase1Msg],
@@ -2838,13 +3159,13 @@ async function node_phase3_implement_component(state: SDLCStateType): Promise<Pa
 
   const llmCode = await streamLlmPhase({
     sessionId: state.sessionId,
-    phaseName: `Fase 3: Implementación Multi-Fichero — ${compId} [Skill: ${resolvedSkill.skill.name}]`,
-    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Desarrollador de Software de LocalLoop. Tu función es generar código modular, tipado y completo listo para producción.
-Soporte multi-fichero activo: Invoca la herramienta "fs_write_file" para cada archivo necesario (puedes crear múltiples archivos: .ts, .html, .css, .webmanifest, etc.), o genera bloques de código indicando la ruta del archivo con:
-\`\`\`typescript path="ruta/archivo.ts"
-...
-\`\`\`
-o usando comentarios al inicio del bloque como "// File: ruta/archivo.ts".`,
+    phaseName: `Fase 3: Construcción Iterativa — ${compId} [Skill: ${resolvedSkill.skill.name}]`,
+    sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+    maxToolIterations: 3,
+    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Desarrollador de Software de LocalLoop dentro del bucle iterativo de construcción tras la aprobación de la Propuesta de Solución Técnica.
+Puedes abordar el componente de dos formas según su complejidad:
+1. **Construcción Directa**: Consultar search_web_guidance / read_web_guidance_doc si aplica y escribir directamente los archivos con "fs_write_file" o mediante bloques de código anotados con \`\`\`typescript path="ruta/archivo.ts".
+2. **Descomposición Previa en Subtareas**: Invocar "plan_and_delegate_tasks" (o "delegate_subagent_scope") definiendo las subtareas y su prueba de aceptación ("acceptanceTest") para delegar la construcción verificada en sub-agentes antes de consolidar los archivos del componente.`,
     userPrompt: `Marco Tecnológico Acordado: ${state.frameworkConfig?.framework || 'HTML5 + TypeScript + TailwindCSS'}
 Estructura de Directorios del Proyecto:
 ${state.frameworkConfig?.projectStructureSummary || '- src/components/'}
@@ -2852,13 +3173,13 @@ IMPORTANTE: Sitúa los archivos generados respetando estrictamente esta estructu
 
 Implementa el componente: ${comp.name} (\`${compId}\`)
 Responsabilidad: ${comp.description}
-Contratos:
+Contratos Aprobados en la Solución Técnica:
 ${(state.technicalDesigns[compId]?.[0]?.contracts || []).map((c) => c.schema).join('\n\n')}
 
 Archivos sugeridos para esta funcionalidad:
 ${defaultFiles.map((f) => `- "${f.path}": ${f.description || f.path}`).join('\n')}
 
-Guarda los archivos en el workspace.`,
+Guarda los archivos en el workspace (directamente o tras descomponer en subtareas).`,
     tools:
       resolvedSkill.tools.length > 0
         ? resolvedSkill.tools
@@ -2882,8 +3203,33 @@ Guarda los archivos en el workspace.`,
     }),
   })
 
-  // Extraer archivos de la respuesta del LLM (soporte para bloques con path="..." o anotaciones // File: ...)
+  // Extraer archivos de la respuesta del LLM, llamadas fs_write_file o entregables de sub-agentes (descomposición previa)
   const extractedFiles: GeneratedComponentFile[] = []
+
+  // 0. Archivos escritos directamente mediante tool call fs_write_file o entregados por sub-agentes en descomposición previa
+  for (const tc of llmCode.toolCalls) {
+    if (tc.name === 'fs_write_file' && typeof tc.args.path === 'string' && typeof tc.args.content === 'string') {
+      const cleanPath = tc.args.path.trim().replace(/\\/g, '/')
+      if (cleanPath && tc.args.content.trim().length > 0) {
+        extractedFiles.push({
+          path: cleanPath,
+          content: tc.args.content,
+          description: String(tc.args.reason || `Archivo ${cleanPath}`),
+        })
+      }
+    }
+  }
+
+  for (const subDeliv of llmCode.subagentDeliverables || []) {
+    if (subDeliv.targetPath && subDeliv.code.trim().length > 0) {
+      const cleanPath = subDeliv.targetPath.trim().replace(/\\/g, '/')
+      extractedFiles.push({
+        path: cleanPath,
+        content: subDeliv.code,
+        description: subDeliv.summary || `Subtarea ${subDeliv.taskId}`,
+      })
+    }
+  }
 
   // 1. Bloques con path="...", file="..." o nombre de archivo directo
   const blockRegex =
@@ -2925,10 +3271,13 @@ Guarda los archivos en el workspace.`,
     }
   }
 
-  // Combinar archivos extraídos con los defaultFiles para asegurar completitud multi-fichero
+  // Si el LLM vivo produjo archivos (directos o por descomposición), usamos los del LLM;
+  // en modo fallback determinista (tests sin LLM), aseguramos completitud con defaultFiles.
   const finalFilesMap = new Map<string, GeneratedComponentFile>()
-  for (const f of defaultFiles) {
-    finalFilesMap.set(f.path, f)
+  if (llmCode.usedFallback || extractedFiles.length === 0) {
+    for (const f of defaultFiles) {
+      finalFilesMap.set(f.path, f)
+    }
   }
   for (const f of extractedFiles) {
     finalFilesMap.set(f.path, f)

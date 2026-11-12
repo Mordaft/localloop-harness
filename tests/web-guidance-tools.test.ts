@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { streamLlmPhase } from '../src/agent/sdlc-graph'
+import { compiledSDLCGraph, setRequireLiveLlm, streamLlmPhase } from '../src/agent/sdlc-graph'
 import type { SDLCStateType } from '../src/agent/sdlc-state'
 import { getAllMasterToolSpecs } from '../src/agent/skills/runtime-loader'
 import { getSkillDefinition } from '../src/agent/skills/skills-tree'
@@ -125,7 +125,86 @@ async function runTests() {
     )
   }
 
-  // Test 3: GitHub release version check, conditional ZIP download, and engram-ts indexing by relative path
+  // Test 2b: CORS-safe GitHub Git Trees API + raw.githubusercontent.com sync (excludes chrome-extensions, no zipball call)
+  {
+    await resetWebGuidanceDatabase()
+    let gitTreeCalls = 0
+    let rawCalls = 0
+    let zipballCalls = 0
+
+    const mockCorsSafeFetch: typeof fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/releases/latest')) {
+        return new Response(
+          JSON.stringify({
+            tag_name: 'v1.0.0',
+            name: 'Release v1.0.0',
+            zipball_url:
+              'https://api.github.com/repos/GoogleChrome/modern-web-guidance/zipball/v1.0.0',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/git/trees/v1.0.0?recursive=1')) {
+        gitTreeCalls += 1
+        return new Response(
+          JSON.stringify({
+            sha: '9f8e7d6',
+            tree: [
+              { path: 'README.md', type: 'blob' },
+              { path: 'skills/modern-web-guidance/SKILL.md', type: 'blob' },
+              {
+                path: 'skills/modern-web-guidance/guides/html-dom/popovers-dialogs.md',
+                type: 'blob',
+              },
+              { path: 'skills/modern-web-guidance/guides/css/css-layout.md', type: 'blob' },
+              {
+                path: 'skills/modern-web-guidance/guides/accessibility/accessible-error-announcement.md',
+                type: 'blob',
+              },
+              { path: 'skills/chrome-extensions/SKILL.md', type: 'blob' },
+              { path: 'skills/chrome-extensions/references/mv3-service-worker.md', type: 'blob' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (
+        url.startsWith(
+          'https://raw.githubusercontent.com/GoogleChrome/modern-web-guidance/v1.0.0/skills/modern-web-guidance/',
+        )
+      ) {
+        rawCalls += 1
+        const relPath = url.split('/skills/modern-web-guidance/')[1]
+        const sampleKey = `GoogleChrome-modern-web-guidance-9f8e7d6/skills/modern-web-guidance/${relPath}`
+        const content = SAMPLE_FILES[sampleKey]
+        if (content) {
+          return new Response(content, { status: 200 })
+        }
+      }
+      if (url.includes('/zipball/')) {
+        zipballCalls += 1
+      }
+      return new Response('Not found', { status: 404 })
+    }) as typeof fetch
+
+    const syncTreeRes = await syncModernWebGuidance({ fetchImpl: mockCorsSafeFetch })
+    assert.equal(syncTreeRes.updated, true)
+    assert.equal(syncTreeRes.source, 'github-git-tree')
+    assert.equal(syncTreeRes.version, 'v1.0.0')
+    assert.equal(syncTreeRes.documentCount, 4)
+    assert.equal(gitTreeCalls, 1, 'Debe consultar el árbol Git recursivo en una sola llamada')
+    assert.equal(rawCalls, 4, 'Solo debe descargar los 4 archivos de modern-web-guidance')
+    assert.equal(
+      zipballCalls,
+      0,
+      'No debe invocar el endpoint zipball bloqueado por CORS cuando Git Trees API responde',
+    )
+    const extCheck = await readWebGuidanceDoc({ path: 'chrome-extensions/SKILL.md' })
+    assert.equal(extCheck.found, false, 'chrome-extensions no debe haberse descargado ni indexado')
+  }
+
+  // Test 3: GitHub release version check, conditional ZIP download fallback, and engram-ts indexing by relative path
   {
     await resetWebGuidanceDatabase()
     assert.equal(hasLoadedWebGuidanceDocs(), false)
@@ -433,6 +512,47 @@ async function runTests() {
     } finally {
       globalThis.fetch = originalFetch
       await resetWebGuidanceDatabase()
+    }
+  }
+
+  // Test 7: Cuando requireLiveLlm está activo y el LLM local está desconectado, no avanza silenciosamente al HITL
+  {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => {
+      throw new Error('fetch failed: ECONNREFUSED 127.0.0.1:11434')
+    }) as typeof fetch
+
+    setRequireLiveLlm(true)
+    try {
+      await assert.rejects(
+        async () => {
+          await compiledSDLCGraph.invoke(
+            {
+              sessionId: 999,
+              threadId: `thread-offline-llm-${Date.now()}`,
+              discoveryInputValid: true,
+              marketArchStandard: 'CLEAN_ARCHITECTURE',
+              useCases: [
+                {
+                  id: 'UC-1',
+                  title: 'Caso de prueba',
+                  actor: 'Usuario',
+                  happyPath: ['Paso 1'],
+                  exceptions: [],
+                  expectedBusinessOutcome: 'Éxito',
+                  acceptanceCriteriaGherkin: 'Given X When Y Then Z',
+                },
+              ],
+            },
+            { configurable: { thread_id: `thread-offline-llm-${Date.now()}` } },
+          )
+        },
+        /No se pudo conectar con el servidor LLM local/,
+        'Debe detenerse y lanzar error claro si el LLM local está desconectado en sesión real',
+      )
+    } finally {
+      setRequireLiveLlm(false)
+      globalThis.fetch = originalFetch
     }
   }
 

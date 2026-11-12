@@ -19,6 +19,8 @@ export const GITHUB_RELEASES_LIST_URL =
   'https://api.github.com/repos/GoogleChrome/modern-web-guidance/releases'
 export const GITHUB_TAGS_URL =
   'https://api.github.com/repos/GoogleChrome/modern-web-guidance/tags'
+export const JSDELIVR_PACKAGE_URL =
+  'https://data.jsdelivr.com/v1/packages/gh/GoogleChrome/modern-web-guidance'
 
 export interface WebGuidanceReleaseMetadata {
   key: 'release_meta'
@@ -33,7 +35,7 @@ export interface WebGuidanceSyncResult {
   updated: boolean
   version: string
   documentCount: number
-  source: 'cache' | 'github-release-zip' | 'builtin-seed'
+  source: 'cache' | 'github-git-tree' | 'github-release-zip' | 'builtin-seed'
   releaseUrl?: string
   error?: string
 }
@@ -969,9 +971,204 @@ export async function fetchLatestWebGuidanceReleaseInfo(
         }
       }
     }
+
+    // Fallback CORS-safe sin límite de cuota vía jsDelivr Package Metadata API
+    const jsDelivrRes = await fetchImpl(JSDELIVR_PACKAGE_URL, { method: 'GET' }).catch(() => null)
+    if (jsDelivrRes && jsDelivrRes.ok) {
+      const pkgData = (await jsDelivrRes.json()) as {
+        tags?: { latest?: string }
+        versions?: string[]
+      }
+      const rawVersion = (pkgData.tags?.latest || pkgData.versions?.[0] || '').trim()
+      if (rawVersion) {
+        const version = rawVersion.startsWith('v') ? rawVersion : `v${rawVersion}`
+        return {
+          version,
+          zipUrl: `https://api.github.com/repos/GoogleChrome/modern-web-guidance/git/trees/${encodeURIComponent(version)}?recursive=1`,
+          releaseUrl: JSDELIVR_PACKAGE_URL,
+        }
+      }
+    }
   }
 
   throw new Error(`No se pudo obtener la información de release desde ${releasesUrl} (status ${res.status}).`)
+}
+
+interface GithubGitTreeEntry {
+  path?: string
+  mode?: string
+  type?: string
+  sha?: string
+  size?: number
+  url?: string
+}
+
+interface GithubGitTreeResponse {
+  sha?: string
+  url?: string
+  tree?: GithubGitTreeEntry[]
+  truncated?: boolean
+}
+
+interface JsDelivrFlatFileEntry {
+  name?: string
+  hash?: string
+  size?: number
+}
+
+interface JsDelivrFlatResponse {
+  files?: JsDelivrFlatFileEntry[]
+}
+
+/**
+ * Obtiene la lista de rutas relativas dentro de `skills/modern-web-guidance/**` (excluyendo `chrome-extensions`)
+ * usando la GitHub Git Trees API (`?recursive=1`) con fallback automático a jsDelivr Flat Package API,
+ * y descarga el contenido Markdown desde `raw.githubusercontent.com` (con fallback a `cdn.jsdelivr.net`).
+ * Ambos orígenes envían `Access-Control-Allow-Origin: *`, evitando el bloqueo CORS de `codeload.github.com`.
+ */
+export async function fetchModernWebGuidanceViaGitTree(
+  version: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  concurrency = 6,
+): Promise<ExtractedSkillDocument[]> {
+  const versionCandidates = Array.from(
+    new Set([
+      version.trim(),
+      version.trim().replace(/^v/i, ''),
+      version.trim().startsWith('v') ? version.trim() : `v${version.trim()}`,
+      'main',
+    ]),
+  ).filter(Boolean)
+
+  let resolvedRef = version.trim()
+  const relativePathsSet = new Set<string>()
+
+  // 1. Intentar obtener el árbol recursivo mediante GitHub Git Trees API (1 sola petición CORS *)
+  for (const candidate of versionCandidates) {
+    const treeUrl = `https://api.github.com/repos/GoogleChrome/modern-web-guidance/git/trees/${encodeURIComponent(candidate)}?recursive=1`
+    try {
+      const treeRes = await fetchImpl(treeUrl, {
+        method: 'GET',
+        headers: { Accept: 'application/vnd.github+json' },
+      })
+      if (treeRes.ok) {
+        const treeData = (await treeRes.json()) as GithubGitTreeResponse
+        if (Array.isArray(treeData.tree)) {
+          for (const item of treeData.tree) {
+            if (item.type && item.type !== 'blob') continue
+            if (!item.path) continue
+            const relPath = extractModernWebGuidanceRelativePath(item.path)
+            if (relPath) {
+              relativePathsSet.add(relPath)
+            }
+          }
+          if (relativePathsSet.size > 0) {
+            resolvedRef = candidate
+            break
+          }
+        }
+      }
+    } catch {
+      // Continuar con siguiente candidato o fallback jsDelivr
+    }
+  }
+
+  // 2. Fallback a jsDelivr Flat Structure API si GitHub Git Trees API no devolvió rutas (p. ej. rate-limit)
+  if (relativePathsSet.size === 0) {
+    for (const candidate of versionCandidates) {
+      const flatUrl = `https://data.jsdelivr.com/v1/packages/gh/GoogleChrome/modern-web-guidance@${encodeURIComponent(candidate)}?structure=flat`
+      try {
+        const flatRes = await fetchImpl(flatUrl, { method: 'GET' })
+        if (flatRes.ok) {
+          const flatData = (await flatRes.json()) as JsDelivrFlatResponse
+          if (Array.isArray(flatData.files)) {
+            for (const file of flatData.files) {
+              if (!file.name) continue
+              const relPath = extractModernWebGuidanceRelativePath(file.name)
+              if (relPath) {
+                relativePathsSet.add(relPath)
+              }
+            }
+            if (relativePathsSet.size > 0) {
+              resolvedRef = candidate
+              break
+            }
+          }
+        }
+      } catch {
+        // Ignorar
+      }
+    }
+  }
+
+  const relativePaths = Array.from(relativePathsSet).sort((a, b) => a.localeCompare(b))
+  if (relativePaths.length === 0) {
+    throw new Error(
+      `No se encontraron archivos bajo skills/modern-web-guidance para la versión ${version} vía Git Trees API.`,
+    )
+  }
+
+  trace('web_guidance.sync.git_tree_resolved', {
+    version: resolvedRef,
+    filesToDownload: relativePaths.length,
+  })
+
+  // 3. Descargar los archivos .md en paralelo acotado desde raw.githubusercontent.com (con fallback a cdn.jsdelivr.net)
+  const extractedDocs: ExtractedSkillDocument[] = []
+  const maxWorkers = Math.max(1, Math.min(concurrency, relativePaths.length))
+  let cursor = 0
+
+  const downloadSingleDoc = async (relPath: string): Promise<ExtractedSkillDocument | null> => {
+    const rawUrls = [
+      `https://raw.githubusercontent.com/GoogleChrome/modern-web-guidance/${encodeURIComponent(resolvedRef)}/skills/modern-web-guidance/${relPath}`,
+      `https://cdn.jsdelivr.net/gh/GoogleChrome/modern-web-guidance@${encodeURIComponent(resolvedRef)}/skills/modern-web-guidance/${relPath}`,
+    ]
+    const strippedRef = resolvedRef.replace(/^v/i, '')
+    if (strippedRef && strippedRef !== resolvedRef) {
+      rawUrls.push(
+        `https://cdn.jsdelivr.net/gh/GoogleChrome/modern-web-guidance@${encodeURIComponent(strippedRef)}/skills/modern-web-guidance/${relPath}`,
+      )
+    }
+
+    for (const url of rawUrls) {
+      try {
+        const res = await fetchImpl(url, { method: 'GET' })
+        if (res.ok) {
+          const content = await res.text()
+          if (content.trim().length > 0) {
+            return parseSkillMarkdownDocument(relPath, content)
+          }
+        }
+      } catch {
+        // Probar siguiente espejo CORS
+      }
+    }
+    return null
+  }
+
+  const workers = Array.from({ length: maxWorkers }, async () => {
+    while (cursor < relativePaths.length) {
+      const idx = cursor
+      cursor += 1
+      const relPath = relativePaths[idx]
+      if (!relPath) continue
+      const doc = await downloadSingleDoc(relPath)
+      if (doc) {
+        extractedDocs.push(doc)
+      }
+    }
+  })
+
+  await Promise.all(workers)
+  extractedDocs.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+
+  if (extractedDocs.length === 0) {
+    throw new Error(
+      `No se pudo descargar ningún documento Markdown de skills/modern-web-guidance (${version}).`,
+    )
+  }
+
+  return extractedDocs
 }
 
 export interface WebGuidanceSyncOptions {
@@ -1022,22 +1219,35 @@ export async function syncModernWebGuidance(
       }
     }
 
-    // Descargar el ZIP de la release
-    trace('web_guidance.sync.downloading_zip', {
-      version: releaseInfo.version,
-      zipUrl: releaseInfo.zipUrl,
-    })
+    let extractedDocs: ExtractedSkillDocument[] = []
+    let syncSource: 'github-git-tree' | 'github-release-zip' = 'github-git-tree'
 
-    const zipResponse = await fetchImpl(releaseInfo.zipUrl, { method: 'GET' })
-    if (!zipResponse.ok) {
-      throw new Error(`Error descargando ZIP de release (${zipResponse.status}) desde ${releaseInfo.zipUrl}`)
+    // 1. Vía principal compatible con CORS en navegador: GitHub Git Trees API + raw.githubusercontent.com / jsDelivr
+    try {
+      extractedDocs = await fetchModernWebGuidanceViaGitTree(releaseInfo.version, fetchImpl)
+      syncSource = 'github-git-tree'
+    } catch (gitTreeErr) {
+      // 2. Fallback a descarga y extracción de archivo ZIP (para entornos sin restricción CORS o tests con ZIP local)
+      trace('web_guidance.sync.downloading_zip', {
+        version: releaseInfo.version,
+        zipUrl: releaseInfo.zipUrl,
+        fallbackReason: gitTreeErr instanceof Error ? gitTreeErr.message : String(gitTreeErr),
+      })
+
+      const zipResponse = await fetchImpl(releaseInfo.zipUrl, { method: 'GET' })
+      if (!zipResponse.ok) {
+        throw new Error(
+          `Error obteniendo skills de modern-web-guidance (${zipResponse.status}) desde Git Trees API y ${releaseInfo.zipUrl}`,
+        )
+      }
+
+      const zipArrayBuffer = await zipResponse.arrayBuffer()
+      extractedDocs = await extractModernWebGuidanceFromZip(zipArrayBuffer)
+      syncSource = 'github-release-zip'
     }
 
-    const zipArrayBuffer = await zipResponse.arrayBuffer()
-    const extractedDocs = await extractModernWebGuidanceFromZip(zipArrayBuffer)
-
     if (extractedDocs.length === 0) {
-      throw new Error('El archivo ZIP descargado no contenía documentos bajo skills/modern-web-guidance.')
+      throw new Error('No se encontraron documentos bajo skills/modern-web-guidance.')
     }
 
     const indexed = await indexWebGuidanceDocumentsInEngram(extractedDocs, {
@@ -1051,7 +1261,7 @@ export async function syncModernWebGuidance(
       updated: true,
       version: indexed.version,
       documentCount: indexed.count,
-      source: 'github-release-zip',
+      source: syncSource,
       releaseUrl: releaseInfo.releaseUrl,
     }
   } catch (err) {

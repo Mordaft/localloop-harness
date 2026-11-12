@@ -56,6 +56,7 @@ export interface AgentLoopCallbacks {
   onStepUpdate?: (sessionId: number) => void
   onProposalCreated?: (proposalId: number, path: string) => void
   signal?: AbortSignal
+  requireLiveLlm?: boolean
 }
 
 const activeCallbacks = new Map<number, AgentLoopCallbacks>()

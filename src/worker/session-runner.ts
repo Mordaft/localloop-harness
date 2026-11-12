@@ -99,6 +99,7 @@ export async function executeSessionTurn(
 
   registerSessionCallbacks(sessionId, {
     signal: abortController.signal,
+    requireLiveLlm: true,
     onThinking: (info) => {
       hooks.onThinking?.({
         sessionId,
