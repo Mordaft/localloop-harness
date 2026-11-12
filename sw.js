@@ -1,4 +1,4 @@
-const SW_VERSION = '1794178133171'
+const SW_VERSION = '1794509767055'
 const CACHE_NAME = `localloop-shell-${SW_VERSION}`
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
 
