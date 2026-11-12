@@ -24,6 +24,10 @@ import {
 } from '../memory/engram-memory'
 import { getSharedIndexedDBSaver, type IndexedDBSaver } from '../memory/indexeddb-saver'
 import {
+  executeWebGuidanceTool,
+  getWebGuidanceToolSpecs,
+} from '../memory/web-guidance-manager'
+import {
   executeBrowserSandbox,
   executeSandboxedJs,
   getBrowserSandboxToolSpec,
@@ -263,6 +267,7 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
   const allTools: OpenAiToolSpec[] = [
     ...getFileSystemToolSpecs(),
     ...getEngramToolSpecs(),
+    ...getWebGuidanceToolSpecs(),
     getSandboxToolSpec(),
     getBrowserSandboxToolSpec(),
     ...mcpSpecs,
@@ -284,12 +289,22 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
     'fs_search',
     'memory_search',
     'memory_get',
+    'search_web_guidance',
+    'read_web_guidance_doc',
   ])
   const strictPlanOnlyNames = new Set(['plan_and_delegate_tasks', 'delegate_subagent_scope'])
 
+  const lastToolMessages = state.messages.filter((m) => m.role === 'tool')
+  const lastToolWasWebGuidance =
+    lastToolMessages.length > 0 &&
+    (lastToolMessages[lastToolMessages.length - 1]?.name === 'search_web_guidance' ||
+      lastToolMessages[lastToolMessages.length - 1]?.name === 'read_web_guidance_doc')
+  const allowPrePlanDiscovery =
+    state.turnsUsed === 0 || (lastToolWasWebGuidance && state.turnsUsed < 3)
+
   const activeTools = hasTaskPlan
     ? allTools.filter((t) => !strictPlanOnlyNames.has(t.function.name))
-    : state.turnsUsed === 0
+    : allowPrePlanDiscovery
       ? allTools.filter((t) => prePlanDiscoveryNames.has(t.function.name))
       : allTools.filter((t) => strictPlanOnlyNames.has(t.function.name))
 
@@ -507,6 +522,8 @@ async function toolRuntimeNode(state: AgentGraphState): Promise<Partial<AgentGra
           memoryId: header.id,
           title: header.title,
         })
+      } else if (tc.name === 'search_web_guidance' || tc.name === 'read_web_guidance_doc') {
+        toolResultContent = await executeWebGuidanceTool(tc.name, tc.args)
       } else if (tc.name === 'run_sandboxed_js') {
         const code = String(tc.args.code ?? '')
         const timeoutMs = typeof tc.args.timeoutMs === 'number' ? tc.args.timeoutMs : 3000

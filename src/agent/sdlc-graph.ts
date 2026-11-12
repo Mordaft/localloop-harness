@@ -15,9 +15,15 @@ import {
   saveEpisodicTurnMemory,
   saveSdlcPhaseArtifact,
 } from '../memory/engram-memory'
+import { executeWebGuidanceTool, getWebGuidanceToolSpecs, hasLoadedWebGuidanceDocs } from '../memory/web-guidance-manager'
 import { getSharedIndexedDBSaver } from '../memory/indexeddb-saver'
 import { appendSessionMessage } from '../memory/app-db'
-import { streamChatCompletion, type OpenAiToolSpec, type ParsedToolCall } from '../llm/llm-client'
+import {
+  streamChatCompletion,
+  type ChatMessage,
+  type OpenAiToolSpec,
+  type ParsedToolCall,
+} from '../llm/llm-client'
 import { getLlmConfig } from '../llm/llm-config'
 import { getEngramToolSpecs, getSessionCallbacks } from './agent-graph'
 import { FsWriteMode } from '../enums'
@@ -38,13 +44,25 @@ import {
   type TechnicalDesignProposal,
 } from './sdlc-state'
 
+const ITERATIVE_QUERY_TOOLS = new Set([
+  'search_web_guidance',
+  'read_web_guidance_doc',
+  'engram_search',
+  'memory_search',
+  'memory_get',
+  'fs_read_file',
+  'fs_list_dir',
+  'fs_list_files',
+  'fs_search',
+])
+
 /**
  * Realiza una invocación real mediante Streaming SSE al modelo LLM configurado (Ollama, LM Studio, etc.)
- * Publica activamente las herramientas disponibles (fs_write_file, run_sandboxed_js, etc.) en el payload del LLM.
- * Ejecuta de forma automática cualquier llamada a herramientas producida por el modelo y emite
- * en tiempo real deltas de contenido y bloques de razonamiento (<think>) hacia la UI vía callbacks.
+ * Publica activamente las herramientas disponibles (fs_write_file, run_sandboxed_js, search_web_guidance, read_web_guidance_doc, etc.).
+ * Soporta un bucle iterativo acotado (2-3 iteraciones) cuando el modelo invoca herramientas de consulta
+ * como search_web_guidance o read_web_guidance_doc antes de emitir el diseño o código final.
  */
-async function streamLlmPhase(params: {
+export async function streamLlmPhase(params: {
   sessionId: number | undefined
   phaseName: string
   sdlcPhase?: SdlcPhase
@@ -52,16 +70,19 @@ async function streamLlmPhase(params: {
   userPrompt: string
   tools?: OpenAiToolSpec[]
   toolChoice?: 'auto' | 'required' | 'none'
+  maxToolIterations?: number
   defaultFallback: () => { content: string; thought?: string }
 }): Promise<{ content: string; thought?: string; toolCalls: ParsedToolCall[] }> {
   const { sessionId, phaseName, sdlcPhase, systemPrompt, userPrompt, defaultFallback } = params
   const callbacks = sessionId ? getSessionCallbacks(sessionId) : undefined
   const config = getLlmConfig()
+  const maxToolIterations = Math.min(3, Math.max(1, params.maxToolIterations ?? 3))
 
   const defaultTools: OpenAiToolSpec[] = [
     ...getFileSystemToolSpecs(),
     getSandboxToolSpec(),
     ...getEngramToolSpecs(),
+    ...getWebGuidanceToolSpecs(),
   ]
   const publishedTools = params.tools ?? defaultTools
 
@@ -103,90 +124,172 @@ async function streamLlmPhase(params: {
 
   let accumulatedContent = ''
   let accumulatedThought = ''
+  const allExecutedToolCalls: ParsedToolCall[] = []
 
   try {
-    const response = await streamChatCompletion({
-      scopeId: `sdlc_${sessionId || 'test'}_${phaseName.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      messages: [
-        { role: 'system', content: enrichedSystemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      tools: publishedTools,
-      toolChoice: params.toolChoice ?? 'auto',
-      onThinking: (thought) => {
-        accumulatedThought = thought
-        if (sessionId) {
-          callbacks?.onThinking?.({
-            sessionId,
-            thought,
-            phase: 'thinking',
-            sdlcPhase,
-          })
-          callbacks?.onStreamChunk?.({
-            sessionId,
-            contentSoFar: accumulatedContent,
-            delta: '',
-            thought,
-            phase: phaseName,
-          })
-        }
-      },
-      onContentDelta: (contentSoFar, delta) => {
-        accumulatedContent = contentSoFar
-        if (sessionId) {
-          callbacks?.onStreamChunk?.({
-            sessionId,
-            contentSoFar,
-            delta,
-            thought: accumulatedThought,
-            phase: phaseName,
-          })
-        }
-      },
-      signal: callbacks?.signal,
-      requestTimeoutMs: 35000,
-    })
+    const conversationMessages: ChatMessage[] = [
+      { role: 'system', content: enrichedSystemPrompt },
+      { role: 'user', content: userPrompt },
+    ]
 
-    // Ejecución de llamadas a herramientas emitidas por el modelo
-    if (response.toolCalls && response.toolCalls.length > 0) {
+    for (let iteration = 0; iteration < maxToolIterations; iteration++) {
+      const response = await streamChatCompletion({
+        scopeId: `sdlc_${sessionId || 'test'}_${phaseName.replace(/[^a-zA-Z0-9]/g, '_')}_iter_${iteration + 1}`,
+        messages: conversationMessages,
+        tools: publishedTools,
+        toolChoice: iteration === 0 ? (params.toolChoice ?? 'auto') : 'auto',
+        onThinking: (thought) => {
+          accumulatedThought = thought
+          if (sessionId) {
+            callbacks?.onThinking?.({
+              sessionId,
+              thought,
+              phase: 'thinking',
+              sdlcPhase,
+            })
+            callbacks?.onStreamChunk?.({
+              sessionId,
+              contentSoFar: accumulatedContent,
+              delta: '',
+              thought,
+              phase: phaseName,
+            })
+          }
+        },
+        onContentDelta: (contentSoFar, delta) => {
+          accumulatedContent = contentSoFar
+          if (sessionId) {
+            callbacks?.onStreamChunk?.({
+              sessionId,
+              contentSoFar,
+              delta,
+              thought: accumulatedThought,
+              phase: phaseName,
+            })
+          }
+        },
+        signal: callbacks?.signal,
+        requestTimeoutMs: 35000,
+      })
+
+      if (response.contentBuffer.trim().length > 0) {
+        accumulatedContent = response.contentBuffer.trim()
+      }
+      if (response.thoughtBuffer.trim().length > 0) {
+        accumulatedThought = response.thoughtBuffer.trim()
+      }
+
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        break
+      }
+
+      allExecutedToolCalls.push(...response.toolCalls)
+
+      conversationMessages.push({
+        role: 'assistant',
+        content: response.contentBuffer || '',
+        tool_calls: response.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.name,
+            arguments: tc.argumentsRaw || JSON.stringify(tc.args),
+          },
+        })),
+      })
+
+      let hasIterativeQueryTool = false
+
       for (const tc of response.toolCalls) {
-        trace(`[SDLCGraph] Ejecutando herramienta invocada por el LLM: ${tc.name}`, tc.args)
+        if (ITERATIVE_QUERY_TOOLS.has(tc.name)) {
+          hasIterativeQueryTool = true
+        }
+        trace(
+          `[SDLCGraph] Ejecutando herramienta invocada por el LLM (iteración ${iteration + 1}/${maxToolIterations}): ${tc.name}`,
+          tc.args,
+        )
         if (callbacks && sessionId) {
           callbacks.onThinking?.({
             sessionId,
-            thought: `Ejecutando herramienta ${tc.name}...`,
+            thought: `Ejecutando herramienta ${tc.name} (paso ${iteration + 1}/${maxToolIterations})...`,
             phase: 'executing_tools',
             activeTool: tc.name,
             sdlcPhase,
           })
         }
+
+        let toolResultOutput = ''
         try {
-          if (tc.name.startsWith('fs_')) {
-            await executeFileSystemTool(tc.name, tc.args, {
+          if (tc.name === 'search_web_guidance' || tc.name === 'read_web_guidance_doc') {
+            toolResultOutput = await executeWebGuidanceTool(tc.name, tc.args)
+          } else if (tc.name === 'engram_search' || tc.name === 'memory_search') {
+            const engram = getPersistentEngram()
+            const q = String(tc.args.query ?? '')
+            const results = await engram.search({ query: q, limit: 8 })
+            toolResultOutput = JSON.stringify({
+              count: results.length,
+              results: results.map((r) => ({
+                id: r.header.id,
+                title: r.header.title,
+                type: r.header.type,
+                tags: r.header.tags,
+                score: r.score,
+              })),
+            })
+          } else if (tc.name.startsWith('fs_')) {
+            const targetToolName = tc.name === 'fs_list_files' ? 'fs_list_dir' : tc.name
+            const fsRes = await executeFileSystemTool(targetToolName, tc.args, {
               sessionId: sessionId || 0,
               fsWriteMode: FsWriteMode.AUTO,
               onProposalCreated: callbacks?.onProposalCreated,
             })
+            toolResultOutput = fsRes.output
           } else if (tc.name === 'run_sandboxed_js') {
             const code = String(tc.args.code ?? '')
-            await executeSandboxedJs(code)
+            const jsRes = await executeSandboxedJs(code)
+            toolResultOutput = JSON.stringify(jsRes)
+          } else if (tc.name === 'run_browser_sandbox') {
+            const browserRes = await executeBrowserSandbox({
+              html: typeof tc.args.html === 'string' ? tc.args.html : undefined,
+              css: typeof tc.args.css === 'string' ? tc.args.css : undefined,
+              code: typeof tc.args.code === 'string' ? tc.args.code : undefined,
+              domSelector: typeof tc.args.domSelector === 'string' ? tc.args.domSelector : undefined,
+            })
+            toolResultOutput = JSON.stringify(browserRes)
+          } else {
+            toolResultOutput = JSON.stringify({ status: 'ok', tool: tc.name, args: tc.args })
           }
         } catch (toolErr) {
           trace(`[SDLCGraph] Error al ejecutar herramienta ${tc.name}: ${toolErr}`)
+          toolResultOutput = JSON.stringify({
+            error: toolErr instanceof Error ? toolErr.message : String(toolErr),
+          })
         }
+
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.name,
+          content: toolResultOutput,
+        })
+      }
+
+      // Si no se invocaron herramientas de lectura/consulta (p. ej. solo se invocó fs_write_file o approve_design), salimos del bucle
+      if (!hasIterativeQueryTool) {
+        break
       }
     }
 
-    const content = response.contentBuffer.trim()
-    const thought = response.thoughtBuffer.trim() || accumulatedThought
-    if (content.length > 0 || response.toolCalls.length > 0) {
+    const content = accumulatedContent.trim()
+    const thought = accumulatedThought.trim()
+    if (content.length > 0 || allExecutedToolCalls.length > 0) {
       trace(
-        `[SDLCGraph] Respuesta viva recibida del LLM (${content.length} caracteres, ${response.toolCalls.length} tool calls).`,
+        `[SDLCGraph] Respuesta viva recibida del LLM (${content.length} caracteres, ${allExecutedToolCalls.length} tool calls).`,
       )
       const finalMsg = {
-        content: content || `Herramientas ejecutadas: ${response.toolCalls.map((t) => t.name).join(', ')}.`,
+        content: content || `Herramientas ejecutadas: ${allExecutedToolCalls.map((t) => t.name).join(', ')}.`,
         thought: thought || undefined,
-        toolCalls: response.toolCalls,
+        toolCalls: allExecutedToolCalls,
       }
       if (sessionId) {
         try {
@@ -2514,7 +2617,7 @@ async function node_phase2_technical_design(state: SDLCStateType): Promise<Parti
   trace(`[SDLCGraph] Elaborando opciones de diseño técnico para ${compId}...`)
 
   const design = generateComponentDesign(comp, state.marketArchStandard)
-  const proposals: TechnicalDesignProposal[] = [
+  let proposals: TechnicalDesignProposal[] = [
     {
       componentId: compId,
       approachName: design.approachName,
@@ -2525,6 +2628,41 @@ async function node_phase2_technical_design(state: SDLCStateType): Promise<Parti
       tradeOffAnalysis: design.tradeOffAnalysis,
     },
   ]
+
+  if (hasLoadedWebGuidanceDocs()) {
+    const resolvedSkill = RuntimeSkillLoader.resolveContext({
+      ...state,
+      activeSkill: 'ComponentTechnical_Designer',
+    })
+    const llmDesign = await streamLlmPhase({
+      sessionId: state.sessionId,
+      phaseName: `Fase 2.1: Diseño Técnico — ${compId} [Skill: ${resolvedSkill.skill.name}]`,
+      sdlcPhase: '2_TECHNICAL_DESIGN_GATE',
+      systemPrompt: resolvedSkill.systemPrompt,
+      userPrompt: `Componente: ${comp.name} (${compId})\nDescripción: ${comp.description}\nEstándar: ${state.marketArchStandard}\nPropón el diseño técnico consultando search_web_guidance y read_web_guidance_doc si aplica.`,
+      tools: resolvedSkill.tools,
+      maxToolIterations: 3,
+      defaultFallback: () => ({
+        content: design.description,
+        thought: `Diseñando contratos técnicos para ${comp.name}...`,
+      }),
+    })
+    const proposeCall = llmDesign.toolCalls.find((tc) => tc.name === 'propose_design_options')
+    if (proposeCall && Array.isArray(proposeCall.args.approaches) && proposeCall.args.approaches.length > 0) {
+      const firstApproach = proposeCall.args.approaches[0] as Record<string, unknown>
+      proposals = [
+        {
+          componentId: compId,
+          approachName: String(firstApproach.approachName || design.approachName),
+          isChosen: true,
+          description: String(firstApproach.description || design.description),
+          contracts: design.contracts,
+          dependencies: comp.dependsOn || [],
+          tradeOffAnalysis: String(firstApproach.tradeOffs || design.tradeOffAnalysis),
+        },
+      ]
+    }
+  }
 
   const updatedDesigns = { ...state.technicalDesigns, [compId]: proposals }
 

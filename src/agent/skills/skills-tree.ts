@@ -82,13 +82,13 @@ export const SKILL_TREE: SkillBranch[] = [
         name: 'Diseñador Técnico de Componente',
         title: 'Elaboración de Opciones de Diseño Técnico',
         description: 'Propone opciones de diseño técnico, contratos de interfaz y diagramas para un componente específico.',
-        allowedTools: ['engram_search', 'propose_design_options'],
+        allowedTools: ['engram_search', 'search_web_guidance', 'read_web_guidance_doc', 'propose_design_options'],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['contracts', 'interfaces', 'local_scope'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: ComponentTechnical_Designer] Estás diseñando el componente ${state.activeComponentId}. Propón de 1 a 2 opciones de diseño técnico con sus contratos de interfaz y pros/contras.`,
+          `[SKILL: ComponentTechnical_Designer] Estás diseñando el componente ${state.activeComponentId}. Si el componente involucra HTML, CSS, DOM o APIs del navegador, consulta primero search_web_guidance y read_web_guidance_doc para alinear el diseño con modern-web-guidance. Propón de 1 a 2 opciones de diseño técnico con sus contratos de interfaz y pros/contras.`,
       },
       {
         id: 'EnterpriseArch_Gatekeeper',
@@ -96,13 +96,13 @@ export const SKILL_TREE: SkillBranch[] = [
         name: 'Gatekeeper de Arquitectura Empresarial',
         title: 'Evaluación de Opciones y Registro de Deuda Técnica',
         description: 'Evalúa diseños técnicos frente a estándares. Si acepta un trade-off, tipifica la deuda y la sincroniza al MCP.',
-        allowedTools: ['approve_design', 'reject_with_redesign', 'register_technical_debt_mcp'],
+        allowedTools: ['search_web_guidance', 'read_web_guidance_doc', 'approve_design', 'reject_with_redesign', 'register_technical_debt_mcp'],
         resolveEngramFilter: () => ({
           scope: 'enterprise_landscape',
           tags: ['enterprise_standards', 'trade_off_policies'],
         }),
         buildSystemPrompt: () =>
-          `[SKILL: EnterpriseArch_Gatekeeper] Eres el guardián de la arquitectura empresarial. Evalúa las opciones de diseño del componente. Si apruebas una solución con trade-off, registra formalmente la Deuda Técnica indicando riesgo y plan de amortización futuro.`,
+          `[SKILL: EnterpriseArch_Gatekeeper] Eres el guardián de la arquitectura empresarial. Evalúa las opciones de diseño del componente y verifica con search_web_guidance / read_web_guidance_doc el cumplimiento de estándares web modernos cuando aplique. Si apruebas una solución con trade-off, registra formalmente la Deuda Técnica indicando riesgo y plan de amortización futuro.`,
       },
     ],
   },
@@ -117,13 +117,13 @@ export const SKILL_TREE: SkillBranch[] = [
         name: 'Implementador de Componente',
         title: 'Construcción Limpia y Tipada de Código',
         description: 'Escribe y modifica el código fuente según el diseño aprobado en el workspace, con soporte multi-fichero (TS, HTML, CSS, JSON).',
-        allowedTools: ['fs_read_file', 'fs_write_file', 'fs_list_files'],
+        allowedTools: ['fs_read_file', 'fs_write_file', 'fs_list_files', 'search_web_guidance', 'read_web_guidance_doc'],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['approved_design', 'local_contracts'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: Component_Implementer] Estás implementando el código del componente ${state.activeComponentId}. Sigue con rigor el diseño técnico aprobado. Escribe código modular, tipado y documentado. Si la funcionalidad requiere estructura web (PWA, interfaz visual o componentes relacionados), genera los archivos necesarios (.ts, .html, .css, .webmanifest) invocando fs_write_file para cada uno.`,
+          `[SKILL: Component_Implementer] Estás implementando el código del componente ${state.activeComponentId}. Antes de escribir HTML, CSS o JS de cliente, usa search_web_guidance para buscar buenas prácticas en modern-web-guidance y read_web_guidance_doc para leer la guía por su ruta relativa. Sigue con rigor el diseño técnico aprobado y escribe código modular, tipado y documentado invocando fs_write_file para cada archivo.`,
       },
       {
         id: 'UnitTest_Engineer',
@@ -131,7 +131,7 @@ export const SKILL_TREE: SkillBranch[] = [
         name: 'Ingeniero de Pruebas Unitarias',
         title: 'Verificación Automatizada Unitaria en Sandbox',
         description: 'Crea y ejecuta suites unitarias en Sandbox JS o Browser Iframe Sandbox. Emite evidencias de ejecución y capturas visuales de DOM.',
-        allowedTools: ['run_sandboxed_js', 'run_browser_sandbox', 'fs_read_file', 'emit_unit_evidence'],
+        allowedTools: ['run_sandboxed_js', 'run_browser_sandbox', 'fs_read_file', 'search_web_guidance', 'read_web_guidance_doc', 'emit_unit_evidence'],
         resolveEngramFilter: (state) => ({
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['unit_tests', 'spec_contracts'],
@@ -187,7 +187,7 @@ export const SKILL_TREE: SkillBranch[] = [
         name: 'Analista de Causa Raíz (RCA)',
         title: 'Diagnóstico Estructural de Fallos de Negocio',
         description: 'Identifica si el fallo proviene de asunciones de negocio, limitaciones arquitectónicas o defectos.',
-        allowedTools: ['engram_search', 'diagnose_root_cause'],
+        allowedTools: ['engram_search', 'search_web_guidance', 'read_web_guidance_doc', 'diagnose_root_cause'],
         resolveEngramFilter: () => ({
           scope: 'e2e_audit_failure',
           tags: ['evidence', 'system_traces', 'stakeholder_feedback'],

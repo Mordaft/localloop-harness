@@ -1,5 +1,6 @@
 import { getFileSystemToolSpecs } from '../../fs/fs-tools'
 import type { OpenAiToolSpec } from '../../llm/llm-client'
+import { getWebGuidanceToolSpecs } from '../../memory/web-guidance-manager'
 import { getBrowserSandboxToolSpec, getSandboxToolSpec } from '../../sandbox/code-runner'
 import type { SDLCStateType } from '../sdlc-state'
 import { getSkillDefinition } from './skills-tree'
@@ -15,7 +16,7 @@ export interface ResolvedAgentContext {
 /**
  * Catálogo maestro de especificaciones de herramientas de localloop.
  */
-function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
+export function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
   const map = new Map<string, OpenAiToolSpec>()
 
   // Herramientas de sistema de archivos
@@ -34,6 +35,11 @@ function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
 
   const browserSandbox = getBrowserSandboxToolSpec()
   map.set(browserSandbox.function.name, browserSandbox)
+
+  // Herramientas de Modern Web Guidance (engram-ts + Lunr)
+  for (const spec of getWebGuidanceToolSpecs()) {
+    map.set(spec.function.name, spec)
+  }
 
   // Herramientas nativas de Engram
   map.set('engram_search', {

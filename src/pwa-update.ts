@@ -1,4 +1,9 @@
 import { t } from './i18n'
+import {
+  syncModernWebGuidance,
+  type WebGuidanceSyncOptions,
+  type WebGuidanceSyncResult,
+} from './memory/web-guidance-manager'
 
 let registration: ServiceWorkerRegistration | undefined
 let updateAvailable = false
@@ -84,32 +89,69 @@ function showUpdateToast(reg: ServiceWorkerRegistration) {
   })
 }
 
-export async function checkForUpdates(): Promise<{ hasUpdate: boolean; message: string }> {
-  if (!('serviceWorker' in navigator)) {
-    return { hasUpdate: false, message: t('pwa.upToDate') }
+export async function checkForUpdates(
+  syncOptions?: WebGuidanceSyncOptions,
+): Promise<{
+  hasUpdate: boolean
+  message: string
+  webGuidanceSync?: WebGuidanceSyncResult
+}> {
+  let webGuidanceSync: WebGuidanceSyncResult | undefined
+  try {
+    webGuidanceSync = await syncModernWebGuidance(syncOptions)
+  } catch {
+    // Non-blocking fallback when offline or GitHub API unreachable
+  }
+
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return {
+      hasUpdate: Boolean(webGuidanceSync?.updated),
+      message: t('pwa.upToDate'),
+      webGuidanceSync,
+    }
   }
 
   if (!registration) {
     try {
       registration = await navigator.serviceWorker.getRegistration()
     } catch {
-      return { hasUpdate: false, message: t('pwa.upToDate') }
+      return {
+        hasUpdate: Boolean(webGuidanceSync?.updated),
+        message: t('pwa.upToDate'),
+        webGuidanceSync,
+      }
     }
   }
 
   if (!registration) {
-    return { hasUpdate: false, message: t('pwa.upToDate') }
+    return {
+      hasUpdate: Boolean(webGuidanceSync?.updated),
+      message: t('pwa.upToDate'),
+      webGuidanceSync,
+    }
   }
 
   try {
     await registration.update()
     if (registration.waiting) {
       showUpdateToast(registration)
-      return { hasUpdate: true, message: t('pwa.updateAvailable') }
+      return {
+        hasUpdate: true,
+        message: t('pwa.updateAvailable'),
+        webGuidanceSync,
+      }
     }
-    return { hasUpdate: false, message: t('pwa.upToDate') }
+    return {
+      hasUpdate: Boolean(webGuidanceSync?.updated),
+      message: t('pwa.upToDate'),
+      webGuidanceSync,
+    }
   } catch {
-    return { hasUpdate: false, message: t('pwa.upToDate') }
+    return {
+      hasUpdate: Boolean(webGuidanceSync?.updated),
+      message: t('pwa.upToDate'),
+      webGuidanceSync,
+    }
   }
 }
 

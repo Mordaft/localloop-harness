@@ -2,13 +2,19 @@ import { applyBrandCssVariables } from './config/brand-config'
 import { heroIcon } from './config/heroicons'
 import { installDiagnosticsGlobal } from './diagnostics'
 import { initI18n, onLanguageChange, t } from './i18n'
+import { syncModernWebGuidance } from './memory/web-guidance-manager'
 import { applyPwaUpdate, initPwaUpdate, isPwaUpdateReady, onPwaUpdateReady } from './pwa-update'
 import { renderSessionsDashboard, updateThinkingPillInDom } from './screens/dashboard'
 import { renderMemoryExplorer } from './screens/memory-explorer'
 import { renderSettingsScreen } from './screens/settings'
 import { renderAgentWorkspace } from './screens/workspace'
 import './style.css'
-import { isSessionRunning, onAgentProgress, onAgentThinking } from './worker/agent-bridge'
+import {
+  isSessionRunning,
+  onAgentProgress,
+  onAgentThinking,
+  syncWorkerEnvironment,
+} from './worker/agent-bridge'
 
 const savedTheme = localStorage.getItem('theme')
 if (savedTheme === 'light') {
@@ -21,6 +27,11 @@ initI18n()
 applyBrandCssVariables()
 installDiagnosticsGlobal()
 initPwaUpdate()
+void syncModernWebGuidance().then((res) => {
+  if (res.updated) {
+    syncWorkerEnvironment()
+  }
+})
 
 const app = document.querySelector<HTMLDivElement>('#app')
 

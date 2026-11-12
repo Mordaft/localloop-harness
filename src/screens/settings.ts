@@ -15,6 +15,7 @@ import {
   listMcpServers,
   resetDatabaseAndCache,
 } from '../memory/app-db'
+import { syncModernWebGuidance } from '../memory/web-guidance-manager'
 import { applyPwaUpdate, checkForPwaUpdates, isPwaUpdateReady } from '../pwa-update'
 import { syncWorkerEnvironment } from '../worker/agent-bridge'
 import { bindLangToggle, renderLangToggle, renderSidebar, toggleTheme } from './shared'
@@ -518,9 +519,12 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
 
   root.querySelector<HTMLButtonElement>('#check-pwa-btn')?.addEventListener('click', async () => {
     if (isPwaUpdateReady()) {
+      await syncModernWebGuidance()
+      syncWorkerEnvironment()
       await applyPwaUpdate()
     } else {
       await checkForPwaUpdates()
+      syncWorkerEnvironment()
       rerender()
     }
   })

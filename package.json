@@ -8,7 +8,7 @@
     "dev": "vite --open",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "jiti tests/llm-client.test.ts && jiti tests/indexeddb-saver.test.ts && jiti tests/engram-memory.test.ts && jiti tests/agent-graph.test.ts && jiti tests/fs-tools.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/browser-sandbox-and-decomposition.test.ts && jiti tests/sdlc-graph.test.ts && jiti tests/streaming-queue-and-stepper.test.ts && jiti tests/tetris-pwa-multi-file.test.ts && jiti tests/markdown-renderer.test.ts && jiti tests/phase0-markdown.test.ts && jiti tests/render-thinking-config.test.ts && jiti tests/sdlc-dependencies-phase4.test.ts && jiti tests/framework-setup-phase1-phase4.test.ts",
+    "test": "jiti tests/llm-client.test.ts && jiti tests/indexeddb-saver.test.ts && jiti tests/engram-memory.test.ts && jiti tests/agent-graph.test.ts && jiti tests/fs-tools.test.ts && jiti tests/i18n.test.ts && jiti tests/sw.test.ts && jiti tests/browser-sandbox-and-decomposition.test.ts && jiti tests/sdlc-graph.test.ts && jiti tests/streaming-queue-and-stepper.test.ts && jiti tests/tetris-pwa-multi-file.test.ts && jiti tests/markdown-renderer.test.ts && jiti tests/phase0-markdown.test.ts && jiti tests/render-thinking-config.test.ts && jiti tests/sdlc-dependencies-phase4.test.ts && jiti tests/framework-setup-phase1-phase4.test.ts && jiti tests/web-guidance-tools.test.ts",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {

@@ -13,6 +13,11 @@ import {
   type ScopeTaskDefinition,
   type SubAgentDeliverableSummary,
 } from '../memory/engram-memory'
+import {
+  executeWebGuidanceTool,
+  getWebGuidanceToolSpecs,
+  hasLoadedWebGuidanceDocs,
+} from '../memory/web-guidance-manager'
 import { executeBrowserSandbox, stripMarkdownCodeFences } from '../sandbox/browser-sandbox'
 import { executeSandboxedJs } from '../sandbox/code-runner'
 
@@ -647,6 +652,7 @@ export function buildStep1ScopeTools(
   allowDecompose: boolean,
   hasMemoryHeaders: boolean,
   forceDecompose = false,
+  includeWebGuidance = false,
 ): OpenAiToolSpec[] {
   const tools: OpenAiToolSpec[] = []
 
@@ -781,6 +787,10 @@ export function buildStep1ScopeTools(
     })
   }
 
+  if (includeWebGuidance && !forceDecompose) {
+    tools.push(...getWebGuidanceToolSpecs())
+  }
+
   return tools
 }
 
@@ -825,6 +835,8 @@ export interface FractalScopeContext {
   maxConcurrency: number
   concurrencyGate: SlmConcurrencyGate
   forceRootDecomposition?: boolean
+  enableWebGuidance?: boolean
+  maxGuidanceIterations?: number
   onThinking?: (thought: string) => void | Promise<void>
   signal?: AbortSignal
 }
@@ -949,11 +961,21 @@ export async function procesarNodoScope(
     const forceDecompose =
       canDecompose && isRootScope && context.forceRootDecomposition !== false
     const relatedHeaders = await currentStorage.listRelatedScopeHeaders(task)
-    const step1Tools = buildStep1ScopeTools(
+    const useWebGuidance =
+      !forceDecompose && (context.enableWebGuidance ?? hasLoadedWebGuidanceDocs())
+    const maxGuidanceIterations = useWebGuidance
+      ? Math.min(3, Math.max(2, context.maxGuidanceIterations ?? 3))
+      : 1
+
+    const baseStep1Tools = buildStep1ScopeTools(
       canDecompose,
       relatedHeaders.length > 0,
       forceDecompose,
+      false,
     )
+    const guidanceStep1Tools = useWebGuidance
+      ? buildStep1ScopeTools(canDecompose, relatedHeaders.length > 0, forceDecompose, true)
+      : baseStep1Tools
 
     const memoryCatalogText =
       relatedHeaders.length > 0
@@ -968,32 +990,92 @@ export async function procesarNodoScope(
 
     const decompositionDirective = forceDecompose
       ? `\nREGLA OBLIGATORIA DE DESCOMPOSICIÓN: Estás en el nivel raíz del trabajo. Es OBLIGATORIO crear primero una lista de tareas invocando "descomponer_en_subtareas". Una tarea es aquello para lo que podemos definir una prueba: cada elemento de "subtareas" DEBE incluir su "descripcion" y su "prueba_aceptacion", y cada elemento se pasará a un sub-agente.`
-      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada. Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada", 2) "prueba_automatizada" (código ejecutable JS o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
+      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada.${useWebGuidance ? ' Puedes consultar previamente "search_web_guidance" y "read_web_guidance_doc" (hasta 2 pasos) si la tarea involucra HTML, CSS, DOM o APIs web modernas.' : ''} Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada", 2) "prueba_automatizada" (código ejecutable JS o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
 
     const sanitizedBaseInstructions = context.baseInstructions.includes('plan_and_delegate_tasks')
       ? 'Actúa con precisión técnica verificando empíricamente cada entrega mediante su prueba de aceptación.'
       : context.baseInstructions
 
-    const response = await streamChatCompletion({
-      scopeId: currentStorage.scopeId,
-      messages: [
-        {
-          role: 'system',
-          content: `Eres un sub-agente especializado dentro de LocalLoop con memoria engram-ts.\n${sanitizedBaseInstructions}${decompositionDirective}`,
-        },
-        {
-          role: 'user',
-          content: `SCOPE: ${currentStorage.scopeId} (Profundidad ${currentStorage.depth}/${context.maxDepth})\nTAREA: ${task.descripcion}\nPRUEBA DE ACEPTACIÓN: ${acceptanceCriterion}\nOBJETIVO: ${context.targetPath}${memoryCatalogText}\n\nCONTENIDO:\n${rawSlice.slice(0, 12000)}`,
-        },
-      ],
-      tools: step1Tools,
-      toolChoice: 'required',
-      concurrencyGate: context.concurrencyGate,
-      onThinking: context.onThinking,
-      signal: context.signal,
-    })
+    const scopeMessages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: `Eres un sub-agente especializado dentro de LocalLoop con memoria engram-ts.\n${sanitizedBaseInstructions}${decompositionDirective}`,
+      },
+      {
+        role: 'user',
+        content: `SCOPE: ${currentStorage.scopeId} (Profundidad ${currentStorage.depth}/${context.maxDepth})\nTAREA: ${task.descripcion}\nPRUEBA DE ACEPTACIÓN: ${acceptanceCriterion}\nOBJETIVO: ${context.targetPath}${memoryCatalogText}\n\nCONTENIDO:\n${rawSlice.slice(0, 12000)}`,
+      },
+    ]
 
-    const decisionCall = response.toolCalls[0]
+    let response!: LlmStreamResponse
+    let decisionCall: ParsedToolCall | undefined
+    const decisionToolNames = new Set([
+      'ejecutar_tarea_atomica',
+      'descomponer_en_subtareas',
+      'reutilizar_scope_memoria',
+    ])
+
+    for (let iter = 0; iter < maxGuidanceIterations; iter++) {
+      const isLastIter = iter === maxGuidanceIterations - 1
+      const toolsForTurn = isLastIter ? baseStep1Tools : guidanceStep1Tools
+
+      response = await streamChatCompletion({
+        scopeId:
+          maxGuidanceIterations > 1
+            ? `${currentStorage.scopeId}_iter_${iter + 1}`
+            : currentStorage.scopeId,
+        messages: scopeMessages,
+        tools: toolsForTurn,
+        toolChoice: 'required',
+        concurrencyGate: context.concurrencyGate,
+        onThinking: context.onThinking,
+        signal: context.signal,
+      })
+
+      decisionCall = response.toolCalls.find((tc) => decisionToolNames.has(tc.name))
+      if (decisionCall || isLastIter) {
+        if (!decisionCall) {
+          decisionCall = response.toolCalls[0]
+        }
+        break
+      }
+
+      const guidanceCalls = response.toolCalls.filter(
+        (tc) => tc.name === 'search_web_guidance' || tc.name === 'read_web_guidance_doc',
+      )
+      if (guidanceCalls.length === 0) {
+        decisionCall = response.toolCalls[0]
+        break
+      }
+
+      scopeMessages.push({
+        role: 'assistant',
+        content: response.contentBuffer || '',
+        tool_calls: guidanceCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.name,
+            arguments: tc.argumentsRaw || JSON.stringify(tc.args),
+          },
+        })),
+      })
+
+      for (const tc of guidanceCalls) {
+        if (context.onThinking) {
+          void context.onThinking(
+            `[modern-web-guidance] Sub-agente ${currentStorage.scopeId} ejecutando ${tc.name} (iteración ${iter + 1}/${maxGuidanceIterations})...`,
+          )
+        }
+        const toolOutput = await executeWebGuidanceTool(tc.name, tc.args)
+        scopeMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.name,
+          content: toolOutput,
+        })
+      }
+    }
 
     if (decisionCall?.name === 'reutilizar_scope_memoria') {
       const targetScopeRef = String(decisionCall.args.id_scope ?? '')

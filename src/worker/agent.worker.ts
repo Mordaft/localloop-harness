@@ -1,6 +1,7 @@
 import type { Phase0ThreeStepData } from '../agent/sdlc-state'
 import { setWorkspaceDirectoryHandle } from '../fs/workspace-fs'
 import { setWorkerLlmConfig, type LlmConfig } from '../llm/llm-config'
+import { refreshWebGuidanceEngram } from '../memory/web-guidance-manager'
 import {
   setWorkerBrowserSandboxDispatcher,
   type BrowserSandboxOptions,
@@ -86,6 +87,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
   switch (data.type) {
     case 'SYNC_CONFIG': {
       setWorkerLlmConfig(data.config)
+      void refreshWebGuidanceEngram()
       break
     }
     case 'SET_DIRECTORY_HANDLE': {

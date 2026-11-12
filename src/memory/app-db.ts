@@ -10,6 +10,7 @@ import {
 import { getLlmConfig } from '../llm/llm-config'
 import { getPersistentEngram, resetEngramMemoryDatabase } from './engram-memory'
 import { CHECKPOINT_DB_NAME, getSharedIndexedDBSaver } from './indexeddb-saver'
+import { resetWebGuidanceDatabase } from './web-guidance-manager'
 import type { SdlcPhase } from '../agent/sdlc-state'
 
 export interface AgentSession {
@@ -355,6 +356,7 @@ export async function resetDatabaseAndCache(): Promise<void> {
     if (database) await database.delete()
     await Dexie.delete(CHECKPOINT_DB_NAME)
     await resetEngramMemoryDatabase()
+    await resetWebGuidanceDatabase()
   } catch (err) {
     console.warn('[DB] Error eliminando bases de datos Dexie:', err)
   }
