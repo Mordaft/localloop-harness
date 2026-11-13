@@ -4049,6 +4049,22 @@ async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDL
     }
   }
 
+  // Persistir evidencia unitaria del componente en .localloop/evidences/
+  await writeWorkspaceFileDirect(
+    `.localloop/evidences/unit-${compId}.json`,
+    JSON.stringify(
+      {
+        componentId: compId,
+        name: comp.name,
+        unitEvidence,
+        progressEvent,
+        reportMarkdown: phase3Msg.content,
+      },
+      null,
+      2,
+    ),
+  )
+
   return {
     componentsGraph: compGraph,
     unitEvidences: { ...state.unitEvidences, [compId]: unitEvidence },
@@ -4343,14 +4359,6 @@ ${compListItems}
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>`
-
-  // Preservar index.html si ya existe la aplicación (ej. PWA Tetris o UI desarrollada en Fase 3)
-  const existingIndex = await readWorkspaceFile('index.html').catch(() => null)
-  const isExistingApp = Boolean(
-    existingIndex &&
-      existingIndex.content &&
-      !existingIndex.content.includes('LocalLoop SDLC — Aplicación Lista para Prueba E2E'),
-  )
 
   const existingMainTs = await readWorkspaceFile('src/main.ts').catch(() => null)
   const existingMainTsx = await readWorkspaceFile('src/main.tsx').catch(() => null)
@@ -4945,11 +4953,15 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
     `## Historial Cronológico de Eventos de Progreso:\n` +
     state.progressEvents.map((e) => `- [${e.timestamp}] **${e.type}**: ${e.evidenceSummary}\n`).join('')
 
-  // Proyectar todos los documentos en carpetas por fases bajo `doc/`
+  // Proyectar todos los documentos en carpetas por fases bajo `doc/` y en `.localloop/`
   await writeDoc('doc/fase-0-descubrimiento/01_CASOS_DE_USO_Y_NEGOCIO.md', p0BusinessDoc, 'Documento de Casos de Uso Fase 0')
   await writeDoc('doc/fase-0-descubrimiento/02_ARQUITECTURA_EMPRESARIAL_AS_IS_TO_BE.md', p0ArchDoc, 'Documento Arquitectura Empresarial Fase 0')
   await writeDoc('doc/fase-1-estrategia-plan/01_PLAN_WBS_Y_GRAFO_DEPENDENCIAS.md', p1PlanDoc, 'Plan WBS y DAG Fase 1')
   await writeDoc('doc/fase-2-diseno-gatekeeper/00_AUDITORIA_ARQUITECTURA_Y_DEUDA_TECNICA.md', p2GatekeeperDoc, 'Auditoría Gatekeeper Fase 2')
+  await writeDoc('.localloop/evidences/01_CASOS_DE_USO_Y_NEGOCIO.md', p0BusinessDoc, 'Evidencia Casos de Uso Fase 0 en .localloop')
+  await writeDoc('.localloop/evidences/02_ARQUITECTURA_EMPRESARIAL_AS_IS_TO_BE.md', p0ArchDoc, 'Evidencia Arquitectura Empresarial Fase 0 en .localloop')
+  await writeDoc('.localloop/evidences/01_PLAN_WBS_Y_GRAFO_DEPENDENCIAS.md', p1PlanDoc, 'Evidencia Plan WBS y DAG Fase 1 en .localloop')
+  await writeDoc('.localloop/evidences/00_AUDITORIA_ARQUITECTURA_Y_DEUDA_TECNICA.md', p2GatekeeperDoc, 'Evidencia Auditoría Gatekeeper Fase 2 en .localloop')
 
   // Diseños y evidencias por componente
   for (const comp of Object.values(state.componentsGraph)) {
@@ -4967,6 +4979,7 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
       `\n\`\`\`\n\n` +
       `## Análisis de Trade-Offs\n${compDesign?.tradeOffAnalysis || 'Aislamiento estricto de dominio y testing en memoria.'}\n`
     await writeDoc(`doc/fase-2-diseno-gatekeeper/DISENO_${comp.id.toUpperCase()}.md`, designMd, `Diseño Técnico de ${comp.id}`)
+    await writeDoc(`.localloop/evidences/DISENO_${comp.id.toUpperCase()}.md`, designMd, `Diseño Técnico de ${comp.id} en .localloop`)
 
     const compEvidence = state.unitEvidences[comp.id]
     const filesList =
@@ -5000,6 +5013,7 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
       (compEvidence?.logs?.join('\n') || 'Ejecución unitaria superada sin errores.') +
       `\n\`\`\`\n`
     await writeDoc(`doc/fase-3-construccion-pruebas/EVIDENCIA_PRUEBAS_${comp.id.toUpperCase()}.md`, unitMd, `Evidencia de Pruebas ${comp.id}`)
+    await writeDoc(`.localloop/evidences/EVIDENCIA_PRUEBAS_${comp.id.toUpperCase()}.md`, unitMd, `Evidencia de Pruebas ${comp.id} en .localloop`)
   }
 
   await writeDoc('doc/fase-4-e2e-auditoria-negocio/01_EVIDENCIAS_PRUEBAS_E2E.md', p4E2eDoc, 'Evidencias E2E Fase 4')
@@ -5007,6 +5021,11 @@ async function node_phase6_doc_projection(state: SDLCStateType): Promise<Partial
   await writeDoc('doc/fase-5-resiliencia-estrategica/01_ANALISIS_RESILIENCIA_Y_ROLLBACK.md', p5ResilienceDoc, 'Análisis Resiliencia Fase 5')
   await writeDoc('doc/fase-6-cierre-entrega/01_LANDSCAPE_ARQUITECTURA.md', landscapeDoc, 'Landscape Fase 6')
   await writeDoc('doc/fase-6-cierre-entrega/02_MANUAL_DE_PROCESOS_Y_OPERACIONES.md', processManualDoc, 'Manual de Procesos Fase 6')
+  await writeDoc('.localloop/evidences/01_EVIDENCIAS_PRUEBAS_E2E.md', p4E2eDoc, 'Evidencias E2E Fase 4 en .localloop')
+  await writeDoc('.localloop/evidences/02_INFORME_EJECUTIVO_APROBACION_NEGOCIO.md', p4BusinessDoc, 'Informe Aprobación Negocio Fase 4 en .localloop')
+  await writeDoc('.localloop/evidences/01_ANALISIS_RESILIENCIA_Y_ROLLBACK.md', p5ResilienceDoc, 'Análisis Resiliencia Fase 5 en .localloop')
+  await writeDoc('.localloop/LANDSCAPE.md', landscapeDoc, 'Proyección Landscape en .localloop')
+  await writeDoc('.localloop/MANUAL_DE_PROCESOS.md', processManualDoc, 'Proyección Manual de Procesos en .localloop')
 
   // Mantener además en la raíz para compatibilidad con accesos directos
   await writeDoc('LANDSCAPE.md', landscapeDoc, 'Proyección Landscape raíz')

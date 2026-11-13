@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { renderFormattedMarkdown, escapeHtml } from '../src/screens/workspace'
+import { renderFormattedMarkdown, escapeHtml, escapeHtmlAttr, renderMessageItem } from '../src/screens/workspace'
 import { generateMermaidDag } from '../src/mermaid'
 
 console.log('--- Iniciando pruebas de renderFormattedMarkdown para informes de Verificación Unitaria ---')
@@ -269,5 +269,62 @@ assert.ok(generatedDagMd.includes('comp_core["Módulo Core (comp_core)"]'), 'Deb
 assert.ok(generatedDagMd.includes('comp_service["Servicio de Aplicación (comp_service)"]'), 'Debe definir nodo comp_service')
 assert.ok(generatedDagMd.includes('comp_core --> comp_service'), 'Debe modelar relación de dependencia Fin-Inicio comp_core --> comp_service')
 
-console.log('✓ Todas las verificaciones de renderFormattedMarkdown y Mermaid pasaron exitosamente.')
+// 10. Prueba de regresión: data-message-content con comillas dobles, rutas path="..." y palabras clave class en bloques de código
+const gatekeeperReportWithQuotes = `# 🛡️ DICTAMEN TÉCNICO DE ARQUITECTURA: [APROBADO CON OBSERVACIONES]
+
+**ID del Componente:** \`comp_calendar_payment_adapter\`
+**Estado de Auditoría:** ✅ **VALIDADO PARA CONSTRUCCIÓN (MODO TRANSICIÓN)**
+
+---
+
+### 2. REGISTRO DE DEUDA TÉCNICA (MANDATORIO)
+
+| Atributo | Detalle |
+| :--- | :--- |
+| **Título** | Acoplamiento Temporal a ERP Legado (Strangler Fig) |
+| **Plan de Mitigación** | 1. Implementar "Circuit Breaker" en los adaptadores. <br> 2. Definir puertos (interfaces) estrictos en el Dominio. |
+
+---
+
+### 3. BLUEPRINT DE IMPLEMENTACIÓN (CONTRATOS TÉCNICOS)
+
+\`\`\`typescript
+// path="src/domain/interfaces/IPaymentGateway.ts"
+export interface IPaymentTransaction {
+  id: string;
+  status: 'pending' | 'completed' | 'failed';
+}
+
+class LegacyERPAdapter {
+  async processPayment() {
+    const legacyPayload = { "tx_id": "123" };
+    return JSON.stringify(legacyPayload);
+  }
+}
+\`\`\`
+`
+
+const renderedMessageHtml = renderMessageItem({
+  id: 1,
+  sessionId: 1,
+  role: 'assistant',
+  content: gatekeeperReportWithQuotes,
+  createdAt: new Date().toISOString(),
+})
+
+// Verificar que el atributo data-message-content escapa comillas dobles (&quot;) y saltos de línea, sin romper el tag <div> ni su atributo class
+const openingDivMatch = renderedMessageHtml.match(/<div\s+data-message-role="assistant"\s+data-message-content="([^"]*)"\s+class="([^"]+)"\s*>/)
+assert.ok(openingDivMatch, 'El elemento <div data-message-role="assistant"> debe mantener su estructura HTML intacta y su atributo class sin romperse por comillas internas')
+assert.ok(
+  openingDivMatch[2].includes('max-w-3xl') && openingDivMatch[2].includes('bg-bg-card') && openingDivMatch[2].includes('rounded-2xl'),
+  'El atributo class de la tarjeta del mensaje debe preservarse íntegramente',
+)
+assert.ok(!openingDivMatch[1].includes('\n'), 'data-message-content no debe contener saltos de línea crudos')
+assert.ok(openingDivMatch[1].includes('&quot;Circuit Breaker&quot;'), 'Las comillas dobles dentro de data-message-content deben escaparse como &quot;')
+assert.ok(openingDivMatch[1].includes('path=&quot;src/domain/interfaces/IPaymentGateway.ts&quot;'), 'Las rutas con comillas en bloques de código deben escaparse en data-message-content')
+assert.ok(renderedMessageHtml.includes('1. Implementar "Circuit Breaker" en los adaptadores. <br /> 2. Definir puertos'), 'Las etiquetas <br> dentro de celdas de tabla deben renderizarse como saltos de línea <br />')
+assert.strictEqual(escapeHtmlAttr('a "b" \'c\' `d`\ne'), 'a &quot;b&quot; &#39;c&#39; &#96;d&#96; e', 'escapeHtmlAttr debe escapar comillas dobles, simples, backticks y saltos de línea')
+assert.strictEqual(escapeHtml('a "b" \'c\' <d> &'), 'a &quot;b&quot; &#39;c&#39; &lt;d&gt; &amp;', 'escapeHtml debe escapar comillas y entidades HTML')
+
+console.log('✓ Todas las verificaciones de renderFormattedMarkdown, data-message-content y Mermaid pasaron exitosamente.')
 

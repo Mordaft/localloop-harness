@@ -143,10 +143,14 @@ async function runFrameworkSetupTests() {
   // 6. Verificar que el flujo llegó a la pausa de Fase 4 (HITL de Aprobación Formal de Negocio)
   assert.strictEqual(runAfterFramework.currentPhase, '4_E2E_BUSINESS_AUDIT')
 
-  // 7. Verificar generación de start.cmd, start.sh, src/main.ts e index.html en el workspace
+  // 7. Verificar generación de start.cmd, start.sh, src/main.ts y resultados en .localloop/ sin ensuciar la raíz
   const startCmd = getVirtualFile('start.cmd')
   const startSh = getVirtualFile('start.sh')
-  const indexHtml = getVirtualFile('index.html')
+  const rootIndexHtml = getVirtualFile('index.html')
+  const rootE2eReport = getVirtualFile('e2e-report.html')
+  const localloopIndexHtml = getVirtualFile('.localloop/index.html')
+  const localloopE2eReport = getVirtualFile('.localloop/e2e-report.html')
+  const localloopSummary = getVirtualFile('.localloop/evidences/e2e-summary.json')
   const mainTs = getVirtualFile('src/main.ts')
 
   assert.ok(startCmd, 'start.cmd debe existir en la raíz')
@@ -160,10 +164,14 @@ async function runFrameworkSetupTests() {
   assert.ok(mainTs.includes('./app/components/comp_customer_ui'), 'src/main.ts debe importar comp_customer_ui')
   assert.ok(mainTs.includes('./app/services/comp_order_service'), 'src/main.ts debe importar comp_order_service')
 
-  assert.ok(indexHtml, 'index.html debe existir en la raíz')
-  assert.ok(indexHtml.includes('LocalLoop SDLC'), 'index.html debe contener el punto de montaje')
-  assert.ok(indexHtml.includes('/src/main.ts'), 'index.html debe enlazar el punto de entrada /src/main.ts')
-  console.log('✓ start.cmd, start.sh, src/main.ts e index.html verificados exitosamente en la raíz del workspace.')
+  assert.strictEqual(rootIndexHtml, undefined, 'No debe generarse index.html de LocalLoop en la raíz para no interferir con el proyecto')
+  assert.strictEqual(rootE2eReport, undefined, 'No debe generarse e2e-report.html en la raíz para no interferir con el proyecto')
+  assert.ok(localloopIndexHtml, '.localloop/index.html debe existir en el directorio .localloop')
+  assert.ok(localloopIndexHtml.includes('LocalLoop SDLC'), '.localloop/index.html debe contener el punto de montaje')
+  assert.ok(localloopIndexHtml.includes('/src/main.ts'), '.localloop/index.html debe enlazar el punto de entrada /src/main.ts')
+  assert.ok(localloopE2eReport, '.localloop/e2e-report.html debe existir en el directorio .localloop')
+  assert.ok(localloopSummary, '.localloop/evidences/e2e-summary.json debe existir con las evidencias del proceso')
+  console.log('✓ start.cmd, start.sh, src/main.ts y evidencias en .localloop/ verificados exitosamente.')
 
   // 8. Aprobar formalmente y verificar cierre en Fase 6
   console.log('[Test 3] Otorgando aprobación formal de negocio...')
@@ -276,13 +284,14 @@ async function runFrameworkSetupTests() {
   const tetrisStartCmd = getVirtualFile('start.cmd')
   assert.ok(tetrisStartCmd?.includes('pnpm dev') || tetrisStartCmd?.includes('pnpm'), 'start.cmd debe iniciar con pnpm dev')
 
-  // Validar que index.html contiene el canvas del juego (preservado por comp_pwa_shell) y e2e-report.html fue generado
+  // Validar que index.html contiene el canvas del juego (preservado por comp_pwa_shell) y .localloop/e2e-report.html fue generado
   const tetrisIndexHtml = getVirtualFile('index.html')
   assert.ok(tetrisIndexHtml?.includes('tetris-canvas'), 'index.html debe preservar el Canvas y la UI del juego Tetris')
   assert.ok(tetrisIndexHtml?.includes('main.ts'), 'index.html debe cargar main.ts')
 
-  const tetrisE2eReport = getVirtualFile('e2e-report.html')
-  assert.ok(tetrisE2eReport, 'e2e-report.html debe existir sin pisar index.html')
+  assert.strictEqual(getVirtualFile('e2e-report.html'), undefined, 'e2e-report.html no debe ensuciar la raíz del workspace')
+  const tetrisE2eReport = getVirtualFile('.localloop/e2e-report.html')
+  assert.ok(tetrisE2eReport, '.localloop/e2e-report.html debe existir dentro de .localloop/ sin pisar index.html')
 
   // Validar que los tests unitarios físicos fueron generados para Vitest
   const tetrisEngineTest = getVirtualFile('tests/tetris-engine.test.ts')
