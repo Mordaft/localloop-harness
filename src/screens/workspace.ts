@@ -448,11 +448,26 @@ function loadExampleTemplate(): void {
   ]
 }
 
+function escapeHtmlText(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 export function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+export function escapeHtmlAttr(raw: string): string {
+  return escapeHtml(raw)
+    .replace(/`/g, '&#96;')
+    .replace(/[\r\n]+/g, ' ')
 }
 
 function sanitizeCssStyle(rawStyle: string): string {
@@ -529,7 +544,7 @@ export function renderFormattedMarkdown(raw: string): string {
       } else if (cleanLang === 'html' && !formattedCode.includes('\n')) {
         formattedCode = formattedCode.replace(/>\s*</g, '>\n<')
       }
-      const escapedCode = escapeHtml(formattedCode)
+      const escapedCode = escapeHtmlText(formattedCode)
 
       if (cleanLang.toLowerCase() === 'mermaid') {
         const isClosed = fullMatch.trimEnd().endsWith('```')
@@ -555,7 +570,7 @@ export function renderFormattedMarkdown(raw: string): string {
 
       const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm">${
         cleanLang
-          ? `<div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtml(cleanLang)}</span></div>`
+          ? `<div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtmlText(cleanLang)}</span></div>`
           : ''
       }<pre class="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-text-primary whitespace-pre"><code>${escapedCode}</code></pre></div>`
       codeBlocks.push(blockHtml)
@@ -575,8 +590,8 @@ export function renderFormattedMarkdown(raw: string): string {
       } else if (cleanLang === 'html') {
         formattedCode = formattedCode.replace(/>\s*</g, '>\n<')
       }
-      const escapedCode = escapeHtml(formattedCode)
-      const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm"><div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtml(cleanLang)}</span></div><pre class="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-text-primary whitespace-pre"><code>${escapedCode}</code></pre></div>`
+      const escapedCode = escapeHtmlText(formattedCode)
+      const blockHtml = `<div class="my-2.5 overflow-hidden rounded-xl border border-border-default bg-bg-app shadow-sm"><div class="flex items-center justify-between border-b border-border-default bg-bg-card/70 px-3 py-1 font-mono text-[10px] text-text-muted"><span class="font-bold uppercase text-primary">${escapeHtmlText(cleanLang)}</span></div><pre class="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-text-primary whitespace-pre"><code>${escapedCode}</code></pre></div>`
       codeBlocks.push(blockHtml)
       return `\n___LOCALLOOP_CODE_BLOCK_${idx}___\n`
     },
@@ -589,7 +604,7 @@ export function renderFormattedMarkdown(raw: string): string {
     (_match, _q, style, inner) => {
       const idx = safeSpans.length
       const safeStyle = sanitizeCssStyle(style)
-      const spanHtml = `<span style="${escapeHtml(safeStyle)}">${escapeHtml(inner)}</span>`
+      const spanHtml = `<span style="${escapeHtmlAttr(safeStyle)}">${escapeHtmlText(inner)}</span>`
       safeSpans.push(spanHtml)
       return `___LOCALLOOP_SAFE_SPAN_${idx}___`
     },
@@ -647,7 +662,7 @@ export function renderFormattedMarkdown(raw: string): string {
 
       for (let c = 0; c < headers.length; c++) {
         const align = alignments[c] || 'text-left'
-        tableHtml += `<th class="py-2.5 px-3 text-[11px] font-bold uppercase tracking-wider text-text-primary ${align}">${escapeHtml(headers[c])}</th>`
+        tableHtml += `<th class="py-2.5 px-3 text-[11px] font-bold uppercase tracking-wider text-text-primary ${align}">${escapeHtmlText(headers[c])}</th>`
       }
       tableHtml += `</tr></thead><tbody class="divide-y divide-border-default/50">`
 
@@ -657,7 +672,7 @@ export function renderFormattedMarkdown(raw: string): string {
         for (let c = 0; c < headers.length; c++) {
           const align = alignments[c] || 'text-left'
           const cellVal = cells[c] !== undefined ? cells[c] : ''
-          tableHtml += `<td class="py-2 px-3 text-text-secondary ${align}">${escapeHtml(cellVal)}</td>`
+          tableHtml += `<td class="py-2 px-3 text-text-secondary ${align}">${escapeHtmlText(cellVal)}</td>`
         }
         tableHtml += `</tr>`
       }
@@ -676,7 +691,8 @@ export function renderFormattedMarkdown(raw: string): string {
   text = newLines.join('\n')
 
   // 4. Escapar HTML en el resto del texto
-  let html = escapeHtml(text)
+  let html = escapeHtmlText(text)
+  html = html.replace(/&lt;br\s*\/?&gt;/gi, '<br />')
 
   // 5. Divisores horizontales (--- o *** o ___)
   html = html.replace(/^\s*([-*_]\s*){3,}\s*$/gim, '<hr class="my-3 border-0 border-t border-border-default" />')
@@ -714,12 +730,12 @@ export function renderFormattedMarkdown(raw: string): string {
     '<div class="flex items-start gap-2 my-1"><span class="h-1.5 w-1.5 rounded-full bg-primary shrink-0 mt-1.5"></span><div class="leading-relaxed text-xs text-text-primary">$1</div></div>',
   )
 
-  // 11. Negrita e Itálica
-  html = html.replace(/\*\*(.*?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
-  html = html.replace(/\*([^\*]+)\*/gim, '<em class="italic text-text-secondary">$1</em>')
+  // 11. Negrita e Itálica (sin cruzar saltos de línea para evitar corrupción de bloques)
+  html = html.replace(/\*\*([^\n]+?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
+  html = html.replace(/\*([^\*\n]+)\*/gim, '<em class="italic text-text-secondary">$1</em>')
 
   // 12. Código en línea: `código`
-  html = html.replace(/`([^`]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
+  html = html.replace(/`([^`\n]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
 
   // 13. Párrafos estructurados (\n\n) y saltos de línea suaves (\n)
   const renderedLines = html.split('\n')
@@ -774,11 +790,13 @@ export function renderFormattedMarkdown(raw: string): string {
   // Limpiar espaciadores duplicados
   html = html.replace(/(?:<div class="h-2"><\/div>\s*){2,}/g, '<div class="h-2"></div>')
 
-  // 14. Re-insertar tablas (procesando inline markdown y badges de PASS/FAIL dentro de celdas)
+  // 14. Re-insertar tablas (procesando inline markdown, <br> y badges de PASS/FAIL dentro de celdas)
   html = html.replace(/___LOCALLOOP_TABLE_(\d+)___/g, (_m, id) => {
     let tbl = tables[Number(id)] || ''
-    tbl = tbl.replace(/\*\*(.*?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
-    tbl = tbl.replace(/`([^`]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
+    tbl = tbl.replace(/&lt;br\s*\/?&gt;/gi, '<br />')
+    tbl = tbl.replace(/\*\*([^\n]+?)\*\*/gim, '<strong class="font-semibold text-text-primary">$1</strong>')
+    tbl = tbl.replace(/\*([^\*\n]+)\*/gim, '<em class="italic text-text-secondary">$1</em>')
+    tbl = tbl.replace(/`([^`\n]+)`/gim, '<code class="rounded bg-bg-app px-1.5 py-0.5 font-mono text-[11px] text-accent border border-border-default">$1</code>')
     tbl = tbl.replace(/✅\s*PASS\b/g, '<span class="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent">✅ PASS</span>')
     tbl = tbl.replace(/❌\s*FAIL\b/g, '<span class="inline-flex items-center gap-1 rounded bg-coral/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-coral">❌ FAIL</span>')
     return tbl
@@ -797,10 +815,10 @@ export function renderFormattedMarkdown(raw: string): string {
   return html
 }
 
-function renderMessageItem(msg: StoredChatMessage): string {
+export function renderMessageItem(msg: StoredChatMessage): string {
   if (msg.role === 'user') {
     return `
-      <div data-message-role="user" data-message-content="${escapeHtml(msg.content)}" class="ml-auto max-w-3xl w-full rounded-2xl rounded-tr-sm border border-primary/30 bg-primary/[0.06] dark:bg-primary/[0.12] p-5 text-xs text-text-primary shadow-sm space-y-3 transition-all">
+      <div data-message-role="user" data-message-content="${escapeHtmlAttr(msg.content)}" class="ml-auto max-w-3xl w-full rounded-2xl rounded-tr-sm border border-primary/30 bg-primary/[0.06] dark:bg-primary/[0.12] p-5 text-xs text-text-primary shadow-sm space-y-3 transition-all">
         <div class="flex items-center justify-between border-b border-primary/20 pb-2 text-[11px]">
           <div class="flex items-center gap-1.5 font-bold text-primary">
             ${heroIcon('sparkles', 'h-3.5 w-3.5 text-primary')}
@@ -819,7 +837,7 @@ function renderMessageItem(msg: StoredChatMessage): string {
 
   if (msg.role === 'tool') {
     return `
-      <div data-message-role="tool" data-message-content="${escapeHtml(msg.content)}" class="max-w-3xl w-full rounded-xl border border-border-default bg-bg-app/80 px-4 py-3 font-mono text-[11px] text-text-secondary">
+      <div data-message-role="tool" data-message-content="${escapeHtmlAttr(msg.content)}" class="max-w-3xl w-full rounded-xl border border-border-default bg-bg-app/80 px-4 py-3 font-mono text-[11px] text-text-secondary">
         <div class="flex items-center gap-2 text-accent">
           ${heroIcon('wrench-screwdriver', 'h-3.5 w-3.5')}
           <span class="font-semibold">${escapeHtml(msg.toolName ?? 'tool')}</span>
@@ -830,7 +848,7 @@ function renderMessageItem(msg: StoredChatMessage): string {
   }
 
   return `
-    <div data-message-role="assistant" data-message-content="${escapeHtml(msg.content)}" class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
+    <div data-message-role="assistant" data-message-content="${escapeHtmlAttr(msg.content)}" class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
       ${msg.thought && getLlmConfig().renderThinking
       ? `
             <details class="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
@@ -1890,18 +1908,23 @@ export async function renderWorkspaceScreen(
             ${files.length > 0
       ? files
         .map((f) => {
-          const isDoc = f.path.startsWith('doc/') || f.path.endsWith('.md')
+          const isLocalLoop = f.path.startsWith('.localloop/')
+          const isDoc = !isLocalLoop && (f.path.startsWith('doc/') || f.path.endsWith('.md'))
           const isSrc = f.path.startsWith('src/')
-          const icon = isDoc
-            ? heroIcon('book-open', 'h-3.5 w-3.5 shrink-0 text-amber-400')
-            : isSrc
-              ? heroIcon('code-bracket', 'h-3.5 w-3.5 shrink-0 text-cyan-400')
-              : heroIcon('document-text', 'h-3.5 w-3.5 shrink-0 text-text-muted')
-          const badge = isDoc
-            ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">DOC</span>'
-            : isSrc
-              ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">SRC</span>'
-              : ''
+          const icon = isLocalLoop
+            ? heroIcon('check-circle', 'h-3.5 w-3.5 shrink-0 text-emerald-400')
+            : isDoc
+              ? heroIcon('book-open', 'h-3.5 w-3.5 shrink-0 text-amber-400')
+              : isSrc
+                ? heroIcon('code-bracket', 'h-3.5 w-3.5 shrink-0 text-cyan-400')
+                : heroIcon('document-text', 'h-3.5 w-3.5 shrink-0 text-text-muted')
+          const badge = isLocalLoop
+            ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">LOCALLOOP</span>'
+            : isDoc
+              ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">DOC</span>'
+              : isSrc
+                ? '<span class="ml-auto rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">SRC</span>'
+                : ''
 
           return `
                       <button

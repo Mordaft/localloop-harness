@@ -16,7 +16,6 @@ const IGNORED_DIRS = new Set([
   '.vite',
   '.next',
   'coverage',
-  '.localloop',
 ])
 
 const BINARY_EXTENSIONS = new Set([

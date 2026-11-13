@@ -1,0 +1,2224 @@
+<!DOCTYPE html>
+<html lang="es" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arquitectura, Diagnóstico y Roadmap Estratégico | LocalLoop Harness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-primary: #0a0f1d;
+      --bg-secondary: #0f172a;
+      --bg-card: #131d36;
+      --bg-card-hover: #172445;
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(99, 102, 241, 0.45);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-blue: #38bdf8;
+      --accent-indigo: #6366f1;
+      --accent-purple: #a855f7;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --code-bg: #090d16;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'Fira Code', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Layout */
+    .app-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar Navigation */
+    .sidebar {
+      width: 300px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 28px 20px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .brand-badge {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .brand-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #6366f1, #38bdf8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: white;
+      font-size: 1.15rem;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    }
+
+    .brand-info h1 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-info span {
+      font-size: 0.72rem;
+      color: var(--accent-blue);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+    }
+
+    .nav-menu {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-menu-title {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      font-weight: 700;
+      margin: 14px 0 4px 10px;
+    }
+
+    .nav-item a {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .nav-item a:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .nav-item a.active {
+      color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.1);
+      font-weight: 600;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 0.68rem;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .nav-badge.badge-alert {
+      background: rgba(244, 63, 94, 0.2);
+      color: #fda4af;
+    }
+
+    .nav-badge.badge-go {
+      background: rgba(16, 185, 129, 0.2);
+      color: #6ee7b7;
+    }
+
+    /* Content Area */
+    .main-content {
+      flex: 1;
+      padding: 40px 60px;
+      max-width: 1300px;
+      overflow-x: hidden;
+    }
+
+    /* Hero Banner */
+    .hero-banner {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.75), rgba(15, 23, 42, 0.96)),
+                  radial-gradient(ellipse at 85% 0%, rgba(99, 102, 241, 0.22), transparent 70%);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
+      padding: 38px 44px;
+      margin-bottom: 48px;
+      position: relative;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      color: #818cf8;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 14px;
+    }
+
+    .hero-title {
+      font-size: 2.15rem;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.22;
+      letter-spacing: -0.025em;
+      margin-bottom: 14px;
+    }
+
+    .hero-subtitle {
+      font-size: 1.02rem;
+      color: var(--text-muted);
+      max-width: 960px;
+      line-height: 1.65;
+    }
+
+    /* Executive Journey Strip */
+    .journey-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .journey-step {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 10px;
+      padding: 12px 14px;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .journey-step:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: var(--border-focus);
+      transform: translateY(-2px);
+    }
+
+    .journey-step-num {
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      font-weight: 700;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .journey-step-title {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: #fff;
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .journey-step-desc {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      line-height: 1.35;
+    }
+
+    .tech-stack-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .tech-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #cbd5e1;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+    }
+
+    /* Sections */
+    section {
+      margin-bottom: 68px;
+      scroll-margin-top: 28px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 22px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .section-number {
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent-indigo), var(--accent-blue));
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.85rem;
+      font-family: var(--font-mono);
+      letter-spacing: 0.04em;
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      font-size: 1.55rem;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.015em;
+    }
+
+    .section-desc {
+      color: var(--text-muted);
+      font-size: 0.98rem;
+      margin-bottom: 24px;
+      line-height: 1.7;
+    }
+
+    .subsection-box {
+      margin-top: 38px;
+      scroll-margin-top: 28px;
+    }
+
+    .subsection-title {
+      font-size: 1.22rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 1100px) {
+      .grid-2, .grid-3, .grid-4, .journey-strip {
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        display: none;
+      }
+      .main-content {
+        padding: 24px;
+      }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 24px;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      position: relative;
+    }
+
+    .card:hover {
+      border-color: var(--border-focus);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      transform: translateY(-2px);
+    }
+
+    .card-title {
+      font-size: 1.06rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .card-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.91rem;
+      line-height: 1.62;
+    }
+
+    /* Diagrams */
+    .diagram-container {
+      background: #090e1c;
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 26px;
+      margin: 24px 0;
+      position: relative;
+      overflow-x: auto;
+    }
+
+    .diagram-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-blue);
+      font-weight: 700;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .arch-flow-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .flow-row {
+      display: flex;
+      align-items: stretch;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .flow-step {
+      flex: 1;
+      min-width: 200px;
+      background: #111a30;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 16px;
+      position: relative;
+    }
+
+    .flow-step.highlight-blue { border-left: 4px solid var(--accent-blue); }
+    .flow-step.highlight-purple { border-left: 4px solid var(--accent-purple); }
+    .flow-step.highlight-emerald { border-left: 4px solid var(--accent-emerald); }
+    .flow-step.highlight-amber { border-left: 4px solid var(--accent-amber); }
+    .flow-step.highlight-rose { border-left: 4px solid var(--accent-rose); }
+
+    .flow-step-header {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .flow-step-meta {
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      color: var(--accent-blue);
+    }
+
+    .flow-step-body {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .flow-arrow {
+      color: var(--text-dim);
+      font-size: 1.2rem;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Code Blocks */
+    .code-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      margin: 18px 0;
+      overflow: hidden;
+      font-family: var(--font-mono);
+    }
+
+    .code-box-header {
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid var(--border-color);
+      padding: 8px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    .code-box-header span.file-name {
+      color: #cbd5e1;
+      font-weight: 600;
+    }
+
+    .code-content {
+      padding: 16px;
+      font-size: 0.81rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .code-keyword { color: #f472b6; font-weight: 600; }
+    .code-string { color: #34d399; }
+    .code-func { color: #60a5fa; }
+    .code-comment { color: #64748b; font-style: italic; }
+    .code-prop { color: #fbbf24; }
+
+    /* Pain Point Clusters & Cards */
+    .pain-cluster {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 28px;
+    }
+
+    .pain-cluster-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    .pain-cluster-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .weakness-card {
+      background: rgba(244, 63, 94, 0.04);
+      border: 1px solid rgba(244, 63, 94, 0.22);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 14px;
+      transition: all 0.2s ease;
+    }
+
+    .weakness-card:last-child {
+      margin-bottom: 0;
+    }
+
+    .weakness-card:hover {
+      border-color: rgba(244, 63, 94, 0.45);
+      background: rgba(244, 63, 94, 0.07);
+    }
+
+    .weakness-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .weakness-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #fca5a5;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pain-id {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(244, 63, 94, 0.2);
+      color: #fecdd3;
+      border: 1px solid rgba(244, 63, 94, 0.4);
+    }
+
+    .severity-badge {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.05em;
+    }
+
+    .severity-crit {
+      background: #7f1d1d;
+      color: #fecaca;
+      border: 1px solid #dc2626;
+    }
+
+    .severity-high {
+      background: rgba(244, 63, 94, 0.2);
+      color: #f43f5e;
+      border: 1px solid rgba(244, 63, 94, 0.35);
+    }
+
+    .severity-medium {
+      background: rgba(245, 158, 11, 0.2);
+      color: #f59e0b;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+
+    .weakness-desc {
+      color: #cbd5e1;
+      font-size: 0.89rem;
+      line-height: 1.6;
+    }
+
+    .weakness-footer {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(244, 63, 94, 0.15);
+      font-size: 0.82rem;
+      color: #fda4af;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .resolved-by-tag {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      text-decoration: none;
+    }
+
+    /* Horizon Roadmap Cards */
+    .horizon-block {
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(19, 29, 54, 0.9), rgba(15, 23, 42, 0.95));
+      padding: 28px;
+      margin-bottom: 32px;
+      position: relative;
+    }
+
+    .horizon-block.h1 { border-top: 4px solid var(--accent-blue); }
+    .horizon-block.h2 { border-top: 4px solid var(--accent-purple); }
+    .horizon-block.h3 { border-top: 4px solid var(--accent-emerald); }
+
+    .horizon-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .horizon-tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+
+    .horizon-title {
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .horizon-goal {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .action-card {
+      background: rgba(9, 13, 22, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .action-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .action-id {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--accent-blue);
+    }
+
+    .action-title {
+      font-size: 1.02rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .action-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    /* Scorecard */
+    .success-scorecard {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 28px;
+      margin: 24px 0;
+    }
+
+    .scorecard-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .scorecard-row:last-child {
+      border-bottom: none;
+    }
+
+    .project-type-title {
+      font-weight: 600;
+      color: #fff;
+      font-size: 0.95rem;
+    }
+
+    .project-type-desc {
+      color: var(--text-dim);
+      font-size: 0.8rem;
+    }
+
+    .progress-dual-container {
+      width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .progress-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+    }
+
+    .progress-label {
+      width: 75px;
+      color: var(--text-dim);
+      text-align: right;
+    }
+
+    .progress-track {
+      flex: 1;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 999px;
+    }
+
+    .fill-emerald { background: linear-gradient(90deg, #10b981, #34d399); }
+    .fill-amber { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .fill-rose { background: linear-gradient(90deg, #f43f5e, #fb7185); }
+    .fill-indigo { background: linear-gradient(90deg, #6366f1, #38bdf8); }
+
+    .score-percent {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 700;
+      width: 44px;
+      text-align: right;
+    }
+
+    /* Tables */
+    .initiatives-table-wrapper {
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      overflow-x: auto;
+      margin: 24px 0;
+      background: var(--bg-card);
+    }
+
+    table.initiatives-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.86rem;
+    }
+
+    table.initiatives-table th {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    table.initiatives-table td {
+      padding: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      vertical-align: top;
+      color: #cbd5e1;
+    }
+
+    table.initiatives-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .initiative-title {
+      font-weight: 700;
+      color: #fff;
+      font-size: 0.93rem;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    .cost-badge {
+      display: inline-block;
+      font-size: 0.71rem;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .cost-low {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .cost-medium {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .cost-high {
+      background: rgba(244, 63, 94, 0.15);
+      color: #fb7185;
+      border: 1px solid rgba(244, 63, 94, 0.3);
+    }
+
+    /* Details / Accordions */
+    details {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+
+    summary {
+      padding: 14px 18px;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background 0.2s ease;
+    }
+
+    summary:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .details-content {
+      padding: 18px;
+      border-top: 1px solid var(--border-color);
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.65;
+    }
+
+    /* Badges & Callouts */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.73rem;
+      font-weight: 600;
+    }
+
+    .badge-info { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .badge-purple { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+    .badge-rose { background: rgba(244, 63, 94, 0.15); color: #fb7185; }
+
+    .callout {
+      border-left: 4px solid var(--accent-indigo);
+      background: rgba(99, 102, 241, 0.08);
+      border-radius: 0 10px 10px 0;
+      padding: 18px 22px;
+      margin: 20px 0;
+      color: #cbd5e1;
+      font-size: 0.91rem;
+    }
+
+    .callout.callout-emerald {
+      border-left-color: var(--accent-emerald);
+      background: rgba(16, 185, 129, 0.08);
+    }
+
+    .callout.callout-rose {
+      border-left-color: var(--accent-rose);
+      background: rgba(244, 63, 94, 0.08);
+    }
+
+    .callout strong {
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar">
+    <div class="brand-badge">
+      <div class="brand-icon">LL</div>
+      <div class="brand-info">
+        <h1>LocalLoop Harness</h1>
+        <span>Arquitectura &amp; Roadmap v2</span>
+      </div>
+    </div>
+
+    <ul class="nav-menu">
+      <li class="nav-menu-title">1. Visión y Paradigma</li>
+      <li class="nav-item">
+        <a href="#paradigma-vision" class="active">
+          <span>🧭</span> De Chat a Fábrica SDLC
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#design-by-contract">
+          <span>📐</span> HITL &amp; Design by Contract
+        </a>
+      </li>
+
+      <li class="nav-menu-title">2. Radiografía Actual (As-Is)</li>
+      <li class="nav-item">
+        <a href="#baseline-actual">
+          <span>⚙️</span> Motor ReAct &amp; Resiliencia
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#especializacion-roles">
+          <span>🎭</span> Roles &amp; Tool Scoping
+          <span class="nav-badge">8</span>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#scorecard-exito">
+          <span>📊</span> Techo Actual vs. Objetivo
+        </a>
+      </li>
+
+      <li class="nav-menu-title">3. Diagnóstico de Dolores</li>
+      <li class="nav-item">
+        <a href="#puntos-de-dolor">
+          <span>⚠️</span> 4 Cuellos de Botella
+          <span class="nav-badge badge-alert">8 Dolores</span>
+        </a>
+      </li>
+
+      <li class="nav-menu-title">4. Arquitectura Objetivo (To-Be)</li>
+      <li class="nav-item">
+        <a href="#arquitectura-objetivo">
+          <span>🏭</span> MCP_CLI &amp; Biblioteca Skills
+        </a>
+      </li>
+
+      <li class="nav-menu-title">5. El Camino a Seguir</li>
+      <li class="nav-item">
+        <a href="#roadmap-horizontes">
+          <span>🚀</span> Roadmap en 3 Horizontes
+          <span class="nav-badge badge-go">7 Acciones</span>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#matriz-consolidada">
+          <span>🎯</span> Matriz ROI y Decisiones
+        </a>
+      </li>
+    </ul>
+
+    <div style="margin-top: auto; padding: 14px; background: rgba(255,255,255,0.02); border-radius: 10px; border: 1px solid var(--border-color); font-size: 0.74rem; color: var(--text-dim);">
+      <strong style="color: #cbd5e1;">LocalLoop Engine Stack</strong><br>
+      LangGraph.js + Web Workers + Engram-ts + File System Access API + Sidecar MCP_CLI
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+
+    <!-- Hero Header -->
+    <header class="hero-banner">
+      <div class="hero-tag">Documento Maestro de Arquitectura y Estrategia de Evolución</div>
+      <h2 class="hero-title">LocalLoop Harness: Del Prototipo Agéntico en Navegador a la Fábrica de Software Determinista</h2>
+      <p class="hero-subtitle">
+        Reorganización integral de nuestra arquitectura agéntica: qué tenemos hoy construido en la PWA (<strong>Estado As-Is</strong>), cuáles son los <strong>8 Puntos de Dolor reales</strong> agrupados en 4 cuellos de botella sistémicos, las dos piezas fundacionales que completan la cadena de montaje (<strong>Sidecar MCP_CLI + Biblioteca Curada de Skills</strong>) y el <strong>Roadmap en 3 Horizontes</strong> para llevar la herramienta a otro nivel.
+      </p>
+
+      <div class="tech-stack-pills">
+        <span class="tech-pill">LangGraph.js StateGraph</span>
+        <span class="tech-pill">Design by Contract (Fase 0→5)</span>
+        <span class="tech-pill">OpenAI Tool Calling Spec</span>
+        <span class="tech-pill">Engram-ts Episodic Memory</span>
+        <span class="tech-pill">Sidecar @localloop/mcp-cli</span>
+        <span class="tech-pill">Golden Skills Library</span>
+        <span class="tech-pill">Adversarial TDD Red/Green</span>
+      </div>
+
+      <!-- 5-Step Narrative Journey -->
+      <div class="journey-strip">
+        <a href="#paradigma-vision" class="journey-step">
+          <span class="journey-step-num" style="color: var(--accent-blue);">Bloque 01</span>
+          <span class="journey-step-title">El Paradigma</span>
+          <span class="journey-step-desc">Doble Grafo, HITL y Contratos Tipados antes de codificar.</span>
+        </a>
+        <a href="#baseline-actual" class="journey-step">
+          <span class="journey-step-num" style="color: var(--accent-purple);">Bloque 02</span>
+          <span class="journey-step-title">Baseline As-Is</span>
+          <span class="journey-step-desc">Qué funciona hoy, Tool Scoping y techo del 90%→25%.</span>
+        </a>
+        <a href="#puntos-de-dolor" class="journey-step">
+          <span class="journey-step-num" style="color: var(--accent-rose);">Bloque 03</span>
+          <span class="journey-step-title">8 Puntos de Dolor</span>
+          <span class="journey-step-desc">Los 4 cuellos de botella que impiden escalar proyectos.</span>
+        </a>
+        <a href="#arquitectura-objetivo" class="journey-step">
+          <span class="journey-step-num" style="color: var(--accent-amber);">Bloque 04</span>
+          <span class="journey-step-title">Arquitectura To-Be</span>
+          <span class="journey-step-desc">La Fábrica Textil: Maquinaria MCP_CLI + Patrones SKILLS.</span>
+        </a>
+        <a href="#roadmap-horizontes" class="journey-step">
+          <span class="journey-step-num" style="color: var(--accent-emerald);">Bloque 05</span>
+          <span class="journey-step-title">Roadmap (H1→H3)</span>
+          <span class="journey-step-desc">Plan de ejecución secuencial, ROI y jubilación de deuda.</span>
+        </a>
+      </div>
+    </header>
+
+    <!-- ===================================================================== -->
+    <!-- BLOQUE 1: LA VISION Y EL PARADIGMA DIFERENCIAL                        -->
+    <!-- ===================================================================== -->
+    <section id="paradigma-vision">
+      <div class="section-header">
+        <div class="section-number">BLOQUE 01</div>
+        <h3 class="section-title">La Visión y el Paradigma: Gobierno Basado en Contratos ("Design by Contract")</h3>
+      </div>
+      <p class="section-desc">
+        El mayor fracaso de los asistentes de código tradicionales es permitir que el LLM improvise la arquitectura mientras escribe código. LocalLoop parte de una premisa opuesta: <strong>separar la deliberación arquitectónica de la codificación atómica</strong> mediante dos grafos en <strong>LangGraph.js</strong>: el <strong>Grafo General de Agente</strong> (bucle reactivo ReAct con delegación fractal) y el <strong>Grafo SDLC de Ciclo de Vida</strong> (descubrimiento, DAG de dependencias, contratos tipados, implementación acotada y resiliencia RCA).
+      </p>
+
+      <div id="design-by-contract" class="subsection-box">
+        <h4 class="subsection-title">
+          <span>1.1. De Documento Markdown a Grafo de Estado Ejecutable (Fase 0 y Fase 1)</span>
+        </h4>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">
+          En LocalLoop, el documento inicial de negocio y visión arquitectónica no es un texto decorativo: se procesa en <code>node_phase0_assess</code> y <code>node_phase0_process_discovery</code> transformándose en una estructura tipada (<code>Phase0ThreeStepData</code>) dividida en tres dimensiones:
+        </p>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">
+              <span class="badge badge-info">Paso 1: Negocio</span>
+              Casos de Uso &amp; BDD
+            </div>
+            <p>
+              Captura la necesidad (<code>rawBusinessLanguageText</code>) y la estructura en casos de uso con <strong>actores, Happy Path, flujos alternativos y criterios de aceptación Gherkin (Given-When-Then)</strong> con impacto cuantificable.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span class="badge badge-warning">Paso 2: Arquitectura</span>
+              As-Is, To-Be y Transición
+            </div>
+            <p>
+              Establece el estándar (<code>marketArchStandard</code>: Clean Architecture, C4, Hexagonal). Modela la <strong>Situación Actual (As-Is)</strong>, la <strong>Situación Deseada (To-Be)</strong> y la <strong>Situación de Transición</strong> (convivencia con sistemas legados).
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span class="badge badge-success">Paso 3: Solución</span>
+              DAG de Componentes
+            </div>
+            <p>
+              Mapea la necesidad funcional a componentes técnicos (<code>featureComponentMappings</code>), definiendo su acción (<code>CREATE | EVOLVE</code>), su estado objetivo (<code>DESIRED | TRANSITION</code>) y sus <strong>dependencias Fin-Inicio (<code>dependsOn</code>)</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Compilación Topológica en Fase 1 (<code>node_phase1_strategy_and_plan</code>):</strong><br>
+          La lista de componentes se compila en un <strong>Grafo Acíclico Dirigido (DAG Fin-Inicio)</strong>. Si el <em>Servicio de Facturación</em> depende del <em>Motor Core</em>, el servicio nace como <code>status: 'BLOCKED'</code> y el motor como <code>status: 'READY'</code>. El <strong>Component Scheduler</strong> despacha los componentes en orden topológico estricto: ningún subagente puede codificar un módulo hasta que sus dependencias estén al 100% en estado <code>VERIFIED</code>.
+        </div>
+      </div>
+
+      <!-- Puntos HITL y Contratos Fase 2 -->
+      <div class="subsection-box">
+        <h4 class="subsection-title">
+          <span>1.2. Intervención Humana Estratégica (HITL) y Contratos Inmutables en Fase 2</span>
+        </h4>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">
+          Para evitar que el agente gaste decenas de miles de tokens sobre supuestos erróneos o librerías no deseadas, el grafo SDLC introduce pausas obligatorias (<code>interruptBefore</code> de LangGraph) donde el humano tiene la última palabra antes de generar contratos:
+        </p>
+
+        <div class="diagram-container">
+          <div class="diagram-title">
+            <span>❖</span> Cadena de Refinamiento: De la Pausa Humana al Corsé Técnico del Implementador
+          </div>
+          <div class="arch-flow-grid">
+            <div class="flow-row">
+              <div class="flow-step highlight-amber">
+                <div class="flow-step-header">
+                  <span>Pausa HITL 1</span>
+                  <span class="flow-step-meta">Fase 0</span>
+                </div>
+                <div class="flow-step-body">
+                  <strong>Validación Funcional:</strong> El humano revisa y aprueba el resumen de casos de uso Gherkin y los estándares arquitectónicos antes de planificar.
+                </div>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step highlight-rose">
+                <div class="flow-step-header">
+                  <span>Pausa HITL 2 (Crítica)</span>
+                  <span class="flow-step-meta">phase1_confirm_framework</span>
+                </div>
+                <div class="flow-step-body">
+                  <strong>Acuerdo de Stack y Árbol:</strong> El humano confirma o corrige framework, bundler, test runner y carpetas. El nodo materializa <code>package.json</code>, <code>tsconfig.json</code> y <code>setup.cmd/sh</code>.
+                </div>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step highlight-purple">
+                <div class="flow-step-header">
+                  <span>Fase 2: Contratos + Gatekeeper</span>
+                  <span class="flow-step-meta">Diseño &amp; Deuda</span>
+                </div>
+                <div class="flow-step-body">
+                  <code>ComponentTechnical_Designer</code> emite interfaces TypeScript estrictas y <code>EnterpriseArch_Gatekeeper</code> las audita (registrando <code>TechnicalDebtRecord</code> si es transicional).
+                </div>
+              </div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step highlight-emerald">
+                <div class="flow-step-header">
+                  <span>Fase 3: Implementación Acotada</span>
+                  <span class="flow-step-meta">Corsé Técnico</span>
+                </div>
+                <div class="flow-step-body">
+                  <code>Component_Implementer</code> recibe la ruta exacta (<code>targetPath</code>), el stack acordado y las interfaces inmutables que debe satisfacer.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="code-box">
+          <div class="code-box-header">
+            <span class="file-name">sdlc-graph.ts — Contrato Formal Generado en Fase 2 antes de permitir escribir código en Fase 3</span>
+            <span>Design by Contract (TypeScript)</span>
+          </div>
+          <div class="code-content"><span class="code-comment">// Generado por ComponentTechnical_Designer y auditado por EnterpriseArch_Gatekeeper:</span>
+<span class="code-keyword">export interface</span> <span class="code-prop">InvoiceCalculationInput</span> {
+  <span class="code-prop">items</span>: <span class="code-prop"> Array</span>&lt;{ <span class="code-prop">description</span>: <span class="code-keyword">string</span>; <span class="code-prop">unitPrice</span>: <span class="code-keyword">number</span>; <span class="code-prop">quantity</span>: <span class="code-keyword">number</span> }&gt;;
+  <span class="code-prop">taxRate</span>: <span class="code-keyword">number</span>;
+  <span class="code-prop">vatId</span>: <span class="code-keyword">string</span>;
+}
+
+<span class="code-keyword">export interface</span> <span class="code-prop">InvoiceCalculationResult</span> {
+  <span class="code-prop">invoiceNumber</span>: <span class="code-keyword">string</span>;
+  <span class="code-prop">subtotal</span>: <span class="code-keyword">number</span>;
+  <span class="code-prop">taxAmount</span>: <span class="code-keyword">number</span>;
+  <span class="code-prop">total</span>: <span class="code-keyword">number</span>;
+  <span class="code-prop">isValid</span>: <span class="code-keyword">boolean</span>;
+  <span class="code-prop">generatedAt</span>: <span class="code-keyword">string</span>;
+}
+
+<span class="code-keyword">export interface</span> <span class="code-prop">IBillingCoreEngine</span> {
+  <span class="code-func">calculate</span>(<span class="code-prop">input</span>: <span class="code-prop">InvoiceCalculationInput</span>): <span class="code-prop">InvoiceCalculationResult</span>;
+}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- BLOQUE 2: RADIOGRAFIA HONESTA DEL ESTADO ACTUAL (BASELINE AS-IS)      -->
+    <!-- ===================================================================== -->
+    <section id="baseline-actual">
+      <div class="section-header">
+        <div class="section-number">BLOQUE 02</div>
+        <h3 class="section-title">Radiografía del Estado Actual (Baseline As-Is): Qué Tenemos Hoy</h3>
+      </div>
+      <p class="section-desc">
+        Antes de abordar las mejoras, esta sección consolida qué piezas están hoy operativas en la PWA de LocalLoop, cómo funciona su bucle empírico de herramientas, sus tres niveles de reintento y dónde se sitúa hoy su techo de éxito.
+      </p>
+
+      <!-- Diagrama Ciclo ReAct -->
+      <div class="diagram-container">
+        <div class="diagram-title">
+          <span>❖</span> Ciclo de Ejecución del Motor Actual (LLM Router ↔ Tool Runtime Loop)
+        </div>
+        <div class="arch-flow-grid">
+          <div class="flow-row">
+            <div class="flow-step highlight-blue">
+              <div class="flow-step-header">
+                <span>1. Context Injection</span>
+                <span class="flow-step-meta">START</span>
+              </div>
+              <div class="flow-step-body">
+                Inyección de <code>AgentState</code> (mensajes, skill activa, memorias episódicas de <code>engram-ts</code> y presupuesto de turnos/tokens).
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step highlight-purple">
+              <div class="flow-step-header">
+                <span>2. LLM Router Node</span>
+                <span class="flow-step-meta">CoT &amp; Tool Calls</span>
+              </div>
+              <div class="flow-step-body">
+                Streaming SSE con razonamiento explícito <code>&lt;think&gt;</code> y emisión de llamadas tipadas según OpenAI Tool Calling Spec.
+              </div>
+            </div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-step highlight-amber">
+              <div class="flow-step-header">
+                <span>3. Budget Edge Check</span>
+                <span class="flow-step-meta">Guardrail</span>
+              </div>
+              <div class="flow-step-body">
+                Verifica <code>turnsUsed &lt; maxTurns</code> (12) y límite de tokens (64k). Si se excede, desvía a <code>halt_budget_exceeded</code>.
+              </div>
+            </div>
+          </div>
+
+          <div class="flow-row">
+            <div class="flow-step highlight-rose">
+              <div class="flow-step-header">
+                <span>6. Re-Inyección Empírica</span>
+                <span class="flow-step-meta">Loop Back</span>
+              </div>
+              <div class="flow-step-body">
+                El resultado se adjunta como <code>role: 'tool'</code> vinculado a su <code>tool_call_id</code> y retorna a <code>llm_router</code>.
+              </div>
+            </div>
+            <div class="flow-arrow">←</div>
+            <div class="flow-step highlight-emerald">
+              <div class="flow-step-header">
+                <span>5. Sanitización de Salida</span>
+                <span class="flow-step-meta">Observation</span>
+              </div>
+              <div class="flow-step-body">
+                Captura de logs, JSON y capturas DOM. Las imágenes Base64 se persisten en IndexedDB para no saturar el contexto.
+              </div>
+            </div>
+            <div class="flow-arrow">←</div>
+            <div class="flow-step highlight-blue">
+              <div class="flow-step-header">
+                <span>4. Tool Runtime Node</span>
+                <span class="flow-step-meta">Browser Runtime</span>
+              </div>
+              <div class="flow-step-body">
+                Despacho a File System Access API (<code>fs_*</code>), Sandbox JS/Iframe (<code>run_sandboxed_js</code>), <code>engram-ts</code> o cliente MCP.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top: 24px;">
+        <div class="card">
+          <div class="card-title">
+            <div class="card-icon" style="background: rgba(99, 102, 241, 0.15); color: var(--accent-indigo);">🔒</div>
+            Gating Dinámico en el Turno Inicial
+          </div>
+          <p>
+            En el primer turno de un trabajo complejo, el arnés bloquea las herramientas de escritura y fuerza <code>plan_and_delegate_tasks</code> (con <code>toolChoice: 'required'</code>). El LLM no puede tocar un archivo sin antes descomponer el trabajo en sub-tareas que incluyan su propio campo obligatorio <code>acceptanceTest</code>.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <div class="card-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald);">🔄</div>
+            3 Niveles Actuales de Auto-Corrección
+          </div>
+          <p>
+            <strong>Nivel 1 (Micro-Loop ReAct):</strong> Excepciones capturadas en <code>try/catch</code> devueltas como JSON al siguiente turno.<br>
+            <strong>Nivel 2 (Verificación Hoja):</strong> <code>runAndVerifyAtomicTest</code> ejecuta la prueba en el sandbox antes de dar por buena una subtarea.<br>
+            <strong>Nivel 3 (Macro-Loop Fase 5 RCA):</strong> Si falla la auditoría E2E en Fase 4, <code>RootCause_Analyzer</code> diagnostica la causa raíz e inyecta historias de remediación de vuelta en Fase 1.
+          </p>
+        </div>
+      </div>
+
+      <!-- Subsección 2.2: Especialización de Roles -->
+      <div id="especializacion-roles" class="subsection-box">
+        <h4 class="subsection-title">
+          <span>2.1. Especialización de Roles y Principio de Mínimo Privilegio (Tool Scoping)</span>
+        </h4>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">
+          LocalLoop evita el antipatrón del «System Prompt omnipotente». Mediante <code>RuntimeSkillLoader.resolveContext(state)</code>, cada nodo del SDLC conmuta el rol cognitivo y restringe herméticamente qué herramientas puede invocar el modelo:
+        </p>
+
+        <div class="initiatives-table-wrapper">
+          <table class="initiatives-table">
+            <thead>
+              <tr>
+                <th style="width: 14%;">Fase SDLC</th>
+                <th style="width: 26%;">Skill / Rol Activo</th>
+                <th style="width: 38%;">Sesgo Cognitivo y Responsabilidad</th>
+                <th style="width: 22%;">Tool Scoping (Permitidas)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge-info">Fase 0</span></td>
+                <td>
+                  <span class="initiative-title">ProjectRigor_Interviewer</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Analista Funcional</span>
+                </td>
+                <td>Enfocado en valor de negocio, casos extremos y criterios Gherkin (Given-When-Then). <em>No piensa en código.</em></td>
+                <td><span class="tech-pill">ask_discovery_question</span> <span class="tech-pill">save_use_cases</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-info">Fase 0 &amp; 1</span></td>
+                <td>
+                  <span class="initiative-title">EnterpriseArch_MCP_Connector</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Arquitecto Empresarial</span>
+                </td>
+                <td>Visión macro: contrasta As-Is vs. To-Be, aplica estándares C4 y consulta catálogos mediante servidores MCP.</td>
+                <td><span class="tech-pill">mcp_connect_server</span> <span class="tech-pill">engram_search</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-warning">Fase 1</span></td>
+                <td>
+                  <span class="initiative-title">GovernanceProject_Planner</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Project Manager Técnico</span>
+                </td>
+                <td>Planificación WBS y grafo DAG Fin-Inicio. Garantiza el orden topológico de construcción.</td>
+                <td><span class="tech-pill">engram_search</span> <span class="tech-pill">plan_and_delegate_tasks</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-purple">Fase 2</span></td>
+                <td>
+                  <span class="initiative-title">ComponentTechnical_Designer</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Diseñador de Software</span>
+                </td>
+                <td>Define interfaces TypeScript, DTOs y firmas de métodos. <em>Sin acceso a <code>fs_write_file</code>.</em></td>
+                <td><span class="tech-pill">engram_search</span> <span class="tech-pill">propose_design_options</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-purple">Fase 2</span></td>
+                <td>
+                  <span class="initiative-title">EnterpriseArch_Gatekeeper</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Auditor Arquitectónico</span>
+                </td>
+                <td>Audita contratos y exige documentar fichas formales de Deuda Técnica en componentes de transición.</td>
+                <td><span class="tech-pill">approve_design</span> <span class="tech-pill">register_technical_debt</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success">Fase 3</span></td>
+                <td>
+                  <span class="initiative-title">Component_Implementer</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Desarrollador Coder</span>
+                </td>
+                <td>Programador pragmático: implementa al 100% las interfaces de Fase 2 en la ruta prescrita.</td>
+                <td><span class="tech-pill">fs_write_file</span> <span class="tech-pill">fs_read_file</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success">Fase 3</span></td>
+                <td>
+                  <span class="initiative-title">UnitTest_Engineer</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Ingeniero QA / Testing</span>
+                </td>
+                <td>Verificación empírica en Sandbox JS o Browser Iframe; busca aserciones rotas y evidencias visuales.</td>
+                <td><span class="tech-pill">run_sandboxed_js</span> <span class="tech-pill">run_browser_sandbox</span></td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-rose">Fase 5</span></td>
+                <td>
+                  <span class="initiative-title">RootCause_Analyzer</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim);">Especialista en Resiliencia</span>
+                </td>
+                <td>Investiga fallos E2E o rechazos humanos y reinyecta historias de remediación en Fase 1.</td>
+                <td><span class="tech-pill">engram_search</span> <span class="tech-pill">emit_rca_diagnosis</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Subsección 2.3: Scorecard de Éxito As-Is vs To-Be -->
+      <div id="scorecard-exito" class="subsection-box">
+        <h4 class="subsection-title">
+          <span>2.2. El Techo Actual vs. Potencial tras el Roadmap (La Barrera del "Último 10%")</span>
+        </h4>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">
+          Con la arquitectura actual confinada al navegador, el sistema genera con brillantez el primer 80-90% del trabajo, pero tropieza en el <strong>10% final</strong> (imports cruzados, resolución de paquetes npm, tipado holístico y tests autocomplacientes). Así se comporta hoy frente a dónde nos lleva el Roadmap:
+        </p>
+
+        <div class="success-scorecard">
+          <div class="scorecard-row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="project-type-title">Nivel 1: Micro-componentes y Funciones Aisladas</div>
+              <div class="project-type-desc">Algoritmos puros, transformadores de datos, utilidades regex, componentes UI sin dependencias externas.</div>
+            </div>
+            <div class="progress-dual-container">
+              <div class="progress-line">
+                <span class="progress-label">Hoy (As-Is)</span>
+                <div class="progress-track"><div class="progress-fill fill-emerald" style="width: 90%;"></div></div>
+                <span class="score-percent" style="color: #34d399;">90%</span>
+              </div>
+              <div class="progress-line">
+                <span class="progress-label" style="color: var(--accent-blue);">Post-Roadmap</span>
+                <div class="progress-track"><div class="progress-fill fill-indigo" style="width: 98%;"></div></div>
+                <span class="score-percent" style="color: var(--accent-blue);">98%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="scorecard-row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="project-type-title">Nivel 2: Módulos con Dependencias Locales y PWA Autocontenida</div>
+              <div class="project-type-desc">Juegos Web (Canvas), paneles interactivos, clientes API tipados, stores IndexedDB.</div>
+            </div>
+            <div class="progress-dual-container">
+              <div class="progress-line">
+                <span class="progress-label">Hoy (As-Is)</span>
+                <div class="progress-track"><div class="progress-fill fill-emerald" style="width: 75%;"></div></div>
+                <span class="score-percent" style="color: #34d399;">75%</span>
+              </div>
+              <div class="progress-line">
+                <span class="progress-label" style="color: var(--accent-blue);">Post-Roadmap</span>
+                <div class="progress-track"><div class="progress-fill fill-indigo" style="width: 92%;"></div></div>
+                <span class="score-percent" style="color: var(--accent-blue);">92%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="scorecard-row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="project-type-title">Nivel 3: Aplicaciones Multi-Archivo y Refactorización de Repositorios Medios</div>
+              <div class="project-type-desc">Modificación de contratos entre múltiples ficheros, instalación de librerías npm, adaptadores legados.</div>
+            </div>
+            <div class="progress-dual-container">
+              <div class="progress-line">
+                <span class="progress-label">Hoy (As-Is)</span>
+                <div class="progress-track"><div class="progress-fill fill-amber" style="width: 50%;"></div></div>
+                <span class="score-percent" style="color: #fbbf24;">50%</span>
+              </div>
+              <div class="progress-line">
+                <span class="progress-label" style="color: var(--accent-blue);">Post-Roadmap</span>
+                <div class="progress-track"><div class="progress-fill fill-indigo" style="width: 85%;"></div></div>
+                <span class="score-percent" style="color: var(--accent-blue);">85%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="scorecard-row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="project-type-title">Nivel 4: Proyectos Full-Stack Complejos o Monorepos</div>
+              <div class="project-type-desc">Múltiples paquetes interdependientes, toolchain de build estricto, concurrencia asíncrona avanzada.</div>
+            </div>
+            <div class="progress-dual-container">
+              <div class="progress-line">
+                <span class="progress-label">Hoy (As-Is)</span>
+                <div class="progress-track"><div class="progress-fill fill-rose" style="width: 25%;"></div></div>
+                <span class="score-percent" style="color: #fb7185;">25%</span>
+              </div>
+              <div class="progress-line">
+                <span class="progress-label" style="color: var(--accent-blue);">Post-Roadmap</span>
+                <div class="progress-track"><div class="progress-fill fill-indigo" style="width: 70%;"></div></div>
+                <span class="score-percent" style="color: var(--accent-blue);">70%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- BLOQUE 3: MAPA UNIFICADO DE PUNTOS DE DOLOR (4 CUELLOS DE BOTELLA)    -->
+    <!-- ===================================================================== -->
+    <section id="puntos-de-dolor">
+      <div class="section-header">
+        <div class="section-number">BLOQUE 03</div>
+        <h3 class="section-title">Mapa Unificado de Puntos de Dolor: Los 4 Cuellos de Botella Sistémicos</h3>
+      </div>
+      <p class="section-desc">
+        Al unificar el análisis de vulnerabilidades con los vacíos fundacionales detectados durante nuestra lluvia de ideas, emergen <strong>8 Puntos de Dolor concretos (`A1` a `D3`)</strong> agrupados en <strong>4 cuellos de botella sistémicos</strong> que explican por qué la herramienta cae al 25-50% en proyectos complejos:
+      </p>
+
+      <!-- EJE A: CEGUERA DE ENTORNO Y RIESGO EN DISCO -->
+      <div class="pain-cluster">
+        <div class="pain-cluster-header">
+          <div class="pain-cluster-title">
+            <span style="font-size: 1.3rem;">🔌</span>
+            Eje A: Ceguera de Entorno Nativo y Riesgo en Disco (Falta de Maquinaria)
+          </div>
+          <span class="badge badge-rose">2 Dolores Estructurales</span>
+        </div>
+
+        <div class="weakness-card" id="dolor-a1">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR A1</span>
+              <span>Aislamiento Asimétrico del Sandbox Browser frente al Toolchain Real del Host</span>
+            </div>
+            <span class="severity-badge severity-crit">Crítico · Fundacional</span>
+          </div>
+          <div class="weakness-desc">
+            El sandbox actual corre dentro del navegador (Web Worker para JS o Iframe para DOM). Está completamente ciego ante el sistema operativo del usuario:
+            <ul style="margin-top: 8px; padding-left: 20px;">
+              <li><strong>¿Los botones encajan en los ojales? (Dependencias):</strong> El agente añade paquetes en <code>package.json</code> (ej. <code>zod</code>, <code>lucide-react</code>), pero no puede ejecutar <code>pnpm install</code> para comprobar si las versiones existen o chocan en npm.</li>
+              <li><strong>¿La tela resiste la tensión? (Compilación Holística):</strong> Escribe archivos con imports relativos (<code>import { x } from './engine'</code>), pero sin <code>tsc --noEmit</code> no detecta errores de tipos entre ficheros que el sandbox aislado ignora.</li>
+              <li><strong>¿El traje está confeccionado? (Empaquetado y Ejecución):</strong> No puede lanzar <code>vite build</code> ni levantar el servidor de desarrollo real para validar el bundle final.</li>
+            </ul>
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> El código pasa los tests sintéticos del navegador pero rompe el build real en consola.</span>
+            <a href="#accion-h1-1" class="resolved-by-tag">→ Resuelto en Horizonte 1 (Acción H1.1: Sidecar MCP_CLI)</a>
+          </div>
+        </div>
+
+        <div class="weakness-card" id="dolor-a2">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR A2</span>
+              <span>Escritura Destructiva en Disco sin Transaccionalidad ni Rollback Automático</span>
+            </div>
+            <span class="severity-badge severity-high">Alto</span>
+          </div>
+          <div class="weakness-desc">
+            <code>fs_write_file</code> escribe directamente sobre los ficheros del usuario vía File System Access API. Si un subagente modifica 3 archivos de un componente y falla al compilar en el 4º (o agota su presupuesto de turnos), los cambios quedan grabados en disco de forma irreversible, dejando el repositorio en un estado corrupto a mitad de refactorización.
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> Workspace sucio y roto que obliga al desarrollador humano a limpiar diffs manualmente.</span>
+            <a href="#accion-h1-1" class="resolved-by-tag">→ Resuelto en Horizonte 1 (Acción H1.1: Git Snapshots vía MCP_CLI)</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- EJE B: ORACULO DE VERIFICACION COMPLACIENTE -->
+      <div class="pain-cluster">
+        <div class="pain-cluster-header">
+          <div class="pain-cluster-title">
+            <span style="font-size: 1.3rem;">🎭</span>
+            Eje B: Oráculo de Verificación Complaciente (Falsos Positivos)
+          </div>
+          <span class="badge badge-rose">1 Dolor Crítico</span>
+        </div>
+
+        <div class="weakness-card" id="dolor-b1">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR B1</span>
+              <span>Autocomplacencia y Tautología en las Pruebas Sintéticas (Juez y Parte)</span>
+            </div>
+            <span class="severity-badge severity-crit">Crítico</span>
+          </div>
+          <div class="weakness-desc">
+            En <code>procesarNodoScope</code>, el mismo subagente que escribe la implementación (<code>tarea_realizada</code>) es quien redacta su propia prueba automatizada (<code>prueba_automatizada</code>). Si el LLM malinterpreta la regla de negocio, escribe un test que valida su propio error; peor aún, cuando se atasca, tiende a relajar la aserción (ej. <code>return true;</code>) para superar <code>runAndVerifyAtomicTest</code>.
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> Falsos positivos sistemáticos (100% PASS en el reporte, pero el software incumple el contrato).</span>
+            <a href="#accion-h2-1" class="resolved-by-tag">→ Resuelto en Horizonte 2 (Acción H2.1: Pipeline TDD Adversarial Red-Green)</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- EJE C: IMPROVISACION POR CONOCIMIENTO GENERICO -->
+      <div class="pain-cluster">
+        <div class="pain-cluster-header">
+          <div class="pain-cluster-title">
+            <span style="font-size: 1.3rem;">📚</span>
+            Eje C: Improvisación por Conocimiento Genérico (Falta de Biblioteca de Referencia)
+          </div>
+          <span class="badge badge-rose">1 Dolor Fundacional</span>
+        </div>
+
+        <div class="weakness-card" id="dolor-c1">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR C1</span>
+              <span>Skills Huérfanas de Referencia (Prompts de Una Línea sin SOPs ni Golden Blueprints)</span>
+            </div>
+            <span class="severity-badge severity-crit">Crítico · Fundacional</span>
+          </div>
+          <div class="weakness-desc">
+            Aunque tenemos <code>Tool Scoping</code> por rol, hoy en <code>skills-tree.ts</code> las instrucciones de cada Skill son frases genéricas de una línea (<em>"[SKILL: Component_Implementer] Escribe código modular, tipado y documentado..."</em>). Confiar en el conocimiento paramétrico general del LLM provoca cuatro patologías:
+            <ul style="margin-top: 8px; padding-left: 20px;">
+              <li><strong>Alucinación de APIs Obsoletas:</strong> Mezcla sintaxis antiguas (ej. React Router v5 con v6, configuraciones deprecadas).</li>
+              <li><strong>Anarquía Estilística:</strong> Un subagente usa clases POO, otro closures funcionales y otro singletons mutables.</li>
+              <li><strong>Inconsistencia en Testing:</strong> Cada subagente estructura los tests y mocks con convenciones distintas.</li>
+              <li><strong>Ausencia de Restricciones Negativas (<code>NEVER DO</code>):</strong> El agente desconoce qué patrones están prohibidos en nuestra arquitectura.</li>
+            </ul>
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> Código "Frankenstein" donde cada módulo parece escrito por un equipo distinto sin estándares comunes.</span>
+            <a href="#accion-h2-2" class="resolved-by-tag">→ Resuelto en Horizonte 2 (Acción H2.2: Biblioteca SKILL.md + Reglas de Inmunidad)</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- EJE D: DEGRADACION COGNITIVA Y OPERATIVA DEL LLM -->
+      <div class="pain-cluster">
+        <div class="pain-cluster-header">
+          <div class="pain-cluster-title">
+            <span style="font-size: 1.3rem;">🧠</span>
+            Eje D: Degradación Cognitiva, Bucles Estancados y Latencia del LLM
+          </div>
+          <span class="badge badge-warning">3 Dolores Operativos</span>
+        </div>
+
+        <div class="weakness-card" id="dolor-d1">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR D1</span>
+              <span>Efecto "Groundhog Day" y Atrapamiento en Mínimos Locales</span>
+            </div>
+            <span class="severity-badge severity-high">Alto</span>
+          </div>
+          <div class="weakness-desc">
+            Cuando un modelo (especialmente modelos locales 7B/8B) falla una llamada a herramienta o una aserción, no cambia de enfoque algorítmico: repite exactamente la misma llamada con cambios cosméticos (espacios o saltos de línea) durante 5 o 6 turnos seguidos hasta agotar <code>maxTurns</code> y abortar por <code>halt_budget_exceeded</code>.
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> Consumo inútil de presupuesto de tokens y bloqueo de sesiones sin progreso real.</span>
+            <a href="#accion-h1-2" class="resolved-by-tag">→ Resuelto en Horizonte 1 (Acción H1.2: Detector Anti-Groundhog Day)</a>
+          </div>
+        </div>
+
+        <div class="weakness-card" id="dolor-d2">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR D2</span>
+              <span>Degradación de Atención por Inflación de Contexto ("Lost in the Middle")</span>
+            </div>
+            <span class="severity-badge severity-medium">Medio-Alto</span>
+          </div>
+          <div class="weakness-desc">
+            A medida que el agente acumula lecturas de ficheros (<code>fs_read_file</code>) y trazas de ejecución en <code>state.messages</code>, la ventana supera decenas de miles de tokens. La atención del LLM se degrada en la zona intermedia del prompt, olvidando los contratos TypeScript de Fase 2 o las restricciones del System Prompt.
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> Deriva arquitectónica progresiva a partir del turno 6-8 de una misma tarea.</span>
+            <a href="#accion-h3-2" class="resolved-by-tag">→ Resuelto en Horizonte 3 (Acción H3.2: Compresión Semántica de Estado)</a>
+          </div>
+        </div>
+
+        <div class="weakness-card" id="dolor-d3">
+          <div class="weakness-header">
+            <div class="weakness-title">
+              <span class="pain-id">DOLOR D3</span>
+              <span>Latencia Crítica y Secuencialidad en Modelos Locales Cuantizados (SLM)</span>
+            </div>
+            <span class="severity-badge severity-medium">Medio</span>
+          </div>
+          <div class="weakness-desc">
+            Completar un componente con descomposición fractal requiere entre 15 y 25 llamadas al LLM, despachadas hoy de forma estrictamente secuencial. En una GPU local corriendo un modelo 7B/8B a 25-35 tokens/s, cada componente tarda entre 4 y 8 minutos, y además los modelos pequeños sufren en las fases de alta abstracción (Fase 0, Fase 2 y RCA).
+          </div>
+          <div class="weakness-footer">
+            <span><strong>Impacto:</strong> Experiencia lenta y cuellos de botella de razonamiento en diseño y diagnóstico.</span>
+            <a href="#accion-h3-1" class="resolved-by-tag">→ Resuelto en Horizonte 3 (Acciones H3.1 Bimodal + H3.3 DAG Paralelo)</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- BLOQUE 4: ARQUITECTURA OBJETIVO (TO-BE): LA FABRICA TEXTIL            -->
+    <!-- ===================================================================== -->
+    <section id="arquitectura-objetivo">
+      <div class="section-header">
+        <div class="section-number">BLOQUE 04</div>
+        <h3 class="section-title">Arquitectura Objetivo (To-Be): La Cadena de Montaje Industrial</h3>
+      </div>
+      <p class="section-desc">
+        Para superar de raíz los 4 cuellos de botella, evolucionamos LocalLoop desde un «taller artesanal confinado al navegador» hacia una <strong>fábrica de software completa</strong> sustentada en dos pilares fundacionales: <strong>la Maquinaria Nativa (`@localloop/mcp-cli`)</strong> y <strong>la Biblioteca Curada de Referencia (`SKILLS`)</strong>.
+      </p>
+
+      <!-- Metáfora Textil -->
+      <div class="diagram-container" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.95)); border-color: rgba(99, 102, 241, 0.3);">
+        <div class="diagram-title" style="color: #a5b4fc;">
+          <span>🧵</span> La Metáfora de la Fábrica Textil: Qué Tenemos vs. Qué Completamos
+        </div>
+        <div class="grid-2" style="margin-top: 10px;">
+          <div style="background: rgba(244, 63, 94, 0.05); border-radius: 10px; padding: 18px; border: 1px solid rgba(244, 63, 94, 0.2);">
+            <div style="font-weight: 700; color: #fca5a5; margin-bottom: 8px; font-size: 0.96rem;">
+              📐 Hoy (As-Is): Dibujar Patrones en la Mesa de Corte
+            </div>
+            <p style="font-size: 0.87rem; color: var(--text-muted); line-height: 1.6;">
+              Nuestra PWA con File System Access API diseña el patrón arquitectónico, define interfaces y escribe código en disco. Pero <strong>carece de las máquinas de coser y planchar</strong> (no sabe si compila con <code>tsc</code> ni si <code>pnpm install</code> resuelve los botones) y <strong>carece de muestrario de costura</strong> (cada sastre cose con una puntada distinta porque las Skills no tienen patrones de referencia).
+            </p>
+          </div>
+
+          <div style="background: rgba(16, 185, 129, 0.05); border-radius: 10px; padding: 18px; border: 1px solid rgba(16, 185, 129, 0.25);">
+            <div style="font-weight: 700; color: #86efac; margin-bottom: 8px; font-size: 0.96rem;">
+              🏭 Objetivo (To-Be): La Cadena de Montaje Completa
+            </div>
+            <p style="font-size: 0.87rem; color: var(--text-muted); line-height: 1.6;">
+              Acoplamos a la PWA dos palancas industriales:<br>
+              <strong>1. Sidecar `MCP_CLI` (La Maquinaria):</strong> Ejecuta <code>pnpm install</code>, <code>tsc --noEmit</code>, <code>vitest</code>, <code>vite build</code> y snapshots de <code>git</code> directamente en el SO del host.<br>
+              <strong>2. Biblioteca `SKILLS` (Los Patrones Maestros):</strong> Manuales operativos con SOPs, <em>Golden Blueprints</em> canónicos y reglas de inmunidad aprendidas.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pilar 1: Sidecar MCP_CLI -->
+      <div class="subsection-box">
+        <h4 class="subsection-title">
+          <span>4.1. Pilar Fundacional 1: El Sidecar Local `@localloop/mcp-cli` (La Maquinaria)</span>
+        </h4>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">
+          Un servidor MCP local ultraligero (ejecutable con un simple <code>npx @localloop/mcp-cli</code> en la raíz del proyecto) que se comunica por SSE/WebSocket (<code>http://localhost:3000/mcp</code>) con nuestro <code>mcp-client.ts</code> y expone 4 primitivas deterministas con lista blanca de seguridad:
+        </p>
+
+        <div class="grid-4">
+          <div class="card">
+            <div class="card-title" style="font-size: 0.95rem; color: var(--accent-blue);">
+              <span>⚙️</span> <code>cli_toolchain_check</code>
+            </div>
+            <p style="font-size: 0.83rem;">
+              Ejecuta <code>pnpm install</code>, <code>tsc --noEmit</code> y <code>eslint</code> en el host. Devuelve diagnósticos estructurados (archivo, línea y código TS) sin gastar tokens de inferencia.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title" style="font-size: 0.95rem; color: var(--accent-emerald);">
+              <span>🧪</span> <code>cli_test_runner</code>
+            </div>
+            <p style="font-size: 0.83rem;">
+              Lanza <code>vitest run --reporter=json</code> o Playwright contra el entorno real de Node/navegador, superando las limitaciones del Web Worker aislado.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title" style="font-size: 0.95rem; color: var(--accent-amber);">
+              <span>⏪</span> <code>cli_git_snapshot</code>
+            </div>
+            <p style="font-size: 0.83rem;">
+              Crea commits/stashes transaccionales antes de cada subagente, permite rollback atómico instantáneo si falla la tarea y gestiona <code>git worktree</code> para paralelismo.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title" style="font-size: 0.95rem; color: var(--accent-purple);">
+              <span>🌐</span> <code>cli_dev_server</code>
+            </div>
+            <p style="font-size: 0.83rem;">
+              Arranca el servidor de desarrollo en segundo plano (ej. <code>localhost:5173</code>) y entrega la URL viva y los logs HMR para auditoría visual en Fase 4.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout callout-emerald">
+          <strong>Simplificación Arquitectónica Clave (Qué jubilamos gracias a `MCP_CLI`):</strong><br>
+          En iteraciones previas habíamos valorado meter <code>isomorphic-git</code> en memoria VFS y embutir el compilador de TypeScript (+4 MB de <code>lib.d.ts</code>) dentro de un Web Worker del navegador. <strong>Con <code>@localloop/mcp-cli</code> eliminamos esa complejidad accidental:</strong> usamos el <code>git</code> y el <code>tsc</code> nativos de la máquina del desarrollador en milisegundos, manteniendo el Sandbox del navegador únicamente como previsualizador ligero o modo <em>fallback</em> sin consola.
+        </div>
+      </div>
+
+      <!-- Pilar 2: Biblioteca de Skills -->
+      <div class="subsection-box">
+        <h4 class="subsection-title">
+          <span>4.2. Pilar Fundacional 2: Biblioteca Curada de `SKILLS` (SOPs + Golden Blueprints)</span>
+        </h4>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">
+          Cada rol del grafo deja de ser un prompt de una frase en <code>skills-tree.ts</code> y pasa a cargar bajo demanda un paquete de referencia estandarizado con cuatro bloques obligatorios: <strong>1. SOP (Checklist paso a paso)</strong>, <strong>2. Golden Blueprint (código canónico few-shot)</strong>, <strong>3. Catálogo de Anti-Patrones Prohibidos</strong> y <strong>4. Diccionario de Decisiones del Stack</strong>.
+        </p>
+
+        <div class="code-box">
+          <div class="code-box-header">
+            <span class="file-name">skills/Component_Implementer/SKILL.md — Estándar de Biblioteca de Referencia</span>
+            <span>Skill de Alto Rigor</span>
+          </div>
+          <div class="code-content"><span class="code-comment"># SKILL: Component_Implementer</span>
+<span class="code-keyword">## 1. Procedimiento Operativo Estándar (SOP Pre-Entrega)</span>
+1. Lee el contrato tipado de Fase 2 y el test inmutable de `UnitTest_Engineer` antes de escribir código.
+2. Incluye siempre la cabecera de trazabilidad: `// File: &lt;targetPath&gt; | Contract: &lt;InterfaceName&gt;`.
+3. Prohibido el uso de `any` o `@ts-ignore`. Todo método asíncrono debe aceptar `signal?: AbortSignal`.
+4. Ejecuta `cli_toolchain_check` (`tsc --noEmit`) antes de dar por concluido tu turno.
+
+<span class="code-keyword">## 2. Ejemplo Dorado (Golden Blueprint Canónico)</span>
+```typescript
+export class BillingCoreEngine implements IBillingCoreEngine {
+  constructor(private readonly taxValidator: ITaxValidator) {}
+
+  public calculate(input: InvoiceCalculationInput): InvoiceCalculationResult {
+    this.taxValidator.assertValidVat(input.vatId);
+    const subtotal = input.items.reduce((acc, item) =&gt; acc + item.unitPrice * item.quantity, 0);
+    const taxAmount = Number((subtotal * input.taxRate).toFixed(2));
+    return {
+      invoiceNumber: `INV-${Date.now()}`,
+      subtotal,
+      taxAmount,
+      total: Number((subtotal + taxAmount).toFixed(2)),
+      isValid: true,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+}
+```
+
+<span class="code-keyword">## 3. Catálogo de Anti-Patrones Terminantemente Prohibidos (NEVER DO)</span>
+- ❌ PROHIBIDO modificar o sobrescribir archivos `*.test.ts` o `*.spec.ts`.
+- ❌ PROHIBIDO importar paquetes npm que no estén declarados en `package.json`.
+- ❌ PROHIBIDO mutar los objetos de entrada (`input`) por referencia.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- BLOQUE 5: EL CAMINO A SEGUIR — ROADMAP EN 3 HORIZONTES                -->
+    <!-- ===================================================================== -->
+    <section id="roadmap-horizontes">
+      <div class="section-header">
+        <div class="section-number">BLOQUE 05</div>
+        <h3 class="section-title">El Camino a Seguir: Roadmap de Ingeniería en 3 Horizontes</h3>
+      </div>
+      <p class="section-desc">
+        Para llevar LocalLoop a otro nivel sin dispersar esfuerzos, organizamos la evolución en <strong>3 Horizontes secuenciales</strong>. Cada horizonte desbloquea capacidades para el siguiente y erradica un subconjunto específico de los 8 Puntos de Dolor diagnosticados.
+      </p>
+
+      <!-- HORIZONTE 1 -->
+      <div class="horizon-block h1">
+        <div class="horizon-header">
+          <div>
+            <span class="horizon-tag" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.35);">Horizonte 1 · Corto Plazo (Semanas 1-2)</span>
+            <h4 class="horizon-title">Cimientos y Realidad: Conectar la Maquinaria y Blindar el Bucle</h4>
+            <p class="horizon-goal">Objetivo: Que el agente deje de programar a ciegas, no pueda corromper el disco del usuario y no queme presupuesto en bucles repetitivos.</p>
+          </div>
+          <span class="cost-badge cost-low">Impacto Inmediato · 0 Tokens Extra</span>
+        </div>
+
+        <div class="grid-2">
+          <div class="action-card" id="accion-h1-1">
+            <div class="action-card-header">
+              <span class="action-id">ACCIÓN H1.1</span>
+              <span class="badge badge-info">Prioridad #1</span>
+            </div>
+            <div class="action-title">Sidecar `@localloop/mcp-cli` (Toolchain Real + Git Transaccional)</div>
+            <p style="font-size: 0.87rem; color: var(--text-muted);">
+              Construir el paquete ligero MCP local con <code>cli_toolchain_check</code> (<code>tsc --noEmit</code> + <code>pnpm install</code>) y <code>cli_git_snapshot</code>. Antes de que un subagente de Fase 3 escriba en disco, se crea un snapshot automático en Git; si al terminar su turno el build global falla o se agota el budget, se ejecuta <code>git reset/stash</code> automático dejando el workspace impecable.
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR A1</span>
+              <span class="pain-id">Erradica DOLOR A2</span>
+              <span class="cost-badge cost-medium">Esfuerzo: 3-4 días</span>
+            </div>
+          </div>
+
+          <div class="action-card" id="accion-h1-2">
+            <div class="action-card-header">
+              <span class="action-id">ACCIÓN H1.2</span>
+              <span class="badge badge-info">Quick Win (1 Día)</span>
+            </div>
+            <div class="action-title">Detector de Bucles Estancados (Middleware Anti-Groundhog Day)</div>
+            <p style="font-size: 0.87rem; color: var(--text-muted);">
+              Añadir en <code>llmRouterNode</code> un detector heurístico de similitud (hash/distancia de Levenshtein &gt; 85%) entre dos llamadas consecutivas fallidas. Al detectar la repetición, el arnés bloquea la ejecución duplicada, eleva temporalmente la temperatura e inyecta un mensaje de sistema forzando al agente a cambiar de estrategia o consultar el error real de <code>tsc</code>.
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR D1</span>
+              <span class="cost-badge cost-low">Esfuerzo: 1 día</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HORIZONTE 2 -->
+      <div class="horizon-block h2">
+        <div class="horizon-header">
+          <div>
+            <span class="horizon-tag" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35);">Horizonte 2 · Medio Plazo (Semanas 3-4)</span>
+            <h4 class="horizon-title">Rigor Industrial: Verificación Adversarial (TDD) y Biblioteca Viva de Skills</h4>
+            <p class="horizon-goal">Objetivo: Erradicar los falsos positivos en testing y lograr que todos los subagentes codifiquen con la consistencia de un equipo Senior.</p>
+          </div>
+          <span class="cost-badge cost-medium">Salto de Calidad en Código y QA</span>
+        </div>
+
+        <div class="grid-2">
+          <div class="action-card" id="accion-h2-1">
+            <div class="action-card-header">
+              <span class="action-id" style="color: #c084fc;">ACCIÓN H2.1</span>
+              <span class="badge badge-purple">Gobierno QA</span>
+            </div>
+            <div class="action-title">Pipeline TDD Red-Green con Permisos Asimétricos (Tester ≠ Coder)</div>
+            <p style="font-size: 0.87rem; color: var(--text-muted);">
+              Reestructurar la Fase 3 (<code>procesarNodoScope</code>): primero actúa <code>UnitTest_Engineer</code> recibiendo <strong>únicamente</strong> el contrato TypeScript de Fase 2 y los criterios Gherkin de Fase 0 para escribir el archivo <code>*.spec.ts</code> (comprobando que inicialmente falla: <em>Red</em>). Después entra <code>Component_Implementer</code> con los archivos <code>*.spec.ts</code> bloqueados en modo <strong>solo lectura</strong> dentro de <code>fs_write_file</code>, obligado a hacer pasar el test real (<em>Green</em>).
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR B1</span>
+              <span class="cost-badge cost-low">Esfuerzo: 2 días</span>
+            </div>
+          </div>
+
+          <div class="action-card" id="accion-h2-2">
+            <div class="action-card-header">
+              <span class="action-id" style="color: #c084fc;">ACCIÓN H2.2</span>
+              <span class="badge badge-purple">Consistencia + Memoria</span>
+            </div>
+            <div class="action-title">Biblioteca de `SKILL.md` Curados + "Reglas de Inmunidad" en `engram-ts`</div>
+            <p style="font-size: 0.87rem; color: var(--text-muted);">
+              Sustituir los strings de una línea en <code>skills-tree.ts</code> por cargadores de documentos <code>SKILL.md</code> con SOPs, <em>Golden Blueprints</em> y listas <code>NEVER DO</code>. Además, conectar la Fase 5 (<code>RootCause_Analyzer</code>) con <code>engram-ts</code>: cada vez que se diagnostique un fallo de integración, se persiste una <strong>Regla de Inmunidad</strong> que se inyecta automáticamente cuando esa Skill vuelva a activarse.
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR C1</span>
+              <span class="cost-badge cost-medium">Esfuerzo: 3-4 días</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HORIZONTE 3 -->
+      <div class="horizon-block h3">
+        <div class="horizon-header">
+          <div>
+            <span class="horizon-tag" style="background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35);">Horizonte 3 · Escala y Rendimiento (Semanas 5-6)</span>
+            <h4 class="horizon-title">Escala Full-Stack: Enrutamiento Bimodal, Compresión Semántica y DAG Paralelo</h4>
+            <p class="horizon-goal">Objetivo: Multiplicar la velocidad de ejecución y mantener la precisión arquitectónica en proyectos de decenas de archivos.</p>
+          </div>
+          <span class="cost-badge cost-low">Alta Escalabilidad y Velocidad</span>
+        </div>
+
+        <div class="grid-3">
+          <div class="action-card" id="accion-h3-1">
+            <div class="action-card-header">
+              <span class="action-id" style="color: #34d399;">ACCIÓN H3.1</span>
+              <span class="badge badge-success">Híbrido Cloud/Local</span>
+            </div>
+            <div class="action-title">Enrutamiento Cognitivo Bimodal por Fase</div>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">
+              Enrutar las fases de alta densidad arquitectónica (Fase 0 BDD, Fase 1 DAG, Fase 2 Contratos/Gatekeeper y Fase 5 RCA — solo el ~15% de las llamadas) a un modelo Frontier API, y delegar el bucle intensivo de Fase 3 al SLM Local o modelo Flash rápido.
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR D3</span>
+              <span class="cost-badge cost-low">Esfuerzo: 1 día</span>
+            </div>
+          </div>
+
+          <div class="action-card" id="accion-h3-2">
+            <div class="action-card-header">
+              <span class="action-id" style="color: #34d399;">ACCIÓN H3.2</span>
+              <span class="badge badge-success">Context Engineering</span>
+            </div>
+            <div class="action-title">Poda Activa y Estado Compilado por Turno</div>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">
+              Implementar un reductor en LangGraph que pode los logs crudos de herramientas cada 4 turnos y mantenga siempre en la cabecera de atención un bloque compacto inmutable: <code>ActiveContract + LastCompilerError + ModifiedFiles</code>.
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR D2</span>
+              <span class="cost-badge cost-medium">Esfuerzo: 2-3 días</span>
+            </div>
+          </div>
+
+          <div class="action-card" id="accion-h3-3">
+            <div class="action-card-header">
+              <span class="action-id" style="color: #34d399;">ACCIÓN H3.3</span>
+              <span class="badge badge-success">Concurrencia Real</span>
+            </div>
+            <div class="action-title">Ejecución Paralela del DAG con `git worktree`</div>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">
+              Actualizar el <em>Component Scheduler</em> para que despache en paralelo todos los nodos del DAG que estén simultáneamente en <code>status: 'READY'</code>, aislando cada subagente en un <code>git worktree</code> temporal gestionado por <code>MCP_CLI</code>.
+            </p>
+            <div class="action-meta">
+              <span class="pain-id">Erradica DOLOR D3</span>
+              <span class="cost-badge cost-medium">Esfuerzo: 3 días</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MATRIZ CONSOLIDADA -->
+      <div id="matriz-consolidada" class="subsection-box">
+        <h4 class="subsection-title">
+          <span>5.1. Matriz Consolidada del Roadmap: Trazabilidad Dolor → Acción → Coste → ROI</span>
+        </h4>
+        <div class="initiatives-table-wrapper">
+          <table class="initiatives-table">
+            <thead>
+              <tr>
+                <th style="width: 12%;">Horizonte</th>
+                <th style="width: 26%;">Acción del Roadmap</th>
+                <th style="width: 18%;">Dolores Resueltos</th>
+                <th style="width: 22%;">Coste en Tokens / Latencia</th>
+                <th style="width: 22%;">Complejidad e Impacto</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge-info">Horizonte 1</span></td>
+                <td>
+                  <span class="initiative-title">H1.1. Sidecar `@localloop/mcp-cli`</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">Toolchain nativo + Git snapshots</span>
+                </td>
+                <td><span class="pain-id">A1</span> <span class="pain-id">A2</span></td>
+                <td>
+                  <span class="cost-badge cost-low">0 Tokens LLM extra</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Ahorra turnos fallidos gracias al oráculo determinista <code>tsc</code>.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-medium">Media (3-4 días)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Jubila la necesidad de virtualizar TS/Git en el navegador.</div>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-info">Horizonte 1</span></td>
+                <td>
+                  <span class="initiative-title">H1.2. Detector Anti-Groundhog Day</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">Heurística Levenshtein + Shift temp</span>
+                </td>
+                <td><span class="pain-id">D1</span></td>
+                <td>
+                  <span class="cost-badge cost-low">Ahorro neto (-30% tokens)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Corta de raíz las repeticiones ciegas antes de agotar el budget.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-low">Baja (1 día)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Middleware ligero en <code>llmRouterNode</code>.</div>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-purple">Horizonte 2</span></td>
+                <td>
+                  <span class="initiative-title">H2.1. Pipeline TDD Adversarial</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">Tester y Coder separados + Tests Read-Only</span>
+                </td>
+                <td><span class="pain-id">B1</span></td>
+                <td>
+                  <span class="cost-badge cost-medium">+35% tokens en Fase 3</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Compensado por la caída drástica de rechazos en Fase 4/5.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-low">Baja (2 días)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Separar turnos en <code>procesarNodoScope</code> y bloquear escritura en <code>*.spec.ts</code>.</div>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-purple">Horizonte 2</span></td>
+                <td>
+                  <span class="initiative-title">H2.2. Biblioteca `SKILL.md` + Inmunidad</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">SOPs, Golden Blueprints y memoria RCA</span>
+                </td>
+                <td><span class="pain-id">C1</span></td>
+                <td>
+                  <span class="cost-badge cost-low">+800 tokens por prompt</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Inyección selectiva solo de la Skill activa en ese nodo.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-medium">Media (3-4 días)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Estandariza el estilo de código de todos los subagentes.</div>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success">Horizonte 3</span></td>
+                <td>
+                  <span class="initiative-title">H3.1. Enrutamiento Cognitivo Bimodal</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">Frontier en diseño / SLM en codificación</span>
+                </td>
+                <td><span class="pain-id">D3</span></td>
+                <td>
+                  <span class="cost-badge cost-low">~$0.03 por proyecto</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">El 85% de los tokens siguen corriendo gratis en local.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-low">Baja (1 día)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Selector de proveedor por nodo en <code>llm-config.ts</code>.</div>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success">Horizonte 3</span></td>
+                <td>
+                  <span class="initiative-title">H3.2. Compresión Semántica de Estado</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">Poda de historial + Contrato fijo</span>
+                </td>
+                <td><span class="pain-id">D2</span></td>
+                <td>
+                  <span class="cost-badge cost-low">-40% tokens acumulados</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Mantiene la ventana limpia y rápida en sesiones largas.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-medium">Media (2-3 días)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Reductor de estado personalizado en LangGraph.</div>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-success">Horizonte 3</span></td>
+                <td>
+                  <span class="initiative-title">H3.3. DAG Paralelo con `git worktree`</span>
+                  <span style="font-size: 0.75rem; color: var(--text-dim);">Despacho concurrente de nodos READY</span>
+                </td>
+                <td><span class="pain-id">D3</span></td>
+                <td>
+                  <span class="cost-badge cost-low">0 Tokens extra (-50% tiempo)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Reduce a la mitad el tiempo de reloj en proyectos modulares.</div>
+                </td>
+                <td>
+                  <span class="cost-badge cost-medium">Media (3 días)</span>
+                  <div style="font-size: 0.74rem; color: var(--text-dim); margin-top: 4px;">Orquestación de ramas paralelas desde el Scheduler.</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer style="margin-top: 80px; padding: 24px 0; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; color: var(--text-dim); font-size: 0.82rem; flex-wrap: wrap; gap: 12px;">
+      <div>
+        LocalLoop Autonomous Agent Harness — Documento Estratégico de Arquitectura y Roadmap v2.0
+      </div>
+      <div>
+        Espacio de trabajo local | Antigravity IDE
+      </div>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  const sections = document.querySelectorAll('section, .subsection-box[id]');
+  const navLinks = document.querySelectorAll('.nav-item a');
+
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(section => {
+      const sectionTop = section.offsetTop;
+      if (window.scrollY >= (sectionTop - 140)) {
+        current = section.getAttribute('id');
+      }
+    });
+
+    if (current) {
+      navLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === `#${current}`) {
+          link.classList.add('active');
+        }
+      });
+    }
+  }, { passive: true });
+</script>
+
+</body>
+</html>

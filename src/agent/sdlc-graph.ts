@@ -4440,7 +4440,24 @@ if (typeof document !== 'undefined') {
   const startFiles: Array<{ path: string; content: string; reason: string }> = [
     { path: 'start.cmd', content: startCmdContent, reason: 'Script de arranque para Windows (Pruebas E2E)' },
     { path: 'start.sh', content: startShContent, reason: 'Script de arranque para Linux/macOS (Pruebas E2E)' },
-    { path: 'e2e-report.html', content: indexHtmlContent, reason: 'Informe visual de Verificación E2E' },
+    { path: '.localloop/e2e-report.html', content: indexHtmlContent, reason: 'Informe visual de Verificación E2E en directorio .localloop' },
+    { path: '.localloop/index.html', content: indexHtmlContent, reason: 'Panel HTML de resultados y evidencias del proceso LocalLoop' },
+    {
+      path: '.localloop/evidences/e2e-summary.json',
+      content: JSON.stringify(
+        {
+          framework: currentFw,
+          useCases: state.useCases,
+          components: state.componentsGraph,
+          unitEvidences: state.unitEvidences,
+          e2eEvidences: state.e2eEvidences,
+          technicalDebt: state.technicalDebtList,
+        },
+        null,
+        2,
+      ),
+      reason: 'Resumen estructurado de resultados y evidencias del proceso LocalLoop',
+    },
   ]
 
   if (!hasExistingMain) {
@@ -4449,10 +4466,6 @@ if (typeof document !== 'undefined') {
       content: generatedMainTs,
       reason: 'Punto de entrada principal TypeScript que integra y monta los componentes construidos',
     })
-  }
-
-  if (!isExistingApp) {
-    startFiles.push({ path: 'index.html', content: indexHtmlContent, reason: 'Punto de entrada HTML actualizado para verificación E2E' })
   }
 
   for (const sf of startFiles) {
@@ -4510,8 +4523,8 @@ if (typeof document !== 'undefined') {
       `Para tu verificación local interactiva se han generado los scripts de arranque:\n` +
       `* 🪟 **Windows:** \`start.cmd\`\n` +
       `* 🐧 **Linux / macOS:** \`start.sh\`\n\n` +
-      `**Ficheros del framework actualizados para la prueba:**\n` +
-      `* Se ha actualizado \`index.html\` integrando y enlazando los componentes construidos.\n\n` +
+      `**Resultados y evidencias del proceso LocalLoop (\`.localloop/\`):**\n` +
+      `* Se han generado \`.localloop/e2e-report.html\`, \`.localloop/index.html\` y \`.localloop/evidences/\` con todas las evidencias de verificación sin interferir con los archivos del proyecto resultado.\n\n` +
       `**Instrucciones para la prueba del usuario:**\n` +
       `1. Abre tu terminal en la raíz de tu carpeta de workspace.\n` +
       `2. Ejecuta según tu sistema operativo:\n` +
@@ -4537,7 +4550,7 @@ Componentes construidos: ${Object.keys(state.componentsGraph).join(', ')}
 Suites unitarias: ${Object.keys(state.unitEvidences).length}
 Deuda técnica: ${debts.map((d) => `${d.id} (${d.riskLevel})`).join(', ') || '0 ítems'}
 Scripts de arranque generados en la raíz: start.cmd y start.sh
-Ficheros actualizados: index.html
+Resultados y evidencias LocalLoop generados en: .localloop/e2e-report.html y .localloop/index.html
 Genera la solicitud formal de Aprobación de Negocio en Markdown detallando cómo el usuario debe usar start.cmd o start.sh para probar la aplicación.`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackAudit,
