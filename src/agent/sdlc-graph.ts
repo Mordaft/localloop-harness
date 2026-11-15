@@ -1,6 +1,6 @@
 import { END, START, StateGraph } from '@langchain/langgraph'
 import { trace } from '../diagnostics'
-import { readWorkspaceFile, writeWorkspaceFileDirect } from '../fs/workspace-fs'
+import { getActiveWorkspaceName, readWorkspaceFile, writeWorkspaceFileDirect } from '../fs/workspace-fs'
 import { executeFileSystemTool, getFileSystemToolSpecs } from '../fs/fs-tools'
 import {
   executeBrowserSandbox,
@@ -31,6 +31,11 @@ import {
 } from '../llm/llm-client'
 import { getLlmConfig } from '../llm/llm-config'
 import { getEngramToolSpecs, getSessionCallbacks } from './agent-graph'
+import {
+  callMcpTool,
+  getMcpToolsForRole,
+  ROLE_CAPABILITY_MATRIX,
+} from '../mcp/mcp-client'
 import { FsWriteMode, SessionStatus } from '../enums'
 import { RuntimeSkillLoader } from './skills/runtime-loader'
 import { generateMermaidDag } from '../mermaid'
@@ -87,10 +92,43 @@ export interface SubagentComponentDeliverable {
  * Soporta un bucle iterativo acotado (2-3 iteraciones) cuando el modelo invoca herramientas de consulta
  * como search_web_guidance o read_web_guidance_doc antes de emitir el diseño o código final.
  */
+const PHASE_DEFAULT_ROLE_MAP: Partial<Record<SdlcPhase, string>> = {
+  '0_DISCOVERY_RIGOR': 'ProjectRigor_Interviewer',
+  '1_STRATEGY_AND_PLAN': 'GovernanceProject_Planner',
+  '2_TECHNICAL_DESIGN_GATE': 'ComponentTechnical_Designer',
+  '3_COMPONENT_CONSTRUCTION': 'Component_Implementer',
+  '4_E2E_BUSINESS_AUDIT': 'E2EAutomation_Runner',
+  '5_STRATEGIC_RESILIENCE': 'RootCause_Analyzer',
+  '6_DOCUMENTATION_PROJECTION': 'ProjectProgress_Projector',
+}
+
+function inferRoleIdForPhase(phaseName: string, sdlcPhase?: SdlcPhase, explicitRoleId?: string): string {
+  if (explicitRoleId) return explicitRoleId
+  for (const profile of ROLE_CAPABILITY_MATRIX) {
+    if (phaseName.includes(profile.roleId)) {
+      return profile.roleId
+    }
+  }
+  const skillBracket = phaseName.match(/\[Skill:\s*([^\]]+)\]/i)
+  if (skillBracket?.[1]) {
+    const matched = ROLE_CAPABILITY_MATRIX.find(
+      (r) =>
+        r.roleId.toLowerCase() === skillBracket[1].trim().toLowerCase() ||
+        r.description.toLowerCase().includes(skillBracket[1].trim().toLowerCase()),
+    )
+    if (matched) return matched.roleId
+  }
+  if (sdlcPhase && PHASE_DEFAULT_ROLE_MAP[sdlcPhase]) {
+    return PHASE_DEFAULT_ROLE_MAP[sdlcPhase]!
+  }
+  return 'skill_general'
+}
+
 export async function streamLlmPhase(params: {
   sessionId: number | undefined
   phaseName: string
   sdlcPhase?: SdlcPhase
+  roleId?: string
   systemPrompt: string
   userPrompt: string
   tools?: OpenAiToolSpec[]
@@ -113,15 +151,50 @@ export async function streamLlmPhase(params: {
     params.requireLiveLlm ?? callbacks?.requireLiveLlm ?? globalRequireLiveLlm,
   )
 
+  const effectiveRoleId = inferRoleIdForPhase(phaseName, sdlcPhase, params.roleId)
+  const mcpAuthContext = {
+    agentId: sessionId ? `localloop-session-${sessionId}` : 'localloop-sdlc-agent',
+    agentName: `LocalLoop (${effectiveRoleId})`,
+    workspace: getActiveWorkspaceName() || 'localloop-workspace',
+    onAuthStatus: (msg: string) => {
+      if (callbacks && sessionId) {
+        callbacks.onThinking?.({
+          sessionId,
+          thought: msg,
+          phase: 'thinking',
+          sdlcPhase,
+        })
+      }
+    },
+  }
+  const mcpReport = await RuntimeSkillLoader.syncMcpCapabilities({
+    authContext: mcpAuthContext,
+  })
+  const roleMcp = getMcpToolsForRole(effectiveRoleId)
+
   const defaultTools: OpenAiToolSpec[] = [
     ...getFileSystemToolSpecs(),
     getSandboxToolSpec(),
     ...getEngramToolSpecs(),
     ...getWebGuidanceToolSpecs(),
   ]
-  const publishedTools = params.tools ?? defaultTools
+  const baseTools = params.tools ? [...params.tools] : [...defaultTools]
+  const publishedToolNames = new Set(baseTools.map((t) => t.function.name))
+  for (const mcpSpec of roleMcp.specs) {
+    if (!publishedToolNames.has(mcpSpec.function.name)) {
+      baseTools.push(mcpSpec)
+      publishedToolNames.add(mcpSpec.function.name)
+    }
+  }
+  const publishedTools = baseTools
 
   let enrichedSystemPrompt = systemPrompt
+  if (
+    roleMcp.promptSupplement &&
+    !enrichedSystemPrompt.includes('[CAPACIDADES MCP ASIGNADAS DINÁMICAMENTE A TU ROL]')
+  ) {
+    enrichedSystemPrompt += roleMcp.promptSupplement
+  }
   if (sessionId) {
     try {
       const memoryContext = await retrieveEngramMemoryContext({
@@ -240,7 +313,11 @@ export async function streamLlmPhase(params: {
       let hasIterativeQueryTool = false
 
       for (const tc of response.toolCalls) {
-        if (ITERATIVE_QUERY_TOOLS.has(tc.name)) {
+        if (
+          ITERATIVE_QUERY_TOOLS.has(tc.name) ||
+          tc.name.startsWith('mcp_') ||
+          mcpReport.registry.has(tc.name)
+        ) {
           hasIterativeQueryTool = true
         }
         trace(
@@ -404,6 +481,9 @@ export async function streamLlmPhase(params: {
                 atomicDeliverable: r.entregable_atomico,
               })),
             })
+          } else if (mcpReport.registry.has(tc.name)) {
+            const mcpTool = mcpReport.registry.get(tc.name)!
+            toolResultOutput = await callMcpTool(mcpTool, tc.args, mcpAuthContext)
           } else {
             toolResultOutput = JSON.stringify({ status: 'ok', tool: tc.name, args: tc.args })
           }
@@ -2024,6 +2104,29 @@ describe('${comp.name} (${comp.id})', () => {
  */
 async function node_phase0_assess(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
   trace('[SDLCGraph] Evaluando rigor del input inicial...')
+  const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
+  const extraUrls =
+    state.mcpServerConfig?.url && state.mcpServerConfig.url.trim().length > 0
+      ? [state.mcpServerConfig.url.trim()]
+      : undefined
+  await RuntimeSkillLoader.syncMcpCapabilities({
+    extraServerUrls: extraUrls,
+    authContext: {
+      agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-sdlc-agent',
+      agentName: 'LocalLoop (EnterpriseArch_MCP_Connector)',
+      workspace: getActiveWorkspaceName() || 'localloop-workspace',
+      onAuthStatus: (msg) => {
+        if (callbacks && state.sessionId) {
+          callbacks.onThinking?.({
+            sessionId: state.sessionId,
+            thought: msg,
+            phase: 'thinking',
+            sdlcPhase: '0_DISCOVERY_RIGOR',
+          })
+        }
+      },
+    },
+  })
   const hasUseCases = state.useCases && state.useCases.length > 0
   const hasStandard = Boolean(state.marketArchStandard && state.marketArchStandard.trim().length > 0)
 
@@ -2262,20 +2365,54 @@ async function node_phase0_process_discovery(state: SDLCStateType): Promise<Part
     ],
   })
 
-  // Ingesta de Arquitectura (vía MCP si el usuario lo configuró)
-  if (state.mcpServerConfig && state.mcpServerConfig.connected && state.mcpServerConfig.url) {
+  // Ingesta de Arquitectura y Análisis Dinámico de Capacidades MCP
+  const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
+  const extraMcpUrls =
+    state.mcpServerConfig?.url && state.mcpServerConfig.url.trim().length > 0
+      ? [state.mcpServerConfig.url.trim()]
+      : undefined
+  const mcpCapabilityReport = await RuntimeSkillLoader.syncMcpCapabilities({
+    extraServerUrls: extraMcpUrls,
+    forceRefresh: Boolean(extraMcpUrls?.length),
+    authContext: {
+      agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-sdlc-agent',
+      agentName: 'LocalLoop (EnterpriseArch_MCP_Connector)',
+      workspace: getActiveWorkspaceName() || 'localloop-workspace',
+      onAuthStatus: (msg) => {
+        if (callbacks && state.sessionId) {
+          callbacks.onThinking?.({
+            sessionId: state.sessionId,
+            thought: msg,
+            phase: 'thinking',
+            sdlcPhase: '0_DISCOVERY_RIGOR',
+          })
+        }
+      },
+    },
+  })
+
+  if (
+    (state.mcpServerConfig && state.mcpServerConfig.connected && state.mcpServerConfig.url) ||
+    mcpCapabilityReport.tools.length > 0
+  ) {
     await engram.save({
-      title: 'Landscape de Arquitectura Empresarial (Importado vía MCP)',
+      title: 'Landscape de Arquitectura Empresarial y Capacidades MCP',
       type: 'enterprise_landscape',
       project: 'localloop',
-      tags: ['enterprise_landscape', 'mcp_services', 'c4_model'],
+      tags: ['enterprise_landscape', 'mcp_services', 'c4_model', 'mcp_capabilities'],
       records: [
         {
           title: 'mcp_landscape_data',
           content: JSON.stringify({
-            source: state.mcpServerConfig.url,
+            source: state.mcpServerConfig?.url || mcpCapabilityReport.serversQueried.join(', '),
             importedAt: new Date().toISOString(),
             standard: state.marketArchStandard,
+            discoveredTools: mcpCapabilityReport.tools.map((t) => ({
+              qualifiedName: t.tool.qualifiedName,
+              serverName: t.tool.serverName,
+              categories: t.categories,
+              assignedRoles: t.assignedRoles,
+            })),
           }),
         },
       ],

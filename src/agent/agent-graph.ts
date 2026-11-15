@@ -12,7 +12,12 @@ import {
   type ParsedToolCall,
 } from '../llm/llm-client'
 import { getLlmConfig } from '../llm/llm-config'
-import { callMcpTool, getActiveMcpToolSpecs } from '../mcp/mcp-client'
+import {
+  analyzeAndAssignMcpCapabilities,
+  callMcpTool,
+  getActiveMcpToolSpecs,
+  getMcpToolsForRole,
+} from '../mcp/mcp-client'
 import { appendSessionMessage, updateSessionMetrics } from '../memory/app-db'
 import {
   AgentScopeStorage,
@@ -265,14 +270,15 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
 
   const config = getLlmConfig()
   const skillDef = getSkillById(state.skill)
-  const { specs: mcpSpecs } = await getActiveMcpToolSpecs()
+  await analyzeAndAssignMcpCapabilities()
+  const roleMcp = getMcpToolsForRole(skillDef.id)
   const allTools: OpenAiToolSpec[] = [
     ...getFileSystemToolSpecs(),
     ...getEngramToolSpecs(),
     ...getWebGuidanceToolSpecs(),
     getSandboxToolSpec(),
     getBrowserSandboxToolSpec(),
-    ...mcpSpecs,
+    ...roleMcp.specs,
   ]
 
   const hasTaskPlan =
@@ -297,17 +303,21 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
   const strictPlanOnlyNames = new Set(['plan_and_delegate_tasks', 'delegate_subagent_scope'])
 
   const lastToolMessages = state.messages.filter((m) => m.role === 'tool')
-  const lastToolWasWebGuidance =
+  const lastToolName = lastToolMessages[lastToolMessages.length - 1]?.name ?? ''
+  const lastToolWasDiscovery =
     lastToolMessages.length > 0 &&
-    (lastToolMessages[lastToolMessages.length - 1]?.name === 'search_web_guidance' ||
-      lastToolMessages[lastToolMessages.length - 1]?.name === 'read_web_guidance_doc')
+    (lastToolName === 'search_web_guidance' ||
+      lastToolName === 'read_web_guidance_doc' ||
+      lastToolName.startsWith('mcp_'))
   const allowPrePlanDiscovery =
-    state.turnsUsed === 0 || (lastToolWasWebGuidance && state.turnsUsed < 3)
+    state.turnsUsed === 0 || (lastToolWasDiscovery && state.turnsUsed < 3)
 
   const activeTools = hasTaskPlan
     ? allTools.filter((t) => !strictPlanOnlyNames.has(t.function.name))
     : allowPrePlanDiscovery
-      ? allTools.filter((t) => prePlanDiscoveryNames.has(t.function.name))
+      ? allTools.filter(
+          (t) => prePlanDiscoveryNames.has(t.function.name) || t.function.name.startsWith('mcp_'),
+        )
       : allTools.filter((t) => strictPlanOnlyNames.has(t.function.name))
 
   const activeToolChoice: 'auto' | 'required' = hasTaskPlan ? 'auto' : 'required'
@@ -330,7 +340,7 @@ async function llmRouterNode(state: AgentGraphState): Promise<Partial<AgentGraph
 
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `${config.systemPrompt}\n\n${skillDef.systemSupplement}${mandatoryDecompositionReminder}${engramMemoryContext}\n\n[PRESUPUESTO ACTUAL: Turno ${state.turnsUsed + 1}/${state.maxTurns} | Tokens ${state.tokensUsed}/${state.maxTokenBudget}]`,
+    content: `${config.systemPrompt}\n\n${skillDef.systemSupplement}${roleMcp.promptSupplement}${mandatoryDecompositionReminder}${engramMemoryContext}\n\n[PRESUPUESTO ACTUAL: Turno ${state.turnsUsed + 1}/${state.maxTurns} | Tokens ${state.tokensUsed}/${state.maxTokenBudget}]`,
   }
 
   const conversationMessages: ChatMessage[] = [

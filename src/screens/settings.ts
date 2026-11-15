@@ -7,8 +7,14 @@ import {
 } from '../config/brand-config'
 import { heroIcon } from '../config/heroicons'
 import { FsWriteMode, type FsWriteMode as FsWriteModeType } from '../enums'
+import { getActiveWorkspaceName } from '../fs/workspace-fs'
 import { formatText, t } from '../i18n'
 import { getLlmConfig, saveLlmConfig, testLlmConnection } from '../llm/llm-config'
+import {
+  analyzeAndAssignMcpCapabilities,
+  authenticateMcpServer,
+  clearMcpCapabilityCache,
+} from '../mcp/mcp-client'
 import {
   addMcpServer,
   deleteMcpServer,
@@ -127,7 +133,7 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
 
                 <div>
                   <label class="mb-1.5 block text-xs font-medium text-text-secondary" for="maxTokenBudget">${i18n.settings.maxTokenBudgetLabel}</label>
-                  <input id="maxTokenBudget" name="maxTokenBudget" type="number" min="2048" max="512000" step="1024" value="${config.maxTokenBudget}" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2.5 text-sm text-text-primary outline-none focus:border-primary" required />
+                  <input id="maxTokenBudget" name="maxTokenBudget" type="number" min="2048" max="512000" step="512" value="${config.maxTokenBudget}" class="w-full rounded-lg border border-border-default bg-bg-app px-3.5 py-2.5 text-sm text-text-primary outline-none focus:border-primary" required />
                   <p class="mt-1 text-[11px] text-text-muted">${i18n.settings.maxTokenBudgetHint}</p>
                 </div>
 
@@ -201,27 +207,50 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
               ${
                 mcpServers.length > 0
                   ? mcpServers
-                      .map(
-                        (srv) => `
-                        <div class="flex items-center justify-between rounded-xl border border-border-default bg-bg-app px-3.5 py-2.5 text-xs">
-                          <div>
-                            <span class="font-semibold text-text-primary">${srv.name}</span>
-                            <span class="ml-2 font-mono text-[11px] text-text-muted">${srv.url}</span>
+                      .map((srv) => {
+                        const statusBadge =
+                          srv.authStatus === 'authorized' || srv.authToken
+                            ? `<span class="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">Autorizado (/auth/connect)</span>`
+                            : srv.authStatus === 'pending_approval'
+                              ? `<span class="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400">Esperando autorización...</span>`
+                              : srv.authStatus === 'failed'
+                                ? `<span class="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">Error de conexión</span>`
+                                : `<span class="ml-2 rounded-full bg-slate-500/15 px-2 py-0.5 text-[10px] font-semibold text-text-muted">Sin autenticar</span>`
+
+                        return `
+                        <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-default bg-bg-app px-3.5 py-2.5 text-xs">
+                          <div class="space-y-0.5">
+                            <div class="flex flex-wrap items-center gap-1">
+                              <span class="font-semibold text-text-primary">${srv.name}</span>
+                              <span class="ml-1 font-mono text-[11px] text-text-muted">${srv.url}</span>
+                              ${statusBadge}
+                            </div>
+                            <p class="font-mono text-[10px] text-text-muted">
+                              agent_id: ${srv.agentId ?? 'localloop-agent'} | workspace: ${srv.workspace || getActiveWorkspaceName() || 'localloop-workspace'}
+                            </p>
                           </div>
-                          <button data-delete-mcp="${srv.id}" class="rounded-lg p-1 text-text-muted hover:text-red-500">
-                            ${heroIcon('trash', 'h-4 w-4')}
-                          </button>
+                          <div class="flex items-center gap-2">
+                            <button type="button" data-auth-mcp="${srv.id}" class="rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/20">
+                              Conectar (/auth/connect)
+                            </button>
+                            <button type="button" data-delete-mcp="${srv.id}" class="rounded-lg p-1 text-text-muted hover:text-red-500">
+                              ${heroIcon('trash', 'h-4 w-4')}
+                            </button>
+                          </div>
                         </div>
-                      `,
-                      )
+                      `
+                      })
                       .join('')
                   : `<p class="text-xs text-text-muted">No hay servidores MCP externos registrados.</p>`
               }
             </div>
 
-            <form id="mcp-add-form" class="grid grid-cols-1 gap-3 md:grid-cols-5">
+            <p id="mcp-auth-feedback" class="hidden rounded-lg border border-border-subtle bg-bg-app px-3 py-2 text-xs text-text-secondary"></p>
+
+            <form id="mcp-add-form" class="grid grid-cols-1 gap-3 md:grid-cols-7">
               <input id="mcp-name" placeholder="${i18n.settings.mcpNamePlaceholder}" required class="md:col-span-2 rounded-lg border border-border-default bg-bg-app px-3 py-2 text-xs text-text-primary outline-none focus:border-primary" />
-              <input id="mcp-url" placeholder="${i18n.settings.mcpUrlPlaceholder}" required class="md:col-span-2 rounded-lg border border-border-default bg-bg-app px-3 py-2 text-xs text-text-primary outline-none focus:border-primary" />
+              <input id="mcp-url" placeholder="http://localhost:7432/sse" required class="md:col-span-2 rounded-lg border border-border-default bg-bg-app px-3 py-2 text-xs text-text-primary outline-none focus:border-primary" />
+              <input id="mcp-workspace" placeholder="Workspace (ej. c:/Users/alvar/git/localloop)" value="${getActiveWorkspaceName() || 'localloop-workspace'}" class="md:col-span-2 rounded-lg border border-border-default bg-bg-app px-3 py-2 text-xs text-text-primary outline-none focus:border-primary" />
               <button type="submit" class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-slate-950">
                 ${heroIcon('plus', 'h-3.5 w-3.5')}
                 <span>${i18n.settings.mcpAddBtn}</span>
@@ -457,16 +486,62 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
     }
   })
 
+  const mcpFeedbackEl = root.querySelector<HTMLParagraphElement>('#mcp-auth-feedback')
+  const showMcpFeedback = (text: string) => {
+    if (!mcpFeedbackEl) return
+    mcpFeedbackEl.textContent = text
+    mcpFeedbackEl.classList.remove('hidden')
+  }
+
   root.querySelector<HTMLFormElement>('#mcp-add-form')?.addEventListener('submit', async (ev) => {
     ev.preventDefault()
     const nameInput = root.querySelector<HTMLInputElement>('#mcp-name')
     const urlInput = root.querySelector<HTMLInputElement>('#mcp-url')
+    const workspaceInput = root.querySelector<HTMLInputElement>('#mcp-workspace')
     if (!nameInput?.value.trim() || !urlInput?.value.trim()) return
-    await addMcpServer({
+    const ws = workspaceInput?.value.trim() || getActiveWorkspaceName() || 'localloop-workspace'
+    const id = await addMcpServer({
       name: nameInput.value.trim(),
       url: urlInput.value.trim(),
+      workspace: ws,
     })
+    clearMcpCapabilityCache()
+    const updatedList = await listMcpServers()
+    const created = updatedList.find((s) => s.id === id)
+    if (created) {
+      showMcpFeedback(`Solicitando autorización en ${created.url} (/auth/connect)...`)
+      await authenticateMcpServer(created, {
+        workspace: ws,
+        onAuthStatus: (msg) => showMcpFeedback(msg),
+      })
+      await analyzeAndAssignMcpCapabilities({ forceRefresh: true })
+    }
     rerender()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-auth-mcp]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.authMcp)
+      if (!id) return
+      const target = mcpServers.find((s) => s.id === id)
+      if (!target) return
+      btn.disabled = true
+      showMcpFeedback(`Iniciando /auth/connect con ${target.name} (${target.url})...`)
+      try {
+        await authenticateMcpServer(target, {
+          forceReconnect: true,
+          workspace: target.workspace || getActiveWorkspaceName() || 'localloop-workspace',
+          onAuthStatus: (msg) => showMcpFeedback(msg),
+        })
+        const report = await analyzeAndAssignMcpCapabilities({ forceRefresh: true })
+        showMcpFeedback(
+          `✅ Conectado a ${target.name}: ${report.tools.length} herramientas MCP descubiertas y asignadas dinámicamente a los roles SDLC.`,
+        )
+        setTimeout(() => rerender(), 1200)
+      } finally {
+        btn.disabled = false
+      }
+    })
   })
 
   root.querySelectorAll<HTMLButtonElement>('[data-delete-mcp]').forEach((btn) => {
@@ -474,6 +549,7 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
       const id = Number(btn.dataset.deleteMcp)
       if (!id) return
       await deleteMcpServer(id)
+      clearMcpCapabilityCache(true)
       rerender()
     })
   })

@@ -18,6 +18,11 @@ import {
   getWebGuidanceToolSpecs,
   hasLoadedWebGuidanceDocs,
 } from '../memory/web-guidance-manager'
+import {
+  callMcpTool,
+  getCachedMcpCapabilityReport,
+  getMcpToolsForRole,
+} from '../mcp/mcp-client'
 import { executeBrowserSandbox, stripMarkdownCodeFences } from '../sandbox/browser-sandbox'
 import { executeSandboxedJs } from '../sandbox/code-runner'
 
@@ -653,6 +658,7 @@ export function buildStep1ScopeTools(
   hasMemoryHeaders: boolean,
   forceDecompose = false,
   includeWebGuidance = false,
+  extraMcpTools: OpenAiToolSpec[] = [],
 ): OpenAiToolSpec[] {
   const tools: OpenAiToolSpec[] = []
 
@@ -789,6 +795,16 @@ export function buildStep1ScopeTools(
 
   if (includeWebGuidance && !forceDecompose) {
     tools.push(...getWebGuidanceToolSpecs())
+  }
+
+  if (extraMcpTools.length > 0 && !forceDecompose) {
+    const existingNames = new Set(tools.map((t) => t.function.name))
+    for (const mcpSpec of extraMcpTools) {
+      if (!existingNames.has(mcpSpec.function.name)) {
+        tools.push(mcpSpec)
+        existingNames.add(mcpSpec.function.name)
+      }
+    }
   }
 
   return tools
@@ -961,21 +977,35 @@ export async function procesarNodoScope(
     const forceDecompose =
       canDecompose && isRootScope && context.forceRootDecomposition !== false
     const relatedHeaders = await currentStorage.listRelatedScopeHeaders(task)
+    const mcpRoleAssignment = !forceDecompose
+      ? getMcpToolsForRole(task.skill_requerida || 'subagent_leaf')
+      : { specs: [], tools: [], promptSupplement: '' }
+    const mcpReport = getCachedMcpCapabilityReport()
     const useWebGuidance =
       !forceDecompose && (context.enableWebGuidance ?? hasLoadedWebGuidanceDocs())
-    const maxGuidanceIterations = useWebGuidance
-      ? Math.min(3, Math.max(2, context.maxGuidanceIterations ?? 3))
-      : 1
+    const hasPreDeliveryMcp = !forceDecompose && mcpRoleAssignment.specs.length > 0
+    const maxGuidanceIterations =
+      useWebGuidance || hasPreDeliveryMcp
+        ? Math.min(3, Math.max(2, context.maxGuidanceIterations ?? 3))
+        : 1
 
     const baseStep1Tools = buildStep1ScopeTools(
       canDecompose,
       relatedHeaders.length > 0,
       forceDecompose,
       false,
+      [],
     )
-    const guidanceStep1Tools = useWebGuidance
-      ? buildStep1ScopeTools(canDecompose, relatedHeaders.length > 0, forceDecompose, true)
-      : baseStep1Tools
+    const guidanceStep1Tools =
+      useWebGuidance || hasPreDeliveryMcp
+        ? buildStep1ScopeTools(
+            canDecompose,
+            relatedHeaders.length > 0,
+            forceDecompose,
+            useWebGuidance,
+            mcpRoleAssignment.specs,
+          )
+        : baseStep1Tools
 
     const memoryCatalogText =
       relatedHeaders.length > 0
@@ -990,7 +1020,7 @@ export async function procesarNodoScope(
 
     const decompositionDirective = forceDecompose
       ? `\nREGLA OBLIGATORIA DE DESCOMPOSICIÓN: Estás en el nivel raíz del trabajo. Es OBLIGATORIO crear primero una lista de tareas invocando "descomponer_en_subtareas". Una tarea es aquello para lo que podemos definir una prueba: cada elemento de "subtareas" DEBE incluir su "descripcion" y su "prueba_aceptacion", y cada elemento se pasará a un sub-agente.`
-      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada.${useWebGuidance ? ' Puedes consultar previamente "search_web_guidance" y "read_web_guidance_doc" (hasta 2 pasos) si la tarea involucra HTML, CSS, DOM o APIs web modernas.' : ''} Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada", 2) "prueba_automatizada" (código ejecutable JS o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
+      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada.${useWebGuidance ? ' Puedes consultar previamente "search_web_guidance" y "read_web_guidance_doc" (hasta 2 pasos) si la tarea involucra HTML, CSS, DOM o APIs web modernas.' : ''}${hasPreDeliveryMcp ? ' También puedes invocar previamente las herramientas MCP asignadas a tu rol para ejecutar comandos CLI, verificar pruebas o inspeccionar el entorno.' : ''} Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada", 2) "prueba_automatizada" (código ejecutable JS o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
 
     const sanitizedBaseInstructions = context.baseInstructions.includes('plan_and_delegate_tasks')
       ? 'Actúa con precisión técnica verificando empíricamente cada entrega mediante su prueba de aceptación.'
@@ -999,7 +1029,7 @@ export async function procesarNodoScope(
     const scopeMessages: ChatMessage[] = [
       {
         role: 'system',
-        content: `Eres un sub-agente especializado dentro de LocalLoop con memoria engram-ts.\n${sanitizedBaseInstructions}${decompositionDirective}`,
+        content: `Eres un sub-agente especializado dentro de LocalLoop con memoria engram-ts.\n${sanitizedBaseInstructions}${decompositionDirective}${mcpRoleAssignment.promptSupplement}`,
       },
       {
         role: 'user',
@@ -1040,10 +1070,13 @@ export async function procesarNodoScope(
         break
       }
 
-      const guidanceCalls = response.toolCalls.filter(
-        (tc) => tc.name === 'search_web_guidance' || tc.name === 'read_web_guidance_doc',
+      const preDeliveryCalls = response.toolCalls.filter(
+        (tc) =>
+          tc.name === 'search_web_guidance' ||
+          tc.name === 'read_web_guidance_doc' ||
+          Boolean(mcpReport?.registry.has(tc.name)),
       )
-      if (guidanceCalls.length === 0) {
+      if (preDeliveryCalls.length === 0) {
         decisionCall = response.toolCalls[0]
         break
       }
@@ -1051,7 +1084,7 @@ export async function procesarNodoScope(
       scopeMessages.push({
         role: 'assistant',
         content: response.contentBuffer || '',
-        tool_calls: guidanceCalls.map((tc) => ({
+        tool_calls: preDeliveryCalls.map((tc) => ({
           id: tc.id,
           type: 'function' as const,
           function: {
@@ -1061,13 +1094,25 @@ export async function procesarNodoScope(
         })),
       })
 
-      for (const tc of guidanceCalls) {
+      for (const tc of preDeliveryCalls) {
         if (context.onThinking) {
           void context.onThinking(
-            `[modern-web-guidance] Sub-agente ${currentStorage.scopeId} ejecutando ${tc.name} (iteración ${iter + 1}/${maxGuidanceIterations})...`,
+            `[sub-agente] ${currentStorage.scopeId} ejecutando ${tc.name} (iteración ${iter + 1}/${maxGuidanceIterations})...`,
           )
         }
-        const toolOutput = await executeWebGuidanceTool(tc.name, tc.args)
+        let toolOutput = ''
+        if (tc.name === 'search_web_guidance' || tc.name === 'read_web_guidance_doc') {
+          toolOutput = await executeWebGuidanceTool(tc.name, tc.args)
+        } else if (mcpReport?.registry.has(tc.name)) {
+          try {
+            const mcpTool = mcpReport.registry.get(tc.name)!
+            toolOutput = await callMcpTool(mcpTool, tc.args)
+          } catch (err) {
+            toolOutput = JSON.stringify({
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
         scopeMessages.push({
           role: 'tool',
           tool_call_id: tc.id,

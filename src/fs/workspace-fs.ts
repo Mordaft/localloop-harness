@@ -52,6 +52,10 @@ export function getWorkspaceDirectoryHandle(): FileSystemDirectoryHandle | undef
   return activeDirectoryHandle
 }
 
+export function getActiveWorkspaceName(): string {
+  return activeDirectoryHandle?.name || 'localloop-workspace'
+}
+
 export function setVirtualFile(path: string, content: string): void {
   const normalized = path.replace(/^\/+/, '').replace(/\\/g, '/')
   virtualFileSystem.set(normalized, content)

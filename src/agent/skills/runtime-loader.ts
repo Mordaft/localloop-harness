@@ -1,5 +1,13 @@
 import { getFileSystemToolSpecs } from '../../fs/fs-tools'
 import type { OpenAiToolSpec } from '../../llm/llm-client'
+import {
+  analyzeAndAssignMcpCapabilities,
+  getMcpToolsForRole,
+  type McpAuthConnectContext,
+  type McpCapabilityAssignmentReport,
+  type McpToolDefinition,
+} from '../../mcp/mcp-client'
+import type { StoredMcpServer } from '../../memory/app-db'
 import { getWebGuidanceToolSpecs } from '../../memory/web-guidance-manager'
 import { getBrowserSandboxToolSpec, getSandboxToolSpec } from '../../sandbox/code-runner'
 import { getEngramToolSpecs } from '../agent-graph'
@@ -412,20 +420,53 @@ export class RuntimeSkillLoader {
   private static masterTools = getAllMasterToolSpecs()
 
   /**
-   * Resuelve quirúrgicamente el contexto mínimo necesario para el agente en el paso actual del grafo.
+   * Sincroniza los servidores MCP activos, analiza sus capacidades y actualiza las asignaciones dinámicas por rol.
+   */
+  public static async syncMcpCapabilities(options?: {
+    servers?: StoredMcpServer[]
+    extraServerUrls?: string[]
+    preDiscoveredTools?: McpToolDefinition[]
+    forceRefresh?: boolean
+    authContext?: McpAuthConnectContext
+  }): Promise<McpCapabilityAssignmentReport> {
+    const report = await analyzeAndAssignMcpCapabilities(options)
+    for (const spec of report.allSpecs) {
+      this.masterTools.set(spec.function.name, spec)
+    }
+    return report
+  }
+
+  /**
+   * Resuelve quirúrgicamente el contexto mínimo necesario para el agente en el paso actual del grafo,
+   * inyectando además las herramientas MCP asignadas dinámicamente según las capacidades requeridas por el rol.
    */
   public static resolveContext(state: SDLCStateType): ResolvedAgentContext {
     const skill = getSkillDefinition(state.activeSkill)
     const engramFilter = skill.resolveEngramFilter(state)
-    const systemPrompt = skill.buildSystemPrompt(state)
+    let systemPrompt = skill.buildSystemPrompt(state)
 
-    // Filtrar únicamente las herramientas permitidas para esta skill
+    // Filtrar las herramientas nativas permitidas para esta skill
     const tools: OpenAiToolSpec[] = []
+    const seenNames = new Set<string>()
     for (const toolName of skill.allowedTools) {
       const spec = this.masterTools.get(toolName)
-      if (spec) {
+      if (spec && !seenNames.has(spec.function.name)) {
         tools.push(spec)
+        seenNames.add(spec.function.name)
       }
+    }
+
+    // Inyectar capacidades MCP asignadas dinámicamente al rol activo
+    const mcpAssignment = getMcpToolsForRole(skill.id)
+    for (const mcpSpec of mcpAssignment.specs) {
+      if (!seenNames.has(mcpSpec.function.name)) {
+        tools.push(mcpSpec)
+        seenNames.add(mcpSpec.function.name)
+      }
+    }
+
+    if (mcpAssignment.promptSupplement) {
+      systemPrompt = `${systemPrompt}${mcpAssignment.promptSupplement}`
     }
 
     return {
@@ -434,6 +475,15 @@ export class RuntimeSkillLoader {
       engramFilter,
       tools,
     }
+  }
+
+  /**
+   * Versión asíncrona que sincroniza capacidades MCP (incluyendo URL de Fase 0 si existe) antes de resolver el contexto.
+   */
+  public static async resolveContextAsync(state: SDLCStateType): Promise<ResolvedAgentContext> {
+    const extraUrls = state.mcpServerConfig?.url ? [state.mcpServerConfig.url] : undefined
+    await this.syncMcpCapabilities({ extraServerUrls: extraUrls })
+    return this.resolveContext(state)
   }
 }
 

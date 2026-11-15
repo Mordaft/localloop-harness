@@ -60,12 +60,19 @@ export interface StoredWorkspaceHandle {
   updatedAt: string
 }
 
+export type McpServerAuthStatus = 'none' | 'pending_approval' | 'authorized' | 'failed'
+
 export interface StoredMcpServer {
   id?: number
   name: string
   url: string
   transport: McpTransportTypeValue
   enabled: boolean
+  authToken?: string
+  agentId?: string
+  agentName?: string
+  workspace?: string
+  authStatus?: McpServerAuthStatus
   createdAt: string
 }
 
@@ -303,12 +310,26 @@ export async function addMcpServer(input: {
   name: string
   url: string
   transport?: McpTransportTypeValue
+  authToken?: string
+  agentId?: string
+  agentName?: string
+  workspace?: string
+  authStatus?: McpServerAuthStatus
 }): Promise<number> {
+  const generatedGuid =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10)
   const row: StoredMcpServer = {
     name: input.name.trim(),
     url: input.url.trim(),
     transport: input.transport ?? McpTransportType.SSE,
     enabled: true,
+    authToken: input.authToken,
+    agentId: input.agentId ?? `localloop-agent-${generatedGuid}`,
+    agentName: input.agentName ?? 'LocalLoop SDLC Agent',
+    workspace: input.workspace,
+    authStatus: input.authStatus ?? 'none',
     createdAt: new Date().toISOString(),
   }
   if (database) {
@@ -317,6 +338,20 @@ export async function addMcpServer(input: {
   const id = memAutoId++
   memMcpServers.push({ ...row, id })
   return id
+}
+
+export async function updateMcpServer(
+  id: number,
+  changes: Partial<Omit<StoredMcpServer, 'id' | 'createdAt'>>,
+): Promise<void> {
+  if (database) {
+    await database.mcpServers.update(id, changes)
+    return
+  }
+  const target = memMcpServers.find((s) => s.id === id)
+  if (target) {
+    Object.assign(target, changes)
+  }
 }
 
 export async function deleteMcpServer(id: number): Promise<void> {
