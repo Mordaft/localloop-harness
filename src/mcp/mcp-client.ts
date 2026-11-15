@@ -349,11 +349,32 @@ export function setCachedServerAuthToken(serverUrl: string, token: string): void
 }
 
 /**
- * Ejecuta `fetch` hacia un servidor MCP. Si se ejecuta en el navegador contra otro puerto localhost
- * (p. ej. `http://localhost:7432` desde `http://localhost:5173`) y falla por CORS o IPv6,
- * enruta automáticamente a través del middleware local `/__mcp_proxy__` de Vite.
+ * Determina si un nombre de host corresponde a la máquina local (localhost, loopback IPv4/IPv6).
  */
-async function mcpFetch(url: string, init?: RequestInit): Promise<Response> {
+export function isLocalHostname(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized === '0.0.0.0'
+  )
+}
+
+/**
+ * Ejecuta `fetch` hacia un servidor MCP.
+ *
+ * Si se ejecuta en el navegador servido desde localhost (entorno de desarrollo Vite p. ej. `http://localhost:5173`)
+ * contra otro puerto local (p. ej. `http://localhost:7432`), enruta automáticamente a través del middleware
+ * de desarrollo local `/__mcp_proxy__` de Vite para evitar restricciones de CORS o resolución IPv6.
+ *
+ * En entornos estáticos o remotos (como GitHub Pages en `*.github.io` o producción HTTPS):
+ * - NO se invoca `/__mcp_proxy__` sobre el host remoto, ya que los hosts estáticos rechazan peticiones POST con
+ *   HTTP 405 Method Not Allowed y un servidor remoto en la nube no tiene acceso al `localhost` del cliente.
+ * - Se realiza `fetch` directo desde el navegador hacia el servidor MCP local.
+ * - Si por alguna razón el proxy responde con 404 (no existe) o 405 (método no permitido), se realiza fallback a `fetch` directo.
+ */
+export async function mcpFetch(url: string, init?: RequestInit): Promise<Response> {
   const hasBrowserLocation =
     typeof location !== 'undefined' &&
     typeof location.origin === 'string' &&
@@ -362,17 +383,22 @@ async function mcpFetch(url: string, init?: RequestInit): Promise<Response> {
   if (hasBrowserLocation) {
     try {
       const targetUrl = new URL(url)
-      const isLocalTarget =
-        targetUrl.hostname === 'localhost' || targetUrl.hostname === '127.0.0.1'
-      if (isLocalTarget && targetUrl.origin !== location.origin) {
+      const isOriginLocal = isLocalHostname(location.hostname)
+      const isLocalTarget = isLocalHostname(targetUrl.hostname)
+
+      // El middleware local `/__mcp_proxy__` de Vite SOLO existe cuando la propia aplicación
+      // se ejecuta desde un servidor local (Vite dev/preview en localhost/127.0.0.1).
+      // En hosts estáticos (como GitHub Pages) no existe backend de proxy en dicho origen.
+      if (isOriginLocal && isLocalTarget && targetUrl.origin !== location.origin) {
         const proxyUrl = `${location.origin}/__mcp_proxy__?target=${encodeURIComponent(url)}`
         const proxyResp = await fetch(proxyUrl, init)
-        if (proxyResp.status !== 404) {
+        // Si el proxy no existe (404) o el host rechaza el método (405), fallback a fetch directo
+        if (proxyResp.status !== 404 && proxyResp.status !== 405) {
           return proxyResp
         }
       }
     } catch {
-      // Si el proxy no está disponible o estamos en un entorno sin proxy, hacer fallback a fetch directo
+      // Si el proxy no está disponible o falla por red, hacer fallback a fetch directo
     }
   }
 
@@ -642,8 +668,18 @@ export async function authenticateMcpServer(
           // ignore
         }
       }
+      const isRemoteHttps =
+        typeof location !== 'undefined' &&
+        location.protocol === 'https:' &&
+        !isLocalHostname(location.hostname)
+      const isLocalTargetServer =
+        server.url.includes('localhost') || server.url.includes('127.0.0.1')
+      const httpsNote =
+        isRemoteHttps && isLocalTargetServer
+          ? ' Si estás en GitHub Pages (HTTPS) y tu servidor MCP corre en localhost (HTTP), verifica que el servidor admita CORS y Private Network Access (PNA), o expónlo mediante un túnel HTTPS (ej. ngrok/cloudflared).'
+          : ''
       context?.onAuthStatus?.(
-        `⚠️ No se pudo obtener token desde /auth/connect en ${server.name}. Verifica que el servidor esté activo y hayas autorizado el acceso.`,
+        `⚠️ No se pudo obtener token desde /auth/connect en ${server.name}. Verifica que el servidor esté activo y hayas autorizado el acceso.${httpsNote}`,
         'failed',
       )
       return null

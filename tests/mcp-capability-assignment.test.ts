@@ -5,6 +5,8 @@ import {
   analyzeAndAssignMcpCapabilities,
   analyzeMcpToolCapabilities,
   clearMcpCapabilityCache,
+  isLocalHostname,
+  mcpFetch,
   parseMcpResponseText,
   type McpToolDefinition,
 } from '../src/mcp/mcp-client'
@@ -392,6 +394,77 @@ async function runMcpCapabilityAssignmentTests(): Promise<void> {
   } finally {
     globalThis.fetch = originalFetch
     clearMcpCapabilityCache(true)
+  }
+
+  // 5. Verificar comportamiento de mcpFetch en GitHub Pages (no proxy, fetch directo sin 405)
+  console.log('[Test 5] Verificando que en hosts remotos (GitHub Pages) mcpFetch no invoca /__mcp_proxy__...')
+  const originalLocation = (globalThis as unknown as { location?: unknown }).location
+  const originalFetchPost = globalThis.fetch
+  try {
+    const fetchedUrls: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const urlStr = typeof input === 'string' ? input : input.toString()
+      fetchedUrls.push(urlStr)
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 })
+    }) as typeof fetch
+
+    // Simular que la página está publicada en GitHub Pages
+    ;(globalThis as unknown as { location: unknown }).location = new URL('https://mordaft.github.io/localloop/')
+
+    const response = await mcpFetch('http://localhost:7432/auth/connect', {
+      method: 'POST',
+      body: JSON.stringify({ agent_id: 'test-agent' }),
+    })
+    assert(response.status === 200, 'mcpFetch debe responder exitosamente con 200')
+    assert(
+      fetchedUrls.length === 1 && fetchedUrls[0] === 'http://localhost:7432/auth/connect',
+      `En GitHub Pages debe realizarse fetch directo al MCP local, no al proxy. URLs invocadas: ${JSON.stringify(fetchedUrls)}`,
+    )
+    assert(
+      !fetchedUrls.some((u) => u.includes('__mcp_proxy__')),
+      'No debe existir llamada a /__mcp_proxy__ en GitHub Pages',
+    )
+    assert(
+      !isLocalHostname(new URL('https://mordaft.github.io').hostname),
+      'mordaft.github.io no debe considerarse un host local',
+    )
+    assert(
+      isLocalHostname('localhost') && isLocalHostname('127.0.0.1') && isLocalHostname('::1'),
+      'localhost, 127.0.0.1 y ::1 deben considerarse hosts locales',
+    )
+    console.log('✓ mcpFetch en GitHub Pages realiza fetch directo sin invocar /__mcp_proxy__.')
+
+    // 6. Verificar fallback en localhost si el proxy responde con 405 o 404
+    console.log('[Test 6] Verificando fallback de mcpFetch si /__mcp_proxy__ responde 405 o 404 en localhost...')
+    fetchedUrls.length = 0
+    // Simular localhost
+    ;(globalThis as unknown as { location: unknown }).location = new URL('http://localhost:5173/')
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const urlStr = typeof input === 'string' ? input : input.toString()
+      fetchedUrls.push(urlStr)
+      if (urlStr.includes('__mcp_proxy__')) {
+        // Simular que el servidor responde 405 Method Not Allowed en el proxy
+        return new Response('Method Not Allowed', { status: 405 })
+      }
+      return new Response(JSON.stringify({ direct: true }), { status: 200 })
+    }) as typeof fetch
+
+    const fallbackResp = await mcpFetch('http://localhost:7432/mcp', { method: 'POST' })
+    const body = (await fallbackResp.json()) as { direct?: boolean }
+    assert(body.direct === true, 'Debe haber hecho fallback a la llamada directa tras recibir 405 del proxy')
+    assert(
+      fetchedUrls.some((u) => u.includes('__mcp_proxy__')) && fetchedUrls.includes('http://localhost:7432/mcp'),
+      'Debe intentar el proxy y luego hacer fallback a la URL directa',
+    )
+    console.log('✓ Fallback automático de proxy 405/404 a fetch directo verificado.')
+  } finally {
+    globalThis.fetch = originalFetchPost
+    if (originalLocation === undefined) {
+      delete (globalThis as unknown as { location?: unknown }).location
+    } else {
+      ;(globalThis as unknown as { location: unknown }).location = originalLocation
+    }
   }
 
   console.log('=== Todas las pruebas de capacidades MCP y asignación por roles pasaron exitosamente ===')

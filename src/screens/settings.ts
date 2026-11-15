@@ -510,11 +510,16 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
     const created = updatedList.find((s) => s.id === id)
     if (created) {
       showMcpFeedback(`Solicitando autorización en ${created.url} (/auth/connect)...`)
-      await authenticateMcpServer(created, {
-        workspace: ws,
-        onAuthStatus: (msg) => showMcpFeedback(msg),
-      })
-      await analyzeAndAssignMcpCapabilities({ forceRefresh: true })
+      try {
+        await authenticateMcpServer(created, {
+          workspace: ws,
+          onAuthStatus: (msg) => showMcpFeedback(msg),
+        })
+        await analyzeAndAssignMcpCapabilities({ forceRefresh: true })
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        showMcpFeedback(`❌ Error al conectar con ${created.name}: ${errorMsg}`)
+      }
     }
     rerender()
   })
@@ -538,6 +543,9 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
           `✅ Conectado a ${target.name}: ${report.tools.length} herramientas MCP descubiertas y asignadas dinámicamente a los roles SDLC.`,
         )
         setTimeout(() => rerender(), 1200)
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        showMcpFeedback(`❌ Error al conectar con ${target.name}: ${errorMsg}`)
       } finally {
         btn.disabled = false
       }
