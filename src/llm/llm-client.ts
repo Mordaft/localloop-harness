@@ -23,7 +23,11 @@ import {
   getCachedMcpCapabilityReport,
   getMcpToolsForRole,
 } from '../mcp/mcp-client'
-import { executeBrowserSandbox, stripMarkdownCodeFences } from '../sandbox/browser-sandbox'
+import {
+  executeBrowserSandbox,
+  extractCleanSourceCode,
+  stripMarkdownCodeFences,
+} from '../sandbox/browser-sandbox'
 import { executeSandboxedJs } from '../sandbox/code-runner'
 
 interface RawToolCallDelta {
@@ -1020,7 +1024,7 @@ export async function procesarNodoScope(
 
     const decompositionDirective = forceDecompose
       ? `\nREGLA OBLIGATORIA DE DESCOMPOSICIÓN: Estás en el nivel raíz del trabajo. Es OBLIGATORIO crear primero una lista de tareas invocando "descomponer_en_subtareas". Una tarea es aquello para lo que podemos definir una prueba: cada elemento de "subtareas" DEBE incluir su "descripcion" y su "prueba_aceptacion", y cada elemento se pasará a un sub-agente.`
-      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada.${useWebGuidance ? ' Puedes consultar previamente "search_web_guidance" y "read_web_guidance_doc" (hasta 2 pasos) si la tarea involucra HTML, CSS, DOM o APIs web modernas.' : ''}${hasPreDeliveryMcp ? ' También puedes invocar previamente las herramientas MCP asignadas a tu rol para ejecutar comandos CLI, verificar pruebas o inspeccionar el entorno.' : ''} Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada", 2) "prueba_automatizada" (código ejecutable JS o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
+      : `\nREGLA DE EJECUCIÓN Y ENTREGA ATÓMICA: Esta tarea ya forma parte de una lista descompuesta y tiene una prueba de aceptación asignada.${useWebGuidance ? ' Puedes consultar previamente "search_web_guidance" y "read_web_guidance_doc" (hasta 2 pasos) si la tarea involucra HTML, CSS, DOM o APIs web modernas.' : ''}${hasPreDeliveryMcp ? ' También puedes invocar opcionalmente las herramientas MCP asignadas a tu rol.' : ''} Invoca "ejecutar_tarea_atomica" y entrega obligatoriamente: 1) "tarea_realizada" (EXCLUSIVAMENTE el código fuente completo, limpio y transpilable del archivo objetivo ${task.targetPath ?? context.targetPath}, SIN bloques Markdown \`\`\`, SIN prosa explicativa y SIN mensajes de error; si alguna herramienta externa falla, genera igualmente el código completo basándote en los contratos y el contexto), 2) "prueba_automatizada" (código ejecutable JS puro o prueba de DOM en iframe que valide la prueba de aceptación), y 3) "evidencia_prueba". NO vuelvas a descomponer salvo que sea estrictamente imposible abordarla en una sola prueba.`
 
     const sanitizedBaseInstructions = context.baseInstructions.includes('plan_and_delegate_tasks')
       ? 'Actúa con precisión técnica verificando empíricamente cada entrega mediante su prueba de aceptación.'
@@ -1110,6 +1114,8 @@ export async function procesarNodoScope(
           } catch (err) {
             toolOutput = JSON.stringify({
               error: err instanceof Error ? err.message : String(err),
+              instruction:
+                'Herramienta externa no disponible en este entorno; procede inmediatamente a invocar ejecutar_tarea_atomica entregando el código fuente completo solicitado en tarea_realizada.',
             })
           }
         }
@@ -1277,14 +1283,20 @@ export async function procesarNodoScope(
         : response.contentBuffer.trim() ||
         `Scope ${currentStorage.scopeId} completado (${findings.length} hallazgos).`
 
-    const tareaRealizada =
+    const rawTareaRealizada =
       typeof argsObj.tarea_realizada === 'string' && argsObj.tarea_realizada.trim()
         ? argsObj.tarea_realizada.trim()
         : typeof argsObj.completedTask === 'string' && argsObj.completedTask.trim()
           ? argsObj.completedTask.trim()
           : typeof argsObj.code === 'string' && argsObj.code.trim()
             ? argsObj.code.trim()
-            : sumario
+            : response.contentBuffer.includes('```')
+              ? response.contentBuffer.trim()
+              : sumario
+    const tareaRealizada = extractCleanSourceCode(
+      rawTareaRealizada,
+      task.targetPath ?? context.targetPath,
+    )
 
     const pruebaAutomatizada =
       typeof argsObj.prueba_automatizada === 'string' && argsObj.prueba_automatizada.trim()

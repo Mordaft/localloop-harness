@@ -1,6 +1,7 @@
 import { FileProposalStatus, FsWriteMode, type FsWriteMode as FsWriteModeType } from '../enums'
 import type { OpenAiToolSpec } from '../llm/llm-client'
 import { createFileProposal, listFileProposals, updateFileProposalStatus } from '../memory/app-db'
+import { extractCleanSourceCode } from '../sandbox/browser-sandbox'
 import { listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFileDirect } from './workspace-fs'
 
 export function getFileSystemToolSpecs(): OpenAiToolSpec[] {
@@ -111,7 +112,13 @@ export async function executeFileSystemTool(
 
   if (toolName === 'fs_write_file') {
     const path = String(args.path ?? '').trim()
-    const proposedContent = String(args.content ?? '')
+    const rawContent = String(args.content ?? '')
+    const needsCleaning =
+      /\.(ts|tsx|js|jsx|html|css|json)$/i.test(path) &&
+      (rawContent.includes('```') || /from\s+['"]dom['"]/.test(rawContent))
+    const proposedContent = needsCleaning
+      ? extractCleanSourceCode(rawContent, path)
+      : rawContent
     const reason = String(args.reason ?? 'Actualización propuesta por el agente LocalLoop')
     if (!path) throw new Error('fs_write_file requiere el argumento "path".')
 

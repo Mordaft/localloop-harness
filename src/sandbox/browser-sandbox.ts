@@ -165,11 +165,133 @@ export function createSandboxedIframeMessageValidator(expectedWindow: Window | n
 
 export function stripMarkdownCodeFences(raw: string): string {
   const trimmed = raw.trim()
-  const fenceMatch = trimmed.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/)
+  if (!trimmed) return ''
+
+  // 1. Exact outer fence match
+  const fenceMatch = trimmed.match(/^```(?:[a-zA-Z0-9_-]+)?(?:\s+[^\n]*)?\n([\s\S]*?)\n?```$/)
   if (fenceMatch) {
     return fenceMatch[1].trim()
   }
+
+  // 2. If the text contains fenced code blocks surrounded by Markdown prose, extract the fenced code blocks
+  const embeddedBlocks: string[] = []
+  const blockRegex = /```(?:[a-zA-Z0-9_-]+)?(?:\s+[^\n]*)?\n([\s\S]*?)```/g
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(trimmed)) !== null) {
+    if (match[1] && match[1].trim()) {
+      embeddedBlocks.push(match[1].trim())
+    }
+  }
+  if (embeddedBlocks.length > 0) {
+    return embeddedBlocks.join('\n\n').trim()
+  }
+
   return trimmed
+}
+
+/**
+ * Checks whether a candidate string is an error/status message rather than valid source code for the target file.
+ */
+export function isValidSourceCodeForPath(filePath: string, content: string): boolean {
+  const cleaned = extractCleanSourceCode(content, filePath)
+  if (!cleaned || cleaned.length < 10) return false
+
+  // Reject subagent fallback summaries and PTY/MCP tool failure prose
+  if (
+    /^Scope\s+\S+\s+completado\b/i.test(cleaned) ||
+    /^Error:\s*No se ha podido/i.test(cleaned) ||
+    /\bmcp_tether_session_open\b/i.test(cleaned) ||
+    /\bThe directory name is invalid\b/i.test(cleaned) ||
+    /^No se ha podido generar el archivo/i.test(cleaned) ||
+    /^Debido a un fallo técnico/i.test(cleaned) ||
+    /^Lamentablemente[,\s]/i.test(cleaned)
+  ) {
+    return false
+  }
+
+  const lowerPath = filePath.toLowerCase()
+  if (/\.(ts|tsx|js|jsx)$/i.test(lowerPath)) {
+    if (cleaned.includes('```')) return false
+    const hasCodeKeyword =
+      /\b(export|import|class|function|const|let|var|interface|type|enum|describe|it|test|expect)\b/.test(
+        cleaned,
+      )
+    return hasCodeKeyword
+  }
+
+  if (/\.html?$/i.test(lowerPath)) {
+    if (cleaned.includes('```')) return false
+    return /<(!DOCTYPE|html|head|body|div|section|main|header|footer|nav|aside|canvas|form|h1|h2|h3|p|script)\b/i.test(
+      cleaned,
+    )
+  }
+
+  if (/\.json$/i.test(lowerPath)) {
+    try {
+      JSON.parse(cleaned)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
+ * Extracts pure, compilable source code for a target file path by stripping Markdown code fences,
+ * surrounding prose, and hallucinated browser imports (such as `import { HTMLElement } from 'dom'`).
+ */
+export function extractCleanSourceCode(raw: string, filePath = ''): string {
+  if (!raw || typeof raw !== 'string') return ''
+  const lowerPath = filePath.toLowerCase()
+  if (lowerPath.endsWith('.md') || lowerPath.endsWith('.txt')) {
+    return raw.trim()
+  }
+
+  let cleaned = stripMarkdownCodeFences(raw)
+
+  // Remove stray opening or closing code fences if any remain
+  cleaned = cleaned
+    .replace(/^```(?:[a-zA-Z0-9_-]+)?(?:\s+[^\n]*)?\n?/gm, '')
+    .replace(/\n?```$/gm, '')
+    .trim()
+
+  if (/\.(ts|tsx|js|jsx)$/i.test(lowerPath) || !lowerPath) {
+    // Strip leading Markdown headings or Spanish/English prose lines that precede the first comment or code statement
+    const lines = cleaned.split('\n')
+    const firstCodeLineIdx = lines.findIndex((line) => {
+      const t = line.trim()
+      if (!t) return false
+      return (
+        t.startsWith('//') ||
+        t.startsWith('/*') ||
+        t.startsWith('*') ||
+        t.startsWith('@') ||
+        /^(export|import|const|let|var|function|class|interface|type|enum|async|describe|it|test|beforeEach|afterEach|window\.|document\.|self\.)\b/.test(
+          t,
+        )
+      )
+    })
+    if (firstCodeLineIdx > 0) {
+      cleaned = lines.slice(firstCodeLineIdx).join('\n').trim()
+    }
+
+    // Remove hallucinated standard DOM imports that break TypeScript/Vite compilation
+    cleaned = cleaned
+      .replace(
+        /^\s*import\s+(?:type\s+)?\{[^}]*\b(?:HTMLElement|HTMLInputElement|HTMLButtonElement|Document|Window|Event)\b[^}]*\}\s+from\s+['"](?:dom|html|browser|std)['"];?\s*\n?/gim,
+        '',
+      )
+      .trim()
+  } else if (/\.html?$/i.test(lowerPath)) {
+    const firstTagIdx = cleaned.search(/<(!DOCTYPE|html|head|body|div|section|main|header|nav|aside|style|script|!--)/i)
+    if (firstTagIdx > 0) {
+      cleaned = cleaned.slice(firstTagIdx).trim()
+    }
+  }
+
+  return cleaned
 }
 
 function normalizeSelectorList(options: BrowserSandboxOptions): string[] {
@@ -226,12 +348,230 @@ function lookupWorkspaceFile(
   return undefined
 }
 
-function sanitizeTsForBrowser(code: string): string {
-  return code
+function stripParameterListTypes(paramList: string): {
+  cleanedParams: string
+  propertyAssignments: string[]
+} {
+  if (!paramList.trim()) return { cleanedParams: '', propertyAssignments: [] }
+  const params: string[] = []
+  let current = ''
+  let depthParen = 0
+  let depthAngle = 0
+  let depthBrace = 0
+  let depthBracket = 0
+  let inStr: string | null = null
+
+  for (let i = 0; i < paramList.length; i++) {
+    const ch = paramList[i]
+    if (inStr) {
+      current += ch
+      if (ch === inStr && paramList[i - 1] !== '\\') inStr = null
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      inStr = ch
+      current += ch
+      continue
+    }
+    if (ch === '(') depthParen++
+    else if (ch === ')') depthParen = Math.max(0, depthParen - 1)
+    else if (ch === '<') depthAngle++
+    else if (ch === '>') depthAngle = Math.max(0, depthAngle - 1)
+    else if (ch === '{') depthBrace++
+    else if (ch === '}') depthBrace = Math.max(0, depthBrace - 1)
+    else if (ch === '[') depthBracket++
+    else if (ch === ']') depthBracket = Math.max(0, depthBracket - 1)
+
+    if (
+      ch === ',' &&
+      depthParen === 0 &&
+      depthAngle === 0 &&
+      depthBrace === 0 &&
+      depthBracket === 0
+    ) {
+      params.push(current.trim())
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  if (current.trim()) params.push(current.trim())
+
+  const propertyAssignments: string[] = []
+  const cleaned = params.map((p) => {
+    let work = p.trim()
+    const propModMatch = work.match(/^(?:public|private|protected|readonly|\s)+([a-zA-Z_$][a-zA-Z0-9_$]*)/)
+    if (propModMatch && /^(?:public|private|protected|readonly)\b/.test(work)) {
+      propertyAssignments.push(`this.${propModMatch[1]} = ${propModMatch[1]};`)
+      work = work.replace(/^(?:public|private|protected|readonly|\s)+/, '')
+    }
+    // Separate top-level default value `= ...`
+    let eqIdx = -1
+    let dP = 0,
+      dA = 0,
+      dB = 0,
+      dK = 0
+    let s: string | null = null
+    for (let i = 0; i < work.length; i++) {
+      const c = work[i]
+      if (s) {
+        if (c === s && work[i - 1] !== '\\') s = null
+        continue
+      }
+      if (c === '"' || c === "'" || c === '`') {
+        s = c
+        continue
+      }
+      if (c === '(') dP++
+      else if (c === ')') dP = Math.max(0, dP - 1)
+      else if (c === '<') dA++
+      else if (c === '>') dA = Math.max(0, dA - 1)
+      else if (c === '{') dB++
+      else if (c === '}') dB = Math.max(0, dB - 1)
+      else if (c === '[') dK++
+      else if (c === ']') dK = Math.max(0, dK - 1)
+      else if (
+        c === '=' &&
+        work[i + 1] !== '>' &&
+        work[i - 1] !== '=' &&
+        work[i - 1] !== '!' &&
+        dP === 0 &&
+        dA === 0 &&
+        dB === 0 &&
+        dK === 0
+      ) {
+        eqIdx = i
+        break
+      }
+    }
+    const leftSide = eqIdx >= 0 ? work.slice(0, eqIdx).trim() : work
+    const rightSide = eqIdx >= 0 ? work.slice(eqIdx).trim() : ''
+
+    // Strip `: Type` from leftSide (e.g., `barberId?: string`)
+    const colonIdx = leftSide.indexOf(':')
+    const cleanLeft =
+      colonIdx >= 0
+        ? leftSide.slice(0, colonIdx).replace(/\?$/, '').trim()
+        : leftSide.replace(/\?$/, '').trim()
+
+    return rightSide ? `${cleanLeft} ${rightSide}` : cleanLeft
+  })
+
+  return {
+    cleanedParams: cleaned.join(', '),
+    propertyAssignments,
+  }
+}
+
+export function sanitizeTsForBrowser(code: string): string {
+  let out = extractCleanSourceCode(code, 'script.ts')
+
+  // 1. Strip import statements
+  out = out
     .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?/gm, '// [import stripped]')
     .replace(/^import\s+['"][^'"]+['"];?/gm, '// [import stripped]')
-    .replace(/^export\s+(?:default\s+)?/gm, '')
-    .replace(/^(?:export\s+)?(?:interface|type)\s+[\s\S]*?\{[\s\S]*?\}/gm, '')
+
+  // 2. Strip interface declarations (supports nested braces up to 2 levels)
+  out = out.replace(
+    /^(?:export\s+)?interface\s+[A-Za-z_$][A-Za-z0-9_$]*(?:\s*<[^>]*>)?(?:\s+extends\s+[^{]+)?\s*\{(?:[^{}]|\{[^{}]*\})*\}/gm,
+    '',
+  )
+
+  // 3. Strip type alias declarations
+  out = out.replace(/^(?:export\s+)?type\s+[A-Za-z_$][A-Za-z0-9_$]*(?:\s*<[^>]*>)?\s*=[^;]+;/gm, '')
+
+  // 4. Strip export keywords
+  out = out.replace(/^export\s+default\s+/gm, '').replace(/^export\s+/gm, '')
+
+  // 5. Strip `implements ...` on class declarations
+  out = out.replace(
+    /(\bclass\s+[A-Za-z_$][A-Za-z0-9_$]*(?:\s*<[^>]+>)?(?:\s+extends\s+[A-Za-z_$][A-Za-z0-9_$.]*)?)\s+implements\s+[^{]+\{/g,
+    '$1 {',
+  )
+
+  // 6. Transform constructors with parameter properties and typed parameters
+  out = out.replace(/constructor\s*\(([\s\S]*?)\)\s*\{/g, (_m, paramsRaw) => {
+    const { cleanedParams, propertyAssignments } = stripParameterListTypes(String(paramsRaw))
+    const assignCode = propertyAssignments.length > 0 ? ` ${propertyAssignments.join(' ')}` : ''
+    return `constructor(${cleanedParams}) {${assignCode}`
+  })
+
+  // 7. Strip visibility modifiers on class members (`public`, `private`, `protected`, `readonly`)
+  out = out.replace(/^\s*(?:public|private|protected)\s+(?:static\s+)?(?:readonly\s+)?/gm, (m) =>
+    m.includes('static') ? '  static ' : '  ',
+  )
+  out = out.replace(/^\s*readonly\s+/gm, '  ')
+
+  // 8. Strip generic type parameters on DOM/collection calls like `querySelector<HTMLButtonElement>(`
+  out = out.replace(
+    /(\b(?:querySelector|querySelectorAll|getElementById|createElement|Array\.from|Promise|Map|Set))\s*<[^>()]+>\s*\(/g,
+    '$1(',
+  )
+
+  // 9. Strip variable type annotations `const x: Type =` and class property type annotations BEFORE arrow functions
+  out = out.replace(
+    /\b(const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?:[^=;\n]|=>)+\s*=(?!=|>)/g,
+    '$1 $2 =',
+  )
+  out = out.replace(
+    /^(\s*(?:static\s+)?[A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*(?:[^=;\n]|=>)+\s*=(?!=|>)/gm,
+    '$1 =',
+  )
+  out = out.replace(
+    /^(\s*(?:static\s+)?[A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*[^;\n]+\s*;/gm,
+    '$1;',
+  )
+
+  // 10. Strip method/function parameter types and return types before `{` (including nested parens in callback types)
+  out = out.replace(
+    /^(\s*(?:async\s+)?(?:function\s+)?[A-Za-z_$][A-Za-z0-9_$]*)\s*\((.*)\)\s*(?::\s*[^{]+)?\{$/gm,
+    (match, fnHead, restOfLine) => {
+      const headTrim = String(fnHead).trim()
+      if (/^(if|for|while|switch|catch|constructor)$/.test(headTrim)) return match
+      // Find matching closing `)` for the opening `(` of the parameter list
+      let depth = 1
+      let inStr: string | null = null
+      let closeIdx = -1
+      const lineStr = String(restOfLine)
+      for (let i = 0; i < lineStr.length; i++) {
+        const ch = lineStr[i]
+        if (inStr) {
+          if (ch === inStr && lineStr[i - 1] !== '\\') inStr = null
+          continue
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          inStr = ch
+          continue
+        }
+        if (ch === '(') depth++
+        else if (ch === ')') {
+          depth--
+          if (depth === 0) {
+            closeIdx = i
+            break
+          }
+        }
+      }
+      const paramsRaw = closeIdx >= 0 ? lineStr.slice(0, closeIdx) : lineStr
+      const { cleanedParams } = stripParameterListTypes(paramsRaw)
+      return `${fnHead}(${cleanedParams}) {`
+    },
+  )
+
+  // 11. Strip arrow function parameter types `(a: string, b: number) =>`
+  out = out.replace(/\(([^()]*)\)\s*(?::\s*[A-Za-z0-9_$<>[\]|&\s]+)?\s*=>/g, (_m, paramsRaw) => {
+    const { cleanedParams } = stripParameterListTypes(String(paramsRaw))
+    return `(${cleanedParams}) =>`
+  })
+
+  // 12. Strip TypeScript `as Type` assertions and non-null `!` assertions before `.` or `[`
+  out = out.replace(
+    /\s+as\s+(?:const|any|unknown|string|number|boolean|HTMLElement|HTMLInputElement|HTMLButtonElement|HTMLSelectElement|HTMLCanvasElement|Record<[^>]+>|[A-Z][A-Za-z0-9_<>[\]]*)/g,
+    '',
+  )
+  out = out.replace(/([A-Za-z0-9_$)\]])!\./g, '$1.')
+
+  return out
 }
 
 /**
@@ -354,9 +694,14 @@ function buildIframeSrcDoc(params: {
   height: number
   bodyClass?: string
 }): string {
+  const cleanExecCode =
+    /(?:^|\n)\s*(?:import|export|interface|type)\s+|\b(?:private|public|protected|readonly)\s+/.test(params.code)
+      ? sanitizeTsForBrowser(params.code)
+      : stripMarkdownCodeFences(params.code)
+
   const safePayload = JSON.stringify({
     requestId: params.requestId,
-    code: stripMarkdownCodeFences(params.code),
+    code: cleanExecCode,
     selectors: params.selectors,
     captureScreenshot: params.captureScreenshot,
     width: params.width,
@@ -996,7 +1341,10 @@ async function executeVirtualBrowserSandboxFallback(
 
   if (options.code && options.code.trim()) {
     try {
-      const cleanCode = stripMarkdownCodeFences(options.code)
+      const cleanCode =
+        /(?:^|\n)\s*(?:import|export|interface|type)\s+|\b(?:private|public|protected|readonly)\s+/.test(options.code)
+          ? sanitizeTsForBrowser(options.code)
+          : stripMarkdownCodeFences(options.code)
       const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
         cArg: string,
         dArg: string,

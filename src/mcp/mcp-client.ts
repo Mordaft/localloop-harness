@@ -1304,15 +1304,60 @@ export async function callMcpTool(
     createdAt: new Date().toISOString(),
   }
 
-  const payload = await invokeMcpServerRpc(
+  // Sanitize relative or virtual workspace directory arguments (e.g. "Prueba 12", "workspace")
+  // that cause Windows PTY / CreateProcess to fail with "The directory name is invalid"
+  const sanitizedArgs: Record<string, unknown> = { ...args }
+  const isAbsoluteOsPath = (val: string) => /^([a-zA-Z]:[\\/]|\\\\|\/(?!workspace\b)[a-zA-Z0-9._-]+)/.test(val.trim())
+  const serverAbsWorkspace =
+    matchedServer.workspace && isAbsoluteOsPath(matchedServer.workspace)
+      ? matchedServer.workspace.trim()
+      : undefined
+
+  for (const dirKey of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
+    if (typeof sanitizedArgs[dirKey] === 'string') {
+      const rawDir = String(sanitizedArgs[dirKey]).trim()
+      if (!rawDir || !isAbsoluteOsPath(rawDir)) {
+        if (serverAbsWorkspace) {
+          sanitizedArgs[dirKey] = serverAbsWorkspace
+        } else {
+          delete sanitizedArgs[dirKey]
+        }
+      }
+    }
+  }
+
+  let payload = await invokeMcpServerRpc(
     matchedServer,
     'tools/call',
     {
       name: tool.name,
-      arguments: args,
+      arguments: sanitizedArgs,
     },
     authContext,
   )
+
+  const payloadStr = JSON.stringify(payload ?? '')
+  if (
+    payloadStr.includes('The directory name is invalid') ||
+    payloadStr.includes('directory name is invalid')
+  ) {
+    const retryArgs: Record<string, unknown> = { ...sanitizedArgs }
+    for (const k of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir', 'path']) {
+      delete retryArgs[k]
+    }
+    const retryPayload = await invokeMcpServerRpc(
+      matchedServer,
+      'tools/call',
+      {
+        name: tool.name,
+        arguments: retryArgs,
+      },
+      authContext,
+    )
+    if (retryPayload && !retryPayload.error) {
+      payload = retryPayload
+    }
+  }
 
   if (!payload) {
     throw new Error(`Servidor MCP ${tool.serverName} (${tool.serverUrl}) no respondió a la invocación de ${tool.name}`)

@@ -1,10 +1,14 @@
 import { trace } from '../diagnostics'
 import type { OpenAiToolSpec } from '../llm/llm-client'
+import { sanitizeTsForBrowser } from './browser-sandbox'
 export {
   executeBrowserSandbox,
   executeBrowserSandboxInDom,
+  extractCleanSourceCode,
   getBrowserSandboxToolSpec,
   getLastBrowserSandboxResult,
+  isValidSourceCodeForPath,
+  sanitizeTsForBrowser,
   setWorkerBrowserSandboxDispatcher,
   type BrowserSandboxDomSnapshot,
   type BrowserSandboxElementInfo,
@@ -52,11 +56,15 @@ export function getSandboxToolSpec(): OpenAiToolSpec {
  * (or a restricted Function scope in Node unit test environments where Blob Workers are unavailable).
  */
 export async function executeSandboxedJs(
-  code: string,
+  rawCode: string,
   timeoutMs = 3000,
 ): Promise<SandboxExecutionResult> {
   const startedAt = performance.now()
   const safeTimeout = Math.min(10000, Math.max(100, timeoutMs))
+  const code =
+    /```|^\s*(?:export\s+)?interface\s+[A-Z]|^\s*import\s+.*from\s+/m.test(rawCode)
+      ? sanitizeTsForBrowser(rawCode)
+      : rawCode
 
   if (typeof Worker !== 'undefined' && typeof Blob !== 'undefined' && typeof URL.createObjectURL === 'function') {
     const workerScript = `
