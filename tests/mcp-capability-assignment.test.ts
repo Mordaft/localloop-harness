@@ -4,10 +4,15 @@ import { RuntimeSkillLoader } from '../src/agent/skills/runtime-loader'
 import {
   analyzeAndAssignMcpCapabilities,
   analyzeMcpToolCapabilities,
+  authenticateMcpServer,
+  buildCandidateMcpUrls,
   clearMcpCapabilityCache,
+  isContext7Server,
   isLocalHostname,
+  isTetherServer,
   mcpFetch,
   parseMcpResponseText,
+  testContext7Connection,
   type McpToolDefinition,
 } from '../src/mcp/mcp-client'
 import { addMcpServer, listMcpServers, deleteMcpServer } from '../src/memory/app-db'
@@ -466,6 +471,126 @@ async function runMcpCapabilityAssignmentTests(): Promise<void> {
       ;(globalThis as unknown as { location: unknown }).location = originalLocation
     }
   }
+
+  // 7. Verificar especialización de Tether y Context7 MCP
+  console.log('[Test 7] Verificando especialización de Tether y Context7 MCP...')
+  assert(
+    isTetherServer({ name: 'tether', url: 'http://localhost:7432/sse' }),
+    'isTetherServer debe identificar el servidor de tether por nombre y puerto 7432',
+  )
+  assert(
+    !isTetherServer({ name: 'context7', url: 'https://mcp.context7.com/mcp' }),
+    'isTetherServer no debe marcar context7 como tether',
+  )
+
+  assert(
+    isContext7Server({ name: 'context7', url: 'https://mcp.context7.com/mcp' }),
+    'isContext7Server debe identificar context7 por nombre y URL',
+  )
+  assert(
+    !isContext7Server({ name: 'tether', url: 'http://localhost:7432/sse' }),
+    'isContext7Server no debe marcar tether como context7',
+  )
+
+  const ctx7Candidates = buildCandidateMcpUrls('https://mcp.context7.com/mcp', 'context7')
+  assert(
+    ctx7Candidates.length === 1 && ctx7Candidates[0] === 'https://mcp.context7.com/mcp',
+    'buildCandidateMcpUrls para Context7 no debe generar variantes SSE incompatibles',
+  )
+
+  const ctx7Tool: McpToolDefinition = {
+    serverName: 'context7',
+    serverUrl: 'https://mcp.context7.com/mcp',
+    name: 'query-docs',
+    qualifiedName: 'mcp_context7_query_docs',
+    description: 'Queries documentation and code examples from official libraries via Context7',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        libraryId: { type: 'string', description: 'The library identifier' },
+        query: { type: 'string', description: 'The search query' },
+      },
+      required: ['libraryId', 'query'],
+    },
+  }
+
+  const ctx7Analysis = analyzeMcpToolCapabilities(ctx7Tool)
+  assert(
+    ctx7Analysis.categories.includes('DOCUMENTATION_AND_KNOWLEDGE'),
+    'Context7 query-docs debe clasificarse en DOCUMENTATION_AND_KNOWLEDGE',
+  )
+  assert(
+    ctx7Analysis.assignedRoles.includes('Component_Implementer') &&
+      ctx7Analysis.assignedRoles.includes('ComponentTechnical_Designer') &&
+      ctx7Analysis.assignedRoles.includes('UnitTest_Engineer'),
+    'Context7 query-docs debe asignarse a implementadores, diseñadores y unit testers',
+  )
+
+  // Verificar que authenticateMcpServer para Context7 no invoca /auth/connect
+  const authStatusMsgs: string[] = []
+  const ctx7AuthToken = await authenticateMcpServer(
+    {
+      name: 'context7',
+      url: 'https://mcp.context7.com/mcp',
+      transport: 'sse' as any,
+      enabled: true,
+      authToken: 'ctx7_secret_test_token',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      onAuthStatus: (msg) => authStatusMsgs.push(msg),
+    },
+  )
+  assert(ctx7AuthToken === 'ctx7_secret_test_token', 'authenticateMcpServer debe retornar el authToken de Context7 directamente')
+  assert(
+    !authStatusMsgs.some((m) => m.includes('/auth/connect')),
+    'Context7 no debe ejecutar el flujo /auth/connect de Tether',
+  )
+
+  // Simular testContext7Connection
+  const originalFetchCtx7 = globalThis.fetch
+  try {
+    let calledAuthHeader = ''
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calledAuthHeader = (init?.headers as Record<string, string>)?.[
+        'Authorization'
+      ] || (init?.headers as Record<string, string>)?.[
+        'authorization'
+      ] || ''
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'test-1',
+          result: {
+            tools: [
+              { name: 'resolve-library-id', description: 'Resolves library name' },
+              { name: 'query-docs', description: 'Queries library documentation' },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    const testRes = await testContext7Connection({
+      name: 'context7',
+      url: 'https://mcp.context7.com/mcp',
+      transport: 'sse' as any,
+      enabled: true,
+      authToken: 'ctx7_api_key_abc123',
+      createdAt: new Date().toISOString(),
+    })
+
+    assert(testRes.ok === true, 'testContext7Connection debe responder ok=true')
+    assert(testRes.toolsCount === 2, 'Debe descubrir 2 herramientas de Context7')
+    assert(
+      calledAuthHeader === 'Bearer ctx7_api_key_abc123',
+      'Debe enviar Authorization: Bearer con el API Key de Context7',
+    )
+  } finally {
+    globalThis.fetch = originalFetchCtx7
+  }
+  console.log('✓ Especialización de Tether y Context7 MCP verificada.')
 
   console.log('=== Todas las pruebas de capacidades MCP y asignación por roles pasaron exitosamente ===')
 }

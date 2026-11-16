@@ -127,7 +127,7 @@ const CAPABILITY_RULES: Array<{
     category: 'DOCUMENTATION_AND_KNOWLEDGE',
     label: 'Documentación, Conocimiento, Memoria y Sincronización',
     keywords:
-      /\b(doc|docs|documentation|guide|readme|manual|wiki|knowledge|memory|engram|report|markdown|adr|changelog|spec|specification|reference|fetch|web|url|query|summarize|sync)\b/i,
+      /\b(doc|docs|documentation|guide|readme|manual|wiki|knowledge|memory|engram|report|markdown|adr|changelog|spec|specification|reference|fetch|web|url|query|summarize|sync|context7|ctx7|library|libraries|resolve-library-id|query-docs|resolve_library_id|query_docs)\b/i,
   },
 ]
 
@@ -216,7 +216,7 @@ export const ROLE_CAPABILITY_MATRIX: RoleCapabilityProfile[] = [
     roleId: 'UnitTest_Engineer',
     description: 'Fase 3.2 - Ingeniero de Pruebas Unitarias y Verificación Técnica',
     primaryCategories: ['TESTING_AND_VALIDATION', 'CLI_EXECUTION_AND_BUILD', 'FILESYSTEM_AND_WORKSPACE'],
-    secondaryCategories: ['OBSERVABILITY_AND_RCA', 'GENERAL_PURPOSE'],
+    secondaryCategories: ['OBSERVABILITY_AND_RCA', 'DOCUMENTATION_AND_KNOWLEDGE', 'GENERAL_PURPOSE'],
     usageDirective:
       'Invoca las herramientas MCP de testing y CLI para ejecutar suites de pruebas unitarias, compilación de tipos y cobertura real sobre el componente implementado.',
   },
@@ -332,15 +332,20 @@ function getServerOriginKey(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl.trim())
     const host = parsed.hostname === '127.0.0.1' ? 'localhost' : parsed.hostname
-    return `${parsed.protocol}//${host}:${parsed.port || '80'}`
+    const defaultPort = parsed.protocol === 'https:' ? '443' : '80'
+    return `${parsed.protocol}//${host}:${parsed.port || defaultPort}`
   } catch {
     return rawUrl.trim()
   }
 }
 
 export function getCachedServerAuthToken(serverUrl: string, fallbackToken?: string): string | undefined {
+  if (fallbackToken) {
+    setCachedServerAuthToken(serverUrl, fallbackToken)
+    return fallbackToken
+  }
   const originKey = getServerOriginKey(serverUrl)
-  return serverAuthTokenCache.get(originKey) ?? fallbackToken
+  return serverAuthTokenCache.get(originKey)
 }
 
 export function setCachedServerAuthToken(serverUrl: string, token: string): void {
@@ -362,17 +367,45 @@ export function isLocalHostname(hostname: string): boolean {
 }
 
 /**
+ * Identifica si un servidor MCP corresponde a la integración especializada de Tether (daemon local /auth/connect).
+ */
+export function isTetherServer(server: { name: string; url: string }): boolean {
+  const n = (server.name || '').toLowerCase()
+  const u = (server.url || '').toLowerCase()
+  return (
+    n.includes('tether') ||
+    u.includes('tether') ||
+    u.includes(':7432') ||
+    u.includes(':7434')
+  )
+}
+
+/**
+ * Identifica si un servidor MCP corresponde a la integración especializada de Context7 (Upstash / documentación en tiempo real).
+ */
+export function isContext7Server(server: { name: string; url: string }): boolean {
+  const n = (server.name || '').toLowerCase()
+  const u = (server.url || '').toLowerCase()
+  return (
+    n.includes('context7') ||
+    u.includes('context7') ||
+    n === 'ctx7' ||
+    u.includes('context7.com')
+  )
+}
+
+/**
  * Ejecuta `fetch` hacia un servidor MCP.
  *
  * Si se ejecuta en el navegador servido desde localhost (entorno de desarrollo Vite p. ej. `http://localhost:5173`)
- * contra otro puerto local (p. ej. `http://localhost:7432`), enruta automáticamente a través del middleware
+ * contra otro puerto local (p. ej. `http://localhost:7432`) o Context7, enruta automáticamente a través del middleware
  * de desarrollo local `/__mcp_proxy__` de Vite para evitar restricciones de CORS o resolución IPv6.
  *
  * En entornos estáticos o remotos (como GitHub Pages en `*.github.io` o producción HTTPS):
  * - NO se invoca `/__mcp_proxy__` sobre el host remoto, ya que los hosts estáticos rechazan peticiones POST con
  *   HTTP 405 Method Not Allowed y un servidor remoto en la nube no tiene acceso al `localhost` del cliente.
  * - Se realiza `fetch` directo desde el navegador hacia el servidor MCP local.
- * - Si por alguna razón el proxy responde con 404 (no existe) o 405 (método no permitido), se realiza fallback a `fetch` directo.
+ * - Si por alguna razón el proxy responde con 404 (no existe), 403 o 405 (método no permitido), se realiza fallback a `fetch` directo.
  */
 export async function mcpFetch(url: string, init?: RequestInit): Promise<Response> {
   const hasBrowserLocation =
@@ -385,15 +418,16 @@ export async function mcpFetch(url: string, init?: RequestInit): Promise<Respons
       const targetUrl = new URL(url)
       const isOriginLocal = isLocalHostname(location.hostname)
       const isLocalTarget = isLocalHostname(targetUrl.hostname)
+      const isContext7Target = targetUrl.hostname.includes('context7.com')
 
       // El middleware local `/__mcp_proxy__` de Vite SOLO existe cuando la propia aplicación
       // se ejecuta desde un servidor local (Vite dev/preview en localhost/127.0.0.1).
       // En hosts estáticos (como GitHub Pages) no existe backend de proxy en dicho origen.
-      if (isOriginLocal && isLocalTarget && targetUrl.origin !== location.origin) {
+      if (isOriginLocal && (isLocalTarget || isContext7Target) && targetUrl.origin !== location.origin) {
         const proxyUrl = `${location.origin}/__mcp_proxy__?target=${encodeURIComponent(url)}`
         const proxyResp = await fetch(proxyUrl, init)
-        // Si el proxy no existe (404) o el host rechaza el método (405), fallback a fetch directo
-        if (proxyResp.status !== 404 && proxyResp.status !== 405) {
+        // Si el proxy no existe (404) o el host rechaza el método (405) o responde 403, fallback a fetch directo
+        if (proxyResp.status !== 404 && proxyResp.status !== 405 && proxyResp.status !== 403) {
           return proxyResp
         }
       }
@@ -468,6 +502,11 @@ export function buildCandidateMcpUrls(rawUrl: string, serverName = ''): string[]
   const trimmed = rawUrl.trim()
   if (!trimmed) return []
   const candidates = new Set<string>([trimmed])
+
+  // Context7 es un endpoint HTTP JSON-RPC exacto (/mcp); no alternar a endpoints incompatibles /sse
+  if (isContext7Server({ name: serverName, url: trimmed })) {
+    return [trimmed]
+  }
 
   const addOriginVariants = (origin: string, cleanPath: string) => {
     if (cleanPath === '' || cleanPath === '/') {
@@ -545,6 +584,28 @@ export async function authenticateMcpServer(
   server: StoredMcpServer,
   context?: McpAuthConnectContext,
 ): Promise<string | null> {
+  // Context7 utiliza directamente su API Key / Bearer token y no utiliza el endpoint /auth/connect de Tether
+  if (isContext7Server(server)) {
+    const existingToken = getCachedServerAuthToken(server.url, server.authToken) ?? server.authToken ?? null
+    if (existingToken) {
+      server.authToken = existingToken
+      server.authStatus = 'authorized'
+      setCachedServerAuthToken(server.url, existingToken)
+      if (server.id) {
+        try {
+          await updateMcpServer(server.id, { authToken: existingToken, authStatus: 'authorized' })
+        } catch {
+          // ignore
+        }
+      }
+      context?.onAuthStatus?.(`✅ Context7 configurado con API Key.`, 'authorized')
+      return existingToken
+    }
+    server.authStatus = 'none'
+    context?.onAuthStatus?.(`ℹ️ Context7 configurado sin API Key (modo público).`, 'authorized')
+    return null
+  }
+
   const originKey = getServerOriginKey(server.url)
 
   if (!context?.forceReconnect) {
@@ -1169,17 +1230,15 @@ async function invokeMcpServerRpc(
   }
 
   // Si aún no tenemos token pero el servidor es tether (o puerto 7432), autenticar proactivamente en /auth/connect
-  const isTetherServer =
-    server.name.toLowerCase().includes('tether') ||
-    server.url.includes(':7432') ||
-    server.url.includes(':7434')
+  const isTether = isTetherServer(server)
 
   const firstAttempt = await attemptRpcWithToken(authToken)
   if (firstAttempt.payload) {
     return firstAttempt.payload
   }
 
-  if (firstAttempt.unauthorized || (isTetherServer && !authToken)) {
+  // SOLO invocar /auth/connect si es un servidor Tether (Context7 u otros no usan este endpoint)
+  if (isTether && (firstAttempt.unauthorized || !authToken)) {
     const newToken = await authenticateMcpServer(server, {
       ...authContext,
       forceReconnect: Boolean(authToken && firstAttempt.unauthorized),
@@ -1217,6 +1276,8 @@ export async function ensureMcpServerRegistered(
       const parsed = new URL(cleanUrl)
       if (parsed.port === '7432' || parsed.port === '7434' || cleanUrl.toLowerCase().includes('tether')) {
         inferredName = 'tether'
+      } else if (cleanUrl.toLowerCase().includes('context7') || parsed.hostname.includes('context7.com')) {
+        inferredName = 'context7'
       } else {
         inferredName = `mcp_${parsed.hostname.replace(/[^a-zA-Z0-9]/g, '_')}_${parsed.port || 'http'}`
       }
@@ -1653,5 +1714,58 @@ export function getMcpToolsForRole(roleId: string): {
     specs: assignment.specs,
     tools: assignment.tools,
     promptSupplement: assignment.promptSupplement,
+  }
+}
+
+/**
+ * Prueba la conexión con el servidor Context7 MCP y descubre sus herramientas en tiempo real,
+ * utilizando la API Key configurada (Authorization: Bearer <key>) sin invocar /auth/connect.
+ */
+export async function testContext7Connection(server: StoredMcpServer): Promise<{
+  ok: boolean
+  toolsCount: number
+  tools: string[]
+  error?: string
+}> {
+  try {
+    const tools = await discoverMcpServerTools(server)
+    if (tools.length > 0) {
+      if (server.id) {
+        try {
+          await updateMcpServer(server.id, { authStatus: 'authorized' })
+        } catch {
+          // ignore
+        }
+      }
+      server.authStatus = 'authorized'
+      clearMcpCapabilityCache()
+      return {
+        ok: true,
+        toolsCount: tools.length,
+        tools: tools.map((t) => t.name),
+      }
+    }
+    return {
+      ok: false,
+      toolsCount: 0,
+      tools: [],
+      error: 'El endpoint de Context7 no devolvió ninguna herramienta disponible.',
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    if (server.id) {
+      try {
+        await updateMcpServer(server.id, { authStatus: 'failed' })
+      } catch {
+        // ignore
+      }
+    }
+    server.authStatus = 'failed'
+    return {
+      ok: false,
+      toolsCount: 0,
+      tools: [],
+      error: errorMsg,
+    }
   }
 }

@@ -20,9 +20,11 @@ function mcpLocalProxyPlugin(): Plugin {
       }
 
       const targetUrl = new URL(targetRaw)
-      if (targetUrl.hostname !== 'localhost' && targetUrl.hostname !== '127.0.0.1') {
+      const isLocalHost = targetUrl.hostname === 'localhost' || targetUrl.hostname === '127.0.0.1'
+      const isContext7 = targetUrl.hostname === 'mcp.context7.com' || targetUrl.hostname.endsWith('.context7.com')
+      if (!isLocalHost && !isContext7) {
         res.statusCode = 403
-        res.end(JSON.stringify({ error: 'Only localhost MCP targets are allowed' }))
+        res.end(JSON.stringify({ error: 'Only localhost and context7 MCP targets are allowed' }))
         return
       }
 

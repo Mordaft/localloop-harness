@@ -179,6 +179,27 @@ export interface TranslationDictionary {
     mcpAddBtn: string
     mcpNamePlaceholder: string
     mcpUrlPlaceholder: string
+    tetherTitle: string
+    tetherDesc: string
+    tetherUrlLabel: string
+    tetherWorkspaceLabel: string
+    tetherConnectBtn: string
+    tetherSaveBtn: string
+    tetherDeleteBtn: string
+    tetherStatusConnected: string
+    tetherStatusWaiting: string
+    tetherStatusDisconnected: string
+    context7Title: string
+    context7Desc: string
+    context7UrlLabel: string
+    context7TokenLabel: string
+    context7TokenHint: string
+    context7TestBtn: string
+    context7SaveBtn: string
+    context7DeleteBtn: string
+    context7StatusConnected: string
+    context7StatusConfigured: string
+    context7StatusUnconfigured: string
     brandEyebrow: string
     brandTitle: string
     brandDesc: string
