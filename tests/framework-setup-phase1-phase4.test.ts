@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import './fixtures/presets'
 import { compiledSDLCGraph } from '../src/agent/sdlc-graph'
 import { getVirtualFile, clearVirtualFiles } from '../src/fs/workspace-fs'
 

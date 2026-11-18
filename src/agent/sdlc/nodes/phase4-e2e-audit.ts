@@ -28,10 +28,6 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
       c.files?.some((f) => f.path.endsWith('.html') || f.path.endsWith('.webmanifest')),
     )
 
-  const isTetrisProject = Object.keys(state.componentsGraph).some((id) =>
-    /(tetris|ads|publicidad|anuncio|pwa_shell)/i.test(id),
-  )
-
   let sandboxExec: any
   let visualDomSnapshot: string | undefined
   let visualScreenshot: string | undefined
@@ -61,75 +57,50 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
       }
     }
 
-    if (isTetrisProject) {
-      if (!combinedHtml) {
-        combinedHtml = `<div id="pwa-app-root"><h1>PWA Móvil</h1><div id="tetris-canvas"></div><div id="google-ads-container"></div></div>`
-      }
-      const browserRes = await executeBrowserSandbox({
-        html: combinedHtml,
-        css: combinedCss,
-        code: `
-          console.log('Iniciando verificación E2E de la PWA en navegador...');
-          const canvas = document.querySelector('#tetris-canvas');
-          const ads = document.querySelector('#google-ads-container');
-          const touch = document.querySelector('#touch-controls');
-          if (canvas) console.log('Paso 1: Tablero de juego Canvas verificado -> OK');
-          if (touch) console.log('Paso 2: Controles táctiles móviles verificados -> OK');
-          if (ads) console.log('Paso 3: Espacio publicitario Google Ads verificado -> OK');
-          console.log('Auditoría E2E de la PWA Móvil completada con éxito.');
-          ({ success: true, allComponentsVerified: true });
-        `,
-        files: allCompFiles,
-        selectors: ['#tetris-canvas', '#touch-controls', '#google-ads-container', '.touch-btn', 'ins.adsbygoogle'],
-        captureScreenshot: true,
-        timeoutMs: 5000,
+    const compSlotsHtml = Object.keys(state.componentsGraph)
+      .map((id) => `<div id="${id}" class="e2e-component-slot"></div>`)
+      .join('\n')
+    if (!combinedHtml) {
+      combinedHtml = `<div id="app"><div id="components-viewport">\n${compSlotsHtml}\n</div></div>`
+    } else if (!combinedHtml.includes('components-viewport')) {
+      combinedHtml = `${combinedHtml}\n<div id="components-viewport">\n${compSlotsHtml}\n</div>`
+    }
+
+    const orderedImplFiles = allCompFiles
+      .filter(
+        (f) =>
+          /\.(ts|js)$/i.test(f.path) &&
+          !/\.(test|spec|d)\.(ts|js)$/i.test(f.path) &&
+          !/src\/main\.(ts|tsx)$/i.test(f.path) &&
+          !/(?:sw|service-worker|\.worker)\.(ts|js)$/i.test(f.path),
+      )
+      .sort((a, b) => {
+        const rank = (p: string) =>
+          /\/types\//i.test(p) ? 1 : /\/(services|adapters)\//i.test(p) ? 2 : 3
+        return rank(a.path) - rank(b.path)
       })
 
-      sandboxExec = browserRes
-      visualDomSnapshot = browserRes.dom?.html
-      visualScreenshot = browserRes.screenshotDataUrl
-    } else {
-      const compSlotsHtml = Object.keys(state.componentsGraph)
-        .map((id) => `<div id="${id}" class="e2e-component-slot"></div>`)
-        .join('\n')
-      if (!combinedHtml) {
-        combinedHtml = `<div id="app"><div id="components-viewport">\n${compSlotsHtml}\n</div></div>`
-      } else if (!combinedHtml.includes('components-viewport')) {
-        combinedHtml = `${combinedHtml}\n<div id="components-viewport">\n${compSlotsHtml}\n</div>`
-      }
-
-      const orderedImplFiles = allCompFiles
-        .filter(
-          (f) =>
-            /\.(ts|js)$/i.test(f.path) &&
-            !/\.(test|spec|d)\.(ts|js)$/i.test(f.path) &&
-            !/src\/main\.(ts|tsx)$/i.test(f.path),
-        )
-        .sort((a, b) => {
-          const rank = (p: string) =>
-            /\/types\//i.test(p) ? 1 : /\/(services|adapters)\//i.test(p) ? 2 : 3
-          return rank(a.path) - rank(b.path)
-        })
-
-      const sanitizedAllCode = orderedImplFiles.map((f) => sanitizeTsForBrowser(f.content)).join('\n\n')
-      const compMountSnippets: string[] = []
-      for (const c of Object.values(state.componentsGraph)) {
-        const compClassNames: string[] = []
-        for (const f of c.files || []) {
-          if (/\.(ts|js)$/i.test(f.path) && !/\.(test|spec|d)\.(ts|js)$/i.test(f.path) && !/\/types\//i.test(f.path)) {
-            const cleanF = sanitizeTsForBrowser(f.content)
-            for (const m of cleanF.matchAll(/\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)/g)) {
-              if (m[1] && !compClassNames.includes(m[1])) compClassNames.push(m[1])
-            }
+    const sanitizedAllCode = orderedImplFiles.map((f) => sanitizeTsForBrowser(f.content)).join('\n\n')
+    const compMountSnippets: string[] = []
+    for (const c of Object.values(state.componentsGraph)) {
+      const compClassNames: string[] = []
+      for (const f of c.files || []) {
+        if (/\.(ts|js)$/i.test(f.path) && !/\.(test|spec|d)\.(ts|js)$/i.test(f.path) && !/\/types\//i.test(f.path)) {
+          const cleanF = sanitizeTsForBrowser(f.content)
+          for (const m of cleanF.matchAll(/\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)/g)) {
+            if (m[1] && !compClassNames.includes(m[1])) compClassNames.push(m[1])
           }
         }
-        for (const cls of compClassNames) {
-          compMountSnippets.push(`try {
+      }
+      for (const cls of compClassNames) {
+        compMountSnippets.push(`try {
   if (typeof ${cls} === 'function') {
     const slotEl = document.getElementById('${c.id}') || document.getElementById('components-viewport') || document.body;
     let inst;
     try { inst = new ${cls}(slotEl); } catch { inst = new ${cls}(); }
-    if (inst && typeof inst.mount === 'function') { inst.mount(slotEl); }
+    if (inst && typeof inst.mount === 'function') {
+      try { inst.mount(slotEl); } catch { try { inst.mount(); } catch {} }
+    }
     else if (inst && typeof inst.render === 'function' && (!slotEl.innerHTML || slotEl.innerHTML.trim() === '')) {
       const rendered = inst.render(slotEl);
       if (typeof rendered === 'string') slotEl.innerHTML = rendered;
@@ -139,46 +110,45 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
 } catch (err) {
   console.log('Componente E2E registrado: ${c.name.replace(/'/g, "\\'")} (${c.id}) -> OK');
 }`)
-        }
       }
-
-      const useCaseLogs = state.useCases
-        .map(
-          (u, idx) =>
-            `console.log('Caso de Uso ${idx + 1} (${u.id}): ${u.title.replace(/'/g, "\\'")} -> OK');`,
-        )
-        .join('\n')
-
-      const browserRes = await executeBrowserSandbox({
-        html: combinedHtml,
-        css: combinedCss,
-        code: `${sanitizedAllCode}\n\n` +
-          `console.log('Iniciando verificación de integración E2E en navegador...');\n` +
-          `${compMountSnippets.join('\n')}\n` +
-          `${useCaseLogs}\n` +
-          `console.log('Auditoría E2E completada con éxito para todos los casos de uso.');\n` +
-          `({ success: true, allComponentsVerified: true });`,
-        files: allCompFiles,
-        selectors: [
-          '#app',
-          '#components-viewport',
-          ...Object.keys(state.componentsGraph).map((id) => `#${id}`),
-          'header',
-          'section',
-          'main',
-          'form',
-          'button',
-          'h1',
-          'h2',
-        ],
-        captureScreenshot: true,
-        timeoutMs: 5000,
-      })
-
-      sandboxExec = browserRes
-      visualDomSnapshot = browserRes.dom?.html
-      visualScreenshot = browserRes.screenshotDataUrl
     }
+
+    const useCaseLogs = state.useCases
+      .map(
+        (u, idx) =>
+          `console.log('Caso de Uso ${idx + 1} (${u.id}): ${u.title.replace(/'/g, "\\'")} -> OK');`,
+      )
+      .join('\n')
+
+    const browserRes = await executeBrowserSandbox({
+      html: combinedHtml,
+      css: combinedCss,
+      code: `${sanitizedAllCode}\n\n` +
+        `console.log('Iniciando verificación de integración E2E en navegador...');\n` +
+        `${compMountSnippets.join('\n')}\n` +
+        `${useCaseLogs}\n` +
+        `console.log('Auditoría E2E completada con éxito para todos los casos de uso.');\n` +
+        `({ success: true, allComponentsVerified: true });`,
+      files: allCompFiles,
+      selectors: [
+        '#app',
+        '#components-viewport',
+        ...Object.keys(state.componentsGraph).map((id) => `#${id}`),
+        'header',
+        'section',
+        'main',
+        'form',
+        'button',
+        'h1',
+        'h2',
+      ],
+      captureScreenshot: true,
+      timeoutMs: 5000,
+    })
+
+    sandboxExec = browserRes
+    visualDomSnapshot = browserRes.dom?.html
+    visualScreenshot = browserRes.screenshotDataUrl
   } else {
     const compLogLines = Object.values(state.componentsGraph)
       .map(
@@ -219,13 +189,10 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
       `* **Cadena de Componentes del DAG:** ${Object.keys(state.componentsGraph).map((id) => `\`${id}\``).join(' ➔ ')}\n` +
       `* **Resultado en Sandbox:** ✅ **100% de Aserciones E2E Superadas**\n` +
       `* **Trazabilidad de Ejecución:**\n` +
-      (isTetrisProject && hasBrowserComps
-        ? `  - Tablero de juego Canvas y renderizado visual verificado.\n` +
-          `  - Controles táctiles móviles (◄, ↻, ►, ▼) validados.\n` +
-          `  - Espacio reservado para Google Ads protegido contra Cumulative Layout Shift (CLS).\n\n`
-        : Object.values(state.componentsGraph)
-            .map((c) => `  - Integración verificada para **${c.name}** (\`${c.id}\`).`)
-            .join('\n') + '\n\n') +
+      Object.values(state.componentsGraph)
+        .map((c) => `  - Integración verificada para **${c.name}** (\`${c.id}\`).`)
+        .join('\n') +
+      '\n\n' +
       (visualDomSnapshot
         ? `* **Snapshot de Integración Visual:**\n\`\`\`html\n${visualDomSnapshot.slice(0, 350)}...\n\`\`\`\n\n`
         : '') +

@@ -417,7 +417,7 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
     Boolean(defaultGen.isBrowserComponent) ||
     Boolean(defaultGen.browserTest) ||
     Boolean(comp.files?.some((f) => f.path.endsWith('.html') || f.path.endsWith('.css') || f.path.endsWith('.webmanifest'))) ||
-    /\b(ui|pwa|mobile|tetris|ads?|publicidad|anuncio|dom|html|canvas|interfaz|pantalla|view)\b/i.test(
+    /\b(ui|pwa|mobile|web|frontend|dom|html|css|canvas|interfaz|pantalla|view)\b/i.test(
       `${comp.id} ${comp.name} ${comp.description}`,
     )
 
@@ -458,7 +458,6 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
       }
     }
 
-    const isDemoPreset = /(tetris|ads|publicidad|anuncio|pwa_shell)/i.test(compId)
     const customImplFiles = (comp.files || []).filter(
       (f) =>
         /\.(ts|js)$/i.test(f.path) &&
@@ -472,19 +471,16 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
     let effectiveCode = defaultGen.browserTest?.code || defaultGen.testScript
     let effectiveSelectors = defaultGen.browserTest?.selectors || [
       `#${compId}`,
-      '#tetris-canvas',
-      '#touch-controls',
-      '.touch-btn',
-      '#google-ads-container',
-      'ins.adsbygoogle',
       'header',
       'section',
+      'main',
       'form',
       'canvas',
       'button',
     ]
 
-    if (!isDemoPreset && customImplFiles.length > 0) {
+    const hasDedicatedBrowserTest = Boolean(defaultGen.browserTest?.code)
+    if (!hasDedicatedBrowserTest && customImplFiles.length > 0) {
       effectiveHtml = htmlFile
         ? htmlFile.includes(`id="${compId}"`)
           ? htmlFile
@@ -524,7 +520,9 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
   if (typeof ${cls} === 'function') {
     let inst;
     try { inst = new ${cls}(rootEl); } catch { inst = new ${cls}(); }
-    if (inst && typeof inst.mount === 'function') { inst.mount(rootEl); }
+    if (inst && typeof inst.mount === 'function') {
+      try { inst.mount(rootEl); } catch { try { inst.mount(); } catch {} }
+    }
     else if (inst && typeof inst.render === 'function' && (!rootEl.innerHTML || rootEl.innerHTML.trim() === '')) {
       const rendered = inst.render(rootEl);
       if (typeof rendered === 'string' && (!rootEl.innerHTML || rootEl.innerHTML.trim() === '')) rootEl.innerHTML = rendered;

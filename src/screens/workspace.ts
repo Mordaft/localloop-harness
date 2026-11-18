@@ -41,67 +41,67 @@ let activeStreamBatcher: StreamingQueueBatcher | undefined
 let phase0SubStep = 1
 let isMarkdownView = false
 export const p0State = {
-  featureTitle: 'Emisión de Facturación Electrónica B2B',
+  featureTitle: 'Plataforma Web Modular',
   // Paso 1: Negocio
   rawBusinessLanguageText:
-    'Como dirección de operaciones, necesitamos emitir facturas electrónicas conformes a la normativa fiscal de forma automática al confirmar un pedido, garantizando firma digital y trazabilidad contable para evitar sanciones y reducir el tiempo de cobro en un 40%.',
+    'Como equipo de producto, necesitamos construir una aplicación modular, interactiva y de alto rendimiento que permita gestionar las operaciones clave de los usuarios con contratos tipados y validación automatizada en sandbox.',
   needsList: [
     {
       id: 'NEED-1',
-      description: 'Generación automática del XML firmado digitalmente según la normativa fiscal.',
-      expectedImpact: 'Cero errores de formato y cumplimiento legal inmediato.',
+      description: 'Arquitectura desacoplada con lógica de dominio pura y pruebas unitarias.',
+      expectedImpact: 'Mantenibilidad a largo plazo y reducción de regresiones.',
     },
     {
       id: 'NEED-2',
-      description: 'Integración síncrona con el sistema de contabilidad y ERP corporativo.',
-      expectedImpact: 'Reducción de 48h a segundos en el registro del asiento contable.',
+      description: 'Interfaz de usuario interactiva y accesible adaptada a estándares modernos.',
+      expectedImpact: 'Experiencia interactiva fluida y sin regresiones.',
     },
   ],
   // Paso 2: Arquitectura Empresarial (As-Is / To-Be / Transición)
   marketStandard: 'C4_AND_CLEAN_ARCHITECTURE',
   mcpUrl: '',
-  currentSituationTitle: 'ERP Monolítico on-premise con módulos legados en base de datos centralizada.',
+  currentSituationTitle: 'Arquitectura legada monolítica sin tipado estricto ni pruebas automatizadas.',
   currentSituationLimitations: [
-    'Bloqueos por transacciones lentas en horas punta.',
-    'No dispone de conector seguro con la autoridad tributaria vía API.',
-    'Coste de mantenimiento muy elevado y falta de modularidad.',
+    'Dificultad para escalar módulos de forma independiente.',
+    'Falta de contratos de integración tipados.',
+    'Coste de mantenimiento elevado y falta de modularidad.',
   ],
-  desiredSituationTitle: 'Arquitectura orientada a eventos con microservicios desacoplados y API Gateway.',
+  desiredSituationTitle: 'Arquitectura modular limpia orientada a componentes con contratos tipados y verificación continua.',
   desiredSituationCapabilities: [
-    'Generador de XML/UBL agnóstico con firma XAdES/CAdES en milisegundos.',
-    'Publicación de eventos de facturación en Event Bus para auditoría y ERP.',
+    'Componentes desacoplados con contratos TypeScript estrictos.',
+    'Testing automatizado determinista en sandbox.',
     'Escalabilidad elástica y observabilidad completa.',
   ],
-  transitionSituationTitle: 'Adaptador de convivencia: Fachada API sobre ERP para emitir facturas mientras se migra.',
+  transitionSituationTitle: 'Migración progresiva con adaptadores de transición y mitigación de riesgos.',
   transitionMilestones: [
-    'Hito 1: Desplegar microservicio de firma digital invocado desde el monolito.',
-    'Hito 2: Desviar el 100% de la facturación electrónica al nuevo módulo antes de desmantelar el módulo legado.',
+    'Hito 1: Implementar núcleo de dominio y contratos.',
+    'Hito 2: Integrar interfaz interactiva y suite de auditoría E2E.',
   ],
   // Paso 3: Arquitectura de Soluciones
   components: [
     {
-      componentId: 'comp_billing_core',
-      name: 'Motor Core de Facturación & Reglas de Negocio',
+      componentId: 'comp_core',
+      name: 'Motor Core de Dominio & Reglas de Negocio',
       action: 'CREATE' as const,
       targetState: 'DESIRED' as const,
-      description: 'Cálculo de impuestos, retenciones y validaciones fiscales.',
+      description: 'Entidades centrales, contratos tipados y validaciones de dominio.',
       dependsOn: [],
     },
     {
-      componentId: 'comp_digital_signature',
-      name: 'Servicio Criptográfico de Firma Digital',
+      componentId: 'comp_service',
+      name: 'Servicio de Aplicación y Casos de Uso',
       action: 'CREATE' as const,
       targetState: 'DESIRED' as const,
-      description: 'Gestión de certificados y firmado electrónico XAdES.',
-      dependsOn: ['comp_billing_core'],
+      description: 'Orquestación de casos de uso y gestión de estado.',
+      dependsOn: ['comp_core'],
     },
     {
-      componentId: 'comp_erp_adapter',
-      name: 'Adaptador de Convivencia ERP / Transición',
-      action: 'EVOLVE' as const,
-      targetState: 'TRANSITION' as const,
-      description: 'Sincronización bidireccional con el ERP legado.',
-      dependsOn: ['comp_billing_core'],
+      componentId: 'comp_ui',
+      name: 'Interfaz Visual e Interacción',
+      action: 'CREATE' as const,
+      targetState: 'DESIRED' as const,
+      description: 'Componente visual interactivo y presentación.',
+      dependsOn: ['comp_core', 'comp_service'],
     },
   ] as SolutionComponentMapping[],
 }
@@ -386,64 +386,64 @@ function syncP0StateFromDom(root: HTMLElement): void {
 }
 
 function loadExampleTemplate(): void {
-  p0State.featureTitle = 'Emisión de Facturación Electrónica B2B'
+  p0State.featureTitle = 'Plataforma Web Modular'
   p0State.rawBusinessLanguageText =
-    'Como dirección de operaciones, necesitamos emitir facturas electrónicas conformes a la normativa fiscal de forma automática al confirmar un pedido, garantizando firma digital y trazabilidad contable para evitar sanciones y reducir el tiempo de cobro en un 40%.'
+    'Como equipo de producto, necesitamos construir una aplicación modular, interactiva y de alto rendimiento que permita gestionar las operaciones clave de los usuarios con contratos tipados y validación automatizada en sandbox.'
   p0State.needsList = [
     {
       id: 'NEED-1',
-      description: 'Generación automática del XML firmado digitalmente según la normativa fiscal.',
-      expectedImpact: 'Cero errores de formato y cumplimiento legal inmediato.',
+      description: 'Arquitectura desacoplada con lógica de dominio pura y pruebas unitarias.',
+      expectedImpact: 'Mantenibilidad a largo plazo y reducción de regresiones.',
     },
     {
       id: 'NEED-2',
-      description: 'Integración síncrona con el sistema de contabilidad y ERP corporativo.',
-      expectedImpact: 'Reducción de 48h a segundos en el registro del asiento contable.',
+      description: 'Interfaz de usuario interactiva y accesible adaptada a estándares modernos.',
+      expectedImpact: 'Experiencia interactiva fluida y sin regresiones.',
     },
   ]
   p0State.marketStandard = 'C4_AND_CLEAN_ARCHITECTURE'
   p0State.mcpUrl = 'http://localhost:3000/sse'
-  p0State.currentSituationTitle = 'ERP Monolítico on-premise con módulos legados en base de datos centralizada.'
+  p0State.currentSituationTitle = 'Arquitectura legada monolítica sin tipado estricto ni pruebas automatizadas.'
   p0State.currentSituationLimitations = [
-    'Bloqueos por transacciones lentas en horas punta.',
-    'No dispone de conector seguro con la autoridad tributaria vía API.',
-    'Coste de mantenimiento muy elevado y falta de modularidad.',
+    'Dificultad para escalar módulos de forma independiente.',
+    'Falta de contratos de integración tipados.',
+    'Coste de mantenimiento elevado y falta de modularidad.',
   ]
-  p0State.desiredSituationTitle = 'Arquitectura orientada a eventos con microservicios desacoplados y API Gateway.'
+  p0State.desiredSituationTitle = 'Arquitectura modular limpia orientada a componentes con contratos tipados y verificación continua.'
   p0State.desiredSituationCapabilities = [
-    'Generador de XML/UBL agnóstico con firma XAdES/CAdES en milisegundos.',
-    'Publicación de eventos de facturación en Event Bus para auditoría y ERP.',
+    'Componentes desacoplados con contratos TypeScript estrictos.',
+    'Testing automatizado determinista en sandbox.',
     'Escalabilidad elástica y observabilidad completa.',
   ]
-  p0State.transitionSituationTitle = 'Adaptador de convivencia: Fachada API sobre ERP para emitir facturas mientras se migra.'
+  p0State.transitionSituationTitle = 'Migración progresiva con adaptadores de transición y mitigación de riesgos.'
   p0State.transitionMilestones = [
-    'Hito 1: Desplegar microservicio de firma digital invocado desde el monolito.',
-    'Hito 2: Desviar el 100% de la facturación electrónica al nuevo módulo antes de desmantelar el módulo legado.',
+    'Hito 1: Implementar núcleo de dominio y contratos.',
+    'Hito 2: Integrar interfaz interactiva y suite de auditoría E2E.',
   ]
   p0State.components = [
     {
-      componentId: 'comp_billing_core',
-      name: 'Motor Core de Facturación & Reglas de Negocio',
+      componentId: 'comp_core',
+      name: 'Motor Core de Dominio & Reglas de Negocio',
       action: 'CREATE',
       targetState: 'DESIRED',
-      description: 'Cálculo de impuestos, retenciones y validaciones fiscales.',
+      description: 'Entidades centrales, contratos tipados y validaciones de dominio.',
       dependsOn: [],
     },
     {
-      componentId: 'comp_digital_signature',
-      name: 'Servicio Criptográfico de Firma Digital',
+      componentId: 'comp_service',
+      name: 'Servicio de Aplicación y Casos de Uso',
       action: 'CREATE',
       targetState: 'DESIRED',
-      description: 'Gestión de certificados y firmado electrónico XAdES.',
-      dependsOn: ['comp_billing_core'],
+      description: 'Orquestación de casos de uso y gestión de estado.',
+      dependsOn: ['comp_core'],
     },
     {
-      componentId: 'comp_erp_adapter',
-      name: 'Adaptador de Convivencia ERP / Transición',
-      action: 'EVOLVE',
-      targetState: 'TRANSITION',
-      description: 'Sincronización bidireccional con el ERP legado.',
-      dependsOn: ['comp_billing_core'],
+      componentId: 'comp_ui',
+      name: 'Interfaz Visual e Interacción',
+      action: 'CREATE',
+      targetState: 'DESIRED',
+      description: 'Componente visual interactivo y presentación.',
+      dependsOn: ['comp_core', 'comp_service'],
     },
   ]
 }
@@ -2292,15 +2292,14 @@ export async function renderWorkspaceScreen(
 
     syncP0StateFromDom(root)
 
-    // Si el usuario modificó la iniciativa (Paso 1) pero dejó los componentes de ejemplo de facturación por defecto en el Paso 3,
-    // sincronizar automáticamente los componentes con la iniciativa real del usuario
-    const combinedStep1 = `${p0State.featureTitle} ${p0State.rawBusinessLanguageText}`
-    const isStillDefaultBillingComps =
+    // Si el usuario modificó la iniciativa (Paso 1) pero dejó los componentes de plantilla inicial en el Paso 3,
+    // sincronizar automáticamente los componentes con la iniciativa del usuario
+    const isDefaultComps =
       p0State.components.length === 3 &&
-      p0State.components[0]?.componentId === 'comp_billing_core' &&
-      p0State.components[1]?.componentId === 'comp_digital_signature' &&
-      p0State.components[2]?.componentId === 'comp_erp_adapter'
-    if (isStillDefaultBillingComps && !/factur|billing|xades|tributar/i.test(combinedStep1)) {
+      p0State.components[0]?.componentId === 'comp_core' &&
+      p0State.components[1]?.componentId === 'comp_service' &&
+      p0State.components[2]?.componentId === 'comp_ui'
+    if (isDefaultComps && p0State.featureTitle !== 'Plataforma Web Modular') {
       const slug =
         p0State.featureTitle
           .toLowerCase()
@@ -2497,10 +2496,11 @@ export async function renderWorkspaceScreen(
           .replace(/[^a-z0-9]+/g, '_')
           .replace(/^_+|_+$/g, '')
           .slice(0, 18) || 'app'
-      const isDefaultBilling =
+      const isDefaultComps =
         p0State.components.length === 3 &&
-        p0State.components[0]?.componentId === 'comp_billing_core'
-      if (isDefaultBilling && !/factur|billing|xades|tributar/i.test(text)) {
+        p0State.components[0]?.componentId === 'comp_core' &&
+        p0State.components[1]?.componentId === 'comp_service'
+      if (isDefaultComps) {
         p0State.components = [
           {
             componentId: `comp_${slug}_core`,

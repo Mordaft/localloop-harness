@@ -1,3 +1,4 @@
+import './fixtures/presets'
 import { compiledSDLCGraph } from '../src/agent/sdlc-graph'
 import type { SDLCStateType } from '../src/agent/sdlc-state'
 import { RuntimeSkillLoader } from '../src/agent/skills/runtime-loader'
