@@ -356,58 +356,39 @@ export async function node_phase4_business_compile(state: SDLCStateType): Promis
   const engram = await getPersistentEngram()
 
   // 1. Generar scripts de arranque en la raíz del workspace para la verificación local E2E
-  const currentFw = state.frameworkConfig?.framework || 'HTML5 + TypeScript + TailwindCSS'
-  const pkgMgr = state.frameworkConfig?.packageManager || 'npm'
+  const currentFw = state.frameworkConfig?.framework || state.projectScaffold?.frameworkTitle || 'Aplicación'
+  const pkgMgr = state.frameworkConfig?.packageManager || state.projectScaffold?.packageManager
   const bundler = state.frameworkConfig?.bundler || 'none'
   const isVite = bundler === 'vite'
+  const runtime = state.projectScaffold?.runtime || state.frameworkConfig?.runtime || 'generic'
+  const hasUI = state.projectScaffold?.hasUI ?? state.frameworkConfig?.hasUI ?? false
 
-  const startCmdContent = `@echo off
+  const scaffoldStartCmd = state.projectScaffold?.lifecycle?.startCmd
+  const scaffoldStartSh = state.projectScaffold?.lifecycle?.startSh
+
+  let startCmdContent = scaffoldStartCmd
+  let startShContent = scaffoldStartSh
+
+  if (!startCmdContent) {
+    const runCmd = state.frameworkConfig?.devCommand || (pkgMgr ? `${pkgMgr} start` : 'echo "Iniciando servicio..."')
+    startCmdContent = `@echo off
 echo ========================================================
 echo   LocalLoop - Arranque de Aplicacion y Prueba E2E
 echo   Marco Tecnologico: ${currentFw}
 echo ========================================================
 echo.
-
-where ${pkgMgr} >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    echo Iniciando aplicacion local con ${pkgMgr} ${isVite ? 'dev' : 'start'}...
-    call ${pkgMgr} ${isVite ? 'dev' : 'start'}
-    exit /b %ERRORLEVEL%
-)
-
-where npm >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    echo [INFO] Iniciando aplicacion con npm...
-    call npm run dev 2>nul || call npx vite 2>nul || call npm start 2>nul || call npx serve .
-    exit /b %ERRORLEVEL%
-)
-
-echo [ERROR] No se encontro gestor de paquetes (Node.js/npm) en el PATH.
-exit /b 1
+call ${runCmd}
 `
-
-  const startShContent = `#!/usr/bin/env bash
+    startShContent = `#!/usr/bin/env bash
 set -e
 echo "========================================================"
 echo "  LocalLoop - Arranque de Aplicación y Prueba E2E"
 echo "  Marco Tecnológico: ${currentFw}"
 echo "========================================================"
 echo ""
-
-if command -v ${pkgMgr} >/dev/null 2>&1; then
-    echo "Iniciando aplicación local con ${pkgMgr} ${isVite ? 'dev' : 'start'}..."
-    ${pkgMgr} ${isVite ? 'dev' : 'start'}
-    exit 0
-fi
-
-if command -v npm >/dev/null 2>&1; then
-    npm run dev 2>/dev/null || npx vite 2>/dev/null || npm start 2>/dev/null || npx serve .
-    exit 0
-fi
-
-echo "[ERROR] No se encontró gestor de paquetes en el PATH."
-exit 1
+${runCmd}
 `
+  }
 
   // 2. Generar punto de entrada TypeScript (src/main.ts), informe visual E2E y actualizar index.html si no existe aplicación previa
   const compListItems = Object.values(state.componentsGraph)
@@ -600,6 +581,9 @@ if (typeof document !== 'undefined') {
       content: JSON.stringify(
         {
           framework: currentFw,
+          runtime,
+          archetype: state.projectScaffold?.archetype || state.frameworkConfig?.archetype,
+          hasUI,
           useCases: state.useCases,
           components: state.componentsGraph,
           unitEvidences: state.unitEvidences,
@@ -613,7 +597,8 @@ if (typeof document !== 'undefined') {
     },
   ]
 
-  if (isVite) {
+  // Solo para proyectos web con Vite donde no exista previamente index.html se provee el punto de entrada
+  if (hasUI && isVite) {
     const existingRootIndex = await readWorkspaceFile('index.html').catch(() => null)
     const hasValidRootIndex = Boolean(
       existingRootIndex &&
@@ -629,7 +614,13 @@ if (typeof document !== 'undefined') {
     }
   }
 
-  if (!hasExistingMain) {
+  // Solo para proyectos basados en TypeScript/JavaScript (Web o Node) se genera main.ts si no existe previamente
+  const isTsOrJs =
+    state.projectScaffold?.fileExtension === 'ts' ||
+    state.projectScaffold?.fileExtension === 'tsx' ||
+    state.projectScaffold?.fileExtension === 'js' ||
+    runtime === 'node'
+  if (isTsOrJs && !hasExistingMain) {
     startFiles.push({
       path: 'src/main.ts',
       content: generatedMainTs,

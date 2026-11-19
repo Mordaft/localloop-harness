@@ -127,8 +127,9 @@ export {
   setRequireLiveLlm,
   getRequireLiveLlm,
   type SubagentComponentDeliverable,
-  resolveFrameworkStack,
-  type FrameworkStackResolution,
+  buildUniversalScaffold,
+  materializeUniversalScaffold,
+  detectProjectArchetype,
   generateComponentCode,
   type GeneratedComponentArtifacts,
 } from './sdlc'

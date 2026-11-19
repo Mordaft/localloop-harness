@@ -138,11 +138,48 @@ export interface FormalBusinessApproval {
   evaluatedAt: string
 }
 
+export type ProjectRuntime = string
+
+export type ProjectArchetype = string
+
+export interface UniversalProjectScaffold {
+  runtime: ProjectRuntime
+  archetype: ProjectArchetype
+  frameworkTitle: string
+  hasUI: boolean
+  packageManager?: string
+  componentDirectory: string
+  serviceDirectory: string
+  testDirectory: string
+  fileExtension?: string
+  manifestFiles: Array<{ path: string; content: string; purpose: string }>
+  configFiles: Array<{ path: string; content: string; purpose: string }>
+  skeletonFiles: Array<{ path: string; content: string; purpose: string }>
+  dependencies: {
+    runtime: Record<string, string>
+    devOrTest: Record<string, string>
+  }
+  testing: {
+    unitTestRunner: string
+    unitTestDir: string
+    e2eTestRunner: string
+    e2eTestDir: string
+  }
+  lifecycle: {
+    setupCmd: string
+    setupSh: string
+    startCmd: string
+    startSh: string
+    testCmd: string
+    testSh: string
+  }
+}
+
 export interface ProjectFrameworkConfig {
   framework: string
-  packageManager?: 'pnpm' | 'npm' | 'yarn' | 'bun'
-  bundler?: 'vite' | 'webpack' | 'esbuild' | 'none'
-  testRunner?: 'vitest' | 'jest' | 'node:test'
+  packageManager?: string
+  bundler?: string
+  testRunner?: string
   devCommand?: string
   buildCommand?: string
   testCommand?: string
@@ -151,6 +188,9 @@ export interface ProjectFrameworkConfig {
   setupInstructions?: string
   startScriptsGenerated?: boolean
   startInstructions?: string
+  runtime?: ProjectRuntime
+  archetype?: ProjectArchetype
+  hasUI?: boolean
 }
 
 export interface ProjectProgressEvent {
@@ -236,6 +276,10 @@ export const SDLCState = Annotation.Root({
     default: () => ({ milestones: [], backlog: [] }),
   }),
   frameworkConfig: Annotation<ProjectFrameworkConfig | null>({
+    reducer: (curr, next) => (next ? { ...curr, ...next } : curr),
+    default: () => null,
+  }),
+  projectScaffold: Annotation<UniversalProjectScaffold | null>({
     reducer: (curr, next) => (next ? { ...curr, ...next } : curr),
     default: () => null,
   }),

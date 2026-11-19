@@ -18,7 +18,11 @@ import type {
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { emitSDLCProgress } from '../execution/progress-emitter'
 import { generateComponentDesign } from '../codegen/component-design'
-import { resolveFrameworkStack } from '../framework/stack-resolver'
+import {
+  buildUniversalScaffold,
+  detectProjectArchetype,
+  materializeUniversalScaffold,
+} from '../scaffold/scaffold-engine'
 
 /**
  * NODO 1: Estrategia, Fundamentos & Planificación con Dependencias Fin-Inicio
@@ -249,6 +253,14 @@ export async function node_phase1_strategy_and_plan(state: SDLCStateType): Promi
           .map((u) => `  - **${u.id} (${u.title}):** ${u.expectedBusinessOutcome}`)
           .join('\n')
 
+  const detectedScaffold = buildUniversalScaffold({
+    userText: initiativeNarrative,
+    contextInitiative: initiativeTitle,
+    initiativeTitle,
+    declaredDependencies: state.declaredDependencies,
+    declaredDevDependencies: state.declaredDevDependencies,
+  })
+
   const fallbackPlan = () => ({
     content:
       `### 📋 Fase 1: Evaluación de Requerimientos y Propuesta de Solución Técnica (DAG Fin-Inicio)\n\n` +
@@ -269,14 +281,14 @@ export async function node_phase1_strategy_and_plan(state: SDLCStateType): Promi
       `${contractsMarkdown}\n\n` +
       `#### 5. Marco de Referencia del Desarrollo y Estructura Propuesta\n` +
       `Para enmarcar el desarrollo propongo el siguiente marco de trabajo estándar:\n` +
-      `* **Framework sugerido:** \`HTML5 + TypeScript + TailwindCSS\` con \`Vite\` y \`Vitest\` (o la tecnología que prefieras: Angular con Material, React con Vite, Vue 3, Vanilla TS, etc.)\n` +
+      `* **Framework / Stack sugerido:** \`${detectedScaffold.frameworkTitle}\` (Runtime: \`${detectedScaffold.runtime}\`, Arquetipo: \`${detectedScaffold.archetype}\`)\n` +
       `* **Estructura prevista:**\n` +
-      `  - \`src/components/\`: Componentes modulares de interfaz y lógica.\n` +
-      `  - \`src/services/\`: Servicios de aplicación, orquestación y adaptadores.\n` +
-      `  - \`src/main.ts\` e \`index.html\`: Punto de entrada integrado y transpilable de la aplicación.\n` +
-      `  - Raíz del proyecto: Archivos base (\`package.json\`, \`tsconfig.json\`, \`vite.config.ts\`) y scripts de setup (\`setup.cmd\` y \`setup.sh\`).\n\n` +
+      `  - Directorio de componentes y servicios: \`${detectedScaffold.componentDirectory}/\`\n` +
+      `  - Directorio de tests: \`${detectedScaffold.testDirectory}/\`\n` +
+      `  - Manifiestos base: ${detectedScaffold.manifestFiles.map((m) => `\`${m.path}\``).join(', ')}\n` +
+      `  - Scripts de ciclo de vida (\`setup.cmd\` y \`setup.sh\`)\n\n` +
       `💬 **Iteración con el Usuario (Fase 1 - Marco de Referencia y Aprobación de Propuesta Técnica):**\n` +
-      `Por favor, revisa esta **Propuesta de Solución Técnica** e indícame en el chat si la apruebas o si deseas ajustar algún componente, contrato o el framework tecnológico (ej. Angular con Material, React, HTML5+TS+Tailwind, etc.).\n` +
+      `Por favor, revisa esta **Propuesta de Solución Técnica** e indícame en el chat si la apruebas o si deseas ajustar algún componente, contrato o el marco tecnológico (ej. GoLang con Redis, Python/FastAPI, Angular con Material, React, HTML5+TS+Tailwind, etc.).\n` +
       `Con tu aprobación:\n` +
       `1. Generaré los scripts \`setup.cmd\` y \`setup.sh\` y archivos base en la raíz del workspace.\n` +
       `2. Entraremos en el **bucle autónomo de construcción de componentes** siguiendo el DAG Fin-Inicio sin interrupciones innecesarias hasta completar la solución integrable.\n\n` +
@@ -316,9 +328,48 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
     defaultFallback: fallbackPlan,
   })
 
-  // Si el LLM invocó create_components_dag o propose_design_options durante el análisis, aplicamos sus ajustes
+  // Procesar herramientas invocadas por el LLM
+  let declaredDependencies: Record<string, string> = { ...(state.declaredDependencies || {}) }
+  let declaredDevDependencies: Record<string, string> = { ...(state.declaredDevDependencies || {}) }
+  let proposedScaffold: UniversalProjectScaffold = detectedScaffold
+
   for (const tc of llmPlan.toolCalls) {
-    if (tc.name === 'create_components_dag' && Array.isArray(tc.args.components)) {
+    if (tc.name === 'declare_project_dependencies') {
+      if (tc.args.dependencies && typeof tc.args.dependencies === 'object') {
+        declaredDependencies = {
+          ...declaredDependencies,
+          ...(tc.args.dependencies as Record<string, string>),
+        }
+      }
+      if (tc.args.devDependencies && typeof tc.args.devDependencies === 'object') {
+        declaredDevDependencies = {
+          ...declaredDevDependencies,
+          ...(tc.args.devDependencies as Record<string, string>),
+        }
+      }
+    } else if (tc.name === 'propose_project_scaffold') {
+      const p = tc.args as Record<string, any>
+      proposedScaffold = {
+        runtime: String(p.runtime || detectedScaffold.runtime),
+        archetype: String(p.archetype || detectedScaffold.archetype),
+        frameworkTitle: String(p.frameworkTitle || detectedScaffold.frameworkTitle),
+        hasUI: typeof p.hasUI === 'boolean' ? p.hasUI : detectedScaffold.hasUI,
+        packageManager: p.packageManager || detectedScaffold.packageManager,
+        componentDirectory: String(p.componentDirectory || detectedScaffold.componentDirectory),
+        serviceDirectory: String(p.serviceDirectory || detectedScaffold.serviceDirectory),
+        testDirectory: String(p.testDirectory || detectedScaffold.testDirectory),
+        fileExtension: String(p.fileExtension || detectedScaffold.fileExtension || ''),
+        manifestFiles: Array.isArray(p.manifestFiles) && p.manifestFiles.length > 0 ? p.manifestFiles : detectedScaffold.manifestFiles,
+        configFiles: Array.isArray(p.configFiles) ? p.configFiles : detectedScaffold.configFiles,
+        skeletonFiles: Array.isArray(p.skeletonFiles) ? p.skeletonFiles : detectedScaffold.skeletonFiles,
+        dependencies: p.dependencies ? {
+          runtime: { ...detectedScaffold.dependencies.runtime, ...(p.dependencies.runtime || {}) },
+          devOrTest: { ...detectedScaffold.dependencies.devOrTest, ...(p.dependencies.devOrTest || {}) },
+        } : detectedScaffold.dependencies,
+        testing: p.testing ? { ...detectedScaffold.testing, ...p.testing } : detectedScaffold.testing,
+        lifecycle: p.lifecycle ? { ...detectedScaffold.lifecycle, ...p.lifecycle } : detectedScaffold.lifecycle,
+      }
+    } else if (tc.name === 'create_components_dag' && Array.isArray(tc.args.components)) {
       for (const rawComp of tc.args.components) {
         if (!rawComp || typeof rawComp !== 'object') continue
         const rc = rawComp as Record<string, unknown>
@@ -407,6 +458,9 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
     technicalDebtList: initialDebtList,
     currentPhase: '1_STRATEGY_AND_PLAN',
     phase1FrameworkAgreed: false,
+    projectScaffold: proposedScaffold,
+    declaredDependencies,
+    declaredDevDependencies,
     messages: [...state.messages, phase1Msg],
   }
 }
@@ -425,52 +479,67 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
   const userMessages = state.messages.filter((m) => m.role === 'user')
   const lastUserText = userMessages[userMessages.length - 1]?.content || ''
 
-  // Resolver marco de referencia de forma dinámica y alineada con la conversación
-  const resolved = resolveFrameworkStack(lastUserText, state.phase0Data?.step1?.rawBusinessLanguageText)
-  const { framework, structureSummary, componentsDir, servicesDir } = resolved
+  const initiativeTitle =
+    state.phase0Data?.step1?.featureTitle ||
+    state.useCases?.[0]?.title ||
+    'LocalLoop Project'
+  const contextInitiative =
+    state.phase0Data?.step1?.rawBusinessLanguageText ||
+    state.useCases?.[0]?.expectedBusinessOutcome ||
+    ''
 
-  // 1. Escribir archivos de configuración base del framework en el workspace
-  const packageJsonContent = JSON.stringify(resolved.packageJson, null, 2)
-  const tsconfigContent = JSON.stringify(resolved.tsconfigJson, null, 2)
+  // 1. Construir el Scaffold Universal agnóstico al lenguaje (GoLang, Node, Python, Godot C#, etc.)
+  // Si el usuario en su respuesta HITL especificó explícitamente un cambio de framework/tecnología diferente
+  // a la propuesta inicial de Fase 1, la decisión del usuario prevalece sobre el borrador previo.
+  const userDetected = detectProjectArchetype(lastUserText, contextInitiative)
+  const isUserTechChange =
+    Boolean(lastUserText.trim()) &&
+    Boolean(state.projectScaffold) &&
+    userDetected.frameworkTitle !== state.projectScaffold?.frameworkTitle &&
+    /\b(?:angular|react|vue|svelte|phaser|tailwind|go|golang|python|fastapi|django|flask|rust|cargo|godot|c#|csharp|\.net|dotnet)\b/i.test(
+      lastUserText,
+    )
 
-  // 2. Scripts de Setup (Windows .cmd y Unix .sh) y configuraciones adicionales
-  const filesToWrite = [
-    { path: 'package.json', content: packageJsonContent, reason: 'Configuración base del framework' },
-    { path: 'tsconfig.json', content: tsconfigContent, reason: 'Configuración TypeScript del framework' },
-    { path: 'setup.cmd', content: resolved.setupCmdContent, reason: 'Script de setup inicial para Windows' },
-    { path: 'setup.sh', content: resolved.setupShContent, reason: 'Script de setup inicial para Linux/macOS' },
-    ...resolved.extraConfigFiles,
-  ]
+  const scaffold = buildUniversalScaffold({
+    userText: lastUserText || contextInitiative || 'HTML5 + TypeScript + TailwindCSS',
+    contextInitiative,
+    initiativeTitle,
+    declaredDependencies: state.declaredDependencies,
+    declaredDevDependencies: state.declaredDevDependencies,
+    proposedScaffold: isUserTechChange ? undefined : (state.projectScaffold || undefined),
+  })
 
-  for (const f of filesToWrite) {
-    try {
-      await executeFileSystemTool(
-        'fs_write_file',
-        { path: f.path, content: f.content, reason: f.reason },
-        { sessionId: state.sessionId || 0, fsWriteMode: FsWriteMode.AUTO, onProposalCreated: callbacks?.onProposalCreated },
-      )
-    } catch {
-      // ignore
-    }
-    await writeWorkspaceFileDirect(f.path, f.content)
-  }
+  // 2. Materializar físicamente todos los archivos del scaffold en el workspace
+  await materializeUniversalScaffold(scaffold, {
+    sessionId: state.sessionId,
+    onProposalCreated: callbacks?.onProposalCreated,
+  })
 
   // 3. Registrar frameworkConfig en memoria persistente Engram
   const frameworkConfig: ProjectFrameworkConfig = {
-    framework,
-    packageManager: resolved.packageManager,
-    bundler: resolved.bundler,
-    testRunner: resolved.testRunner,
-    devCommand: resolved.devCommand,
-    buildCommand: resolved.buildCommand,
-    testCommand: resolved.testCommand,
-    projectStructureSummary: structureSummary,
+    framework: scaffold.frameworkTitle,
+    packageManager: scaffold.packageManager,
+    bundler: scaffold.hasUI ? (scaffold.frameworkTitle.includes('Angular') ? 'none' : 'vite') : 'none',
+    testRunner: scaffold.testing.unitTestRunner,
+    devCommand: scaffold.lifecycle.startCmd,
+    buildCommand: scaffold.lifecycle.setupCmd,
+    testCommand: scaffold.lifecycle.testCmd,
+    projectStructureSummary:
+      `- Marco Tecnológico: \`${scaffold.frameworkTitle}\` (Runtime: \`${scaffold.runtime}\`, Arquetipo: \`${scaffold.archetype}\`)\n` +
+      `- Directorio de componentes: \`${scaffold.componentDirectory}/\`\n` +
+      `- Directorio de servicios: \`${scaffold.serviceDirectory}/\`\n` +
+      `- Directorio de tests: \`${scaffold.testDirectory}/\`\n` +
+      `- Manifiestos base: ${scaffold.manifestFiles.map((m) => `\`${m.path}\``).join(', ')}\n` +
+      `- Scripts de ciclo de vida: \`setup.cmd\`, \`setup.sh\`, \`start.cmd\`, \`start.sh\``,
     setupScriptsGenerated: true,
     setupInstructions: `Para inicializar el proyecto en tu máquina local:
 1. Abre tu terminal en la raíz de la carpeta vinculada.
 2. En Windows ejecuta: \`setup.cmd\`
 3. En Linux/macOS ejecuta: \`chmod +x setup.sh && ./setup.sh\``,
     startScriptsGenerated: false,
+    runtime: scaffold.runtime,
+    archetype: scaffold.archetype,
+    hasUI: scaffold.hasUI,
   }
 
   await engram.save({
@@ -483,17 +552,24 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
         title: 'framework_config',
         content: JSON.stringify(frameworkConfig, null, 2),
       },
+      {
+        title: 'project_scaffold',
+        content: JSON.stringify(scaffold, null, 2),
+      },
     ],
   })
 
   // 4. Actualizar rutas en el grafo de componentes para guiar a los agentes de Fase 2 y 3
   const updatedComponents: Record<string, ComponentNode> = { ...state.componentsGraph }
+  const fileExt = scaffold.fileExtension || 'ts'
+  const baseDir = scaffold.componentDirectory || 'src/components'
+  const servDir = scaffold.serviceDirectory || baseDir
+
   for (const compId of Object.keys(updatedComponents)) {
     const comp = updatedComponents[compId]
     const isService = comp.id.includes('service') || comp.name.toLowerCase().includes('servicio')
-    const dir = isService ? servicesDir : componentsDir
-    const ext = framework.includes('React') ? 'tsx' : 'ts'
-    comp.targetPath = `${dir}/${comp.id}.${ext}`
+    const dir = isService ? servDir : baseDir
+    comp.targetPath = `${dir}/${comp.id}.${fileExt}`
     comp.targetPaths = [comp.targetPath]
   }
 
@@ -504,12 +580,13 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
       `### 🛠️ Fase 1: Marco de Referencia Formalizado y Setup Inicial\n\n` +
       `He procesado tu respuesta en el paso HITL y he formalizado el marco de desarrollo del proyecto:\n\n` +
       `> 💬 **Tu Respuesta / Directriz Aplicada:** *"${userDecisionSummary}"*\n\n` +
-      `* **Marco Tecnológico Acordado:** \`${framework}\`\n` +
-      `* **Gestor de Paquetes & Bundler:** \`${resolved.packageManager}\` / \`${resolved.bundler}\` (Tests: \`${resolved.testRunner}\`)\n` +
+      `* **Marco Tecnológico Acordado:** \`${scaffold.frameworkTitle}\` (Runtime: \`${scaffold.runtime}\`, Arquetipo: \`${scaffold.archetype}\`)\n` +
+      `* **Gestor de Paquetes & Herramientas:** ${scaffold.packageManager ? `\`${scaffold.packageManager}\` (Bundler: \`${frameworkConfig.bundler}\`, Tests: \`${scaffold.testing.unitTestRunner}\`)` : `Herramientas nativas de \`${scaffold.runtime}\` (Tests: \`${scaffold.testing.unitTestRunner}\`)`}\n` +
       `* **Estructura Canónica del Proyecto:**\n` +
-      `  - Directorio de Componentes: \`${componentsDir}/\`\n` +
-      `  - Directorio de Servicios y Lógica: \`${servicesDir}/\`\n` +
-      `  - Configuración del Entorno: \`package.json\`, \`tsconfig.json\`${resolved.bundler === 'vite' ? ', `vite.config.ts`' : ''}\n\n` +
+      `  - Directorio de Componentes: \`${scaffold.componentDirectory}/\`\n` +
+      `  - Directorio de Servicios y Lógica: \`${scaffold.serviceDirectory}/\`\n` +
+      `  - Directorio de Tests: \`${scaffold.testDirectory}/\`\n` +
+      `  - Manifiestos y Configuración: ${scaffold.manifestFiles.map((m) => `\`${m.path}\``).join(', ')}${scaffold.configFiles.length > 0 ? ', ' + scaffold.configFiles.map((c) => `\`${c.path}\``).join(', ') : ''}\n\n` +
       `#### 🚀 Scripts de Setup Generados en la Raíz del Workspace\n` +
       `Se han creado los scripts de inicialización en la raíz de tu proyecto:\n` +
       `* 🪟 **Windows:** \`setup.cmd\`\n` +
@@ -519,7 +596,7 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
       `2. Ejecuta según tu sistema operativo:\n` +
       `   - En Windows: \`setup.cmd\`\n` +
       `   - En Linux / macOS: \`chmod +x setup.sh && ./setup.sh\`\n` +
-      `3. El script creará los directorios del proyecto e instalará las dependencias necesarias con \`${resolved.packageManager} install\` / \`npm install\`.\n\n` +
+      `3. El script creará la estructura de directorios y sincronizará las dependencias necesarias.\n\n` +
       `> 📍 **Alineamiento de Agentes:** Los agentes de las siguientes fases (Fase 2 de Diseño Técnico y Fase 3 de Construcción) ejecutarán el bucle de construcción de forma autónoma respetando tu directriz y las carpetas fijadas.\n\n` +
       `Procediendo con el despacho autónomo de componentes...`,
     thought: 'Formalizando marco de referencia con la respuesta del usuario, generando scripts setup.cmd / setup.sh y sincronizando estructura...',
@@ -536,10 +613,10 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
     sdlcPhase: '1_STRATEGY_AND_PLAN',
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Software de LocalLoop. Tu función es reflejar explícitamente la respuesta del usuario ("${userDecisionSummary}"), formalizar el marco tecnológico acordado y confirmar la generación de los scripts de setup inicial (setup.cmd y setup.sh) en la raíz del workspace. Si el usuario pidió ajustar componentes en su respuesta, puedes invocar create_components_dag. IMPORTANTE: No hagas nuevas preguntas al usuario; confirma su decisión y da paso a la construcción autónoma.`,
     userPrompt: `Respuesta exacta del usuario en el HITL de Fase 1: "${userDecisionSummary}"
-Marco determinado: ${framework}
+Marco determinado: ${scaffold.frameworkTitle}
 Estructura:
-${structureSummary}
-Scripts generados en raíz: setup.cmd, setup.sh, package.json, tsconfig.json.
+${frameworkConfig.projectStructureSummary}
+Scripts generados en raíz: setup.cmd, setup.sh, ${scaffold.manifestFiles.map((m) => m.path).join(', ')}.
 
 Genera el informe de formalización reflejando explícitamente la respuesta del usuario, indicándole cómo usar los scripts de setup y confirmando el inicio inmediato de la construcción autónoma.`,
     tools: resolvedSkill.tools,
@@ -556,8 +633,8 @@ Genera el informe de formalización reflejando explícitamente la respuesta del 
         if (!cid) continue
         const deps = Array.isArray(rc.dependsOn) ? rc.dependsOn.map(String) : []
         const isService = cid.includes('service') || String(rc.name || '').toLowerCase().includes('servicio')
-        const dir = isService ? servicesDir : componentsDir
-        const ext = framework.includes('React') ? 'tsx' : 'ts'
+        const dir = isService ? scaffold.serviceDirectory : scaffold.componentDirectory
+        const ext = scaffold.fileExtension || fileExt || 'ts'
         updatedComponents[cid] = {
           id: cid,
           name: String(rc.name || updatedComponents[cid]?.name || cid),
@@ -587,6 +664,7 @@ Genera el informe de formalización reflejando explícitamente la respuesta del 
 
   return {
     frameworkConfig,
+    projectScaffold: scaffold,
     phase1FrameworkAgreed: true,
     currentPhase: '2_TECHNICAL_DESIGN_GATE',
     componentsGraph: updatedComponents,

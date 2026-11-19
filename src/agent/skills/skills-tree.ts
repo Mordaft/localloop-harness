@@ -68,6 +68,7 @@ export const SKILL_TREE: SkillBranch[] = [
           'read_web_guidance_doc',
           'create_components_dag',
           'declare_project_dependencies',
+          'propose_project_scaffold',
           'propose_design_options',
           'set_quality_gates',
         ],

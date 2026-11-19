@@ -114,8 +114,12 @@ export async function verifyAndRepairApplicationCompilation(
   const maxIterations = options?.maxRepairIterations ?? 3
   const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
   const bundler = state.frameworkConfig?.bundler || 'none'
+  const isVite = bundler === 'vite'
   const buildCmd =
-    bundler === 'vite' ? 'npx vite build' : state.frameworkConfig?.buildCommand || 'npm run build'
+    state.frameworkConfig?.buildCommand ||
+    (isVite
+      ? 'npx vite build'
+      : state.projectScaffold?.lifecycle?.testCmd || 'npm run build')
 
   // Paso 0: Limpieza estática previa de imports
   const preCleaned = await validateAndCleanWorkspaceImports()

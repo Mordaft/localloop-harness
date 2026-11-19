@@ -51,6 +51,136 @@ export function generateComponentCode(
     `${comp.id} ${comp.name} ${comp.description}`,
   )
   const targetPath = comp.targetPath || `src/components/${comp.id}.ts`
+
+  if (targetPath.endsWith('.go')) {
+    const goCode = `package service
+
+import (
+\t"context"
+\t"time"
+)
+
+// ${pascalId}Item representa un registro de datos gestionado por ${comp.name}.
+type ${pascalId}Item struct {
+\tID        string    \`json:"id"\`
+\tTitle     string    \`json:"title"\`
+\tCreatedAt time.Time \`json:"created_at"\`
+}
+
+// I${pascalId}Service define el contrato de operaciones del componente.
+type I${pascalId}Service interface {
+\tExecute(ctx context.Context, action string) (*${pascalId}Item, error)
+\tListItems() []${pascalId}Item
+\tGetStatus() string
+}
+
+// ${pascalId}Service implementa el servicio de ${comp.name}.
+type ${pascalId}Service struct {
+\tstatus string
+\titems  []${pascalId}Item
+}
+
+func New${pascalId}Service() *${pascalId}Service {
+\treturn &${pascalId}Service{
+\t\tstatus: "READY",
+\t\titems:  make([]${pascalId}Item, 0),
+\t}
+}
+
+func (s *${pascalId}Service) Execute(ctx context.Context, action string) (*${pascalId}Item, error) {
+\titem := ${pascalId}Item{
+\t\tID:        "${comp.id}_1",
+\t\tTitle:     "${comp.name}",
+\t\tCreatedAt: time.Now().UTC(),
+\t}
+\ts.items = append(s.items, item)
+\ts.status = "ACTIVE"
+\treturn &item, nil
+}
+
+func (s *${pascalId}Service) ListItems() []${pascalId}Item {
+\treturn s.items
+}
+
+func (s *${pascalId}Service) GetStatus() string {
+\treturn s.status
+}
+`
+    return {
+      code: goCode,
+      files: [
+        {
+          path: targetPath,
+          content: goCode,
+          description: `Servicio GoLang para ${comp.name}`,
+        },
+      ],
+    }
+  }
+
+  if (targetPath.endsWith('.cs')) {
+    const csCode = `using System;
+using System.Collections.Generic;
+
+namespace Game.Services;
+
+/// <summary>
+/// Modelo de datos para ${comp.name}.
+/// </summary>
+public class ${pascalId}Item
+{
+    public string Id { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Contrato de interfaz del componente ${comp.name}.
+/// </summary>
+public interface I${pascalId}Service
+{
+    ${pascalId}Item Execute(string action);
+    IReadOnlyList<${pascalId}Item> ListItems();
+    string GetStatus();
+}
+
+/// <summary>
+/// Implementación de servicio para ${comp.name}.
+/// </summary>
+public partial class ${pascalId}Service : I${pascalId}Service
+{
+    private string _status = "READY";
+    private readonly List<${pascalId}Item> _items = new();
+
+    public ${pascalId}Item Execute(string action)
+    {
+        var item = new ${pascalId}Item
+        {
+            Id = "${comp.id}_1",
+            Title = "${comp.name}",
+            CreatedAt = DateTime.UtcNow
+        };
+        _items.Add(item);
+        _status = "ACTIVE";
+        return item;
+    }
+
+    public IReadOnlyList<${pascalId}Item> ListItems() => _items.AsReadOnly();
+    public string GetStatus() => _status;
+}
+`
+    return {
+      code: csCode,
+      files: [
+        {
+          path: targetPath,
+          content: csCode,
+          description: `Script / Servicio C# para ${comp.name}`,
+        },
+      ],
+    }
+  }
+
   const code = `/**
  * Componente: ${comp.name} (${comp.id})
  * Responsabilidad: ${comp.description}

@@ -18,11 +18,13 @@ export {
   type GeneratedComponentArtifacts,
 } from './codegen/component-codegen'
 
-// Detección de framework y stack tecnológico
+// Scaffolding universal agnóstico
 export {
-  resolveFrameworkStack,
-  type FrameworkStackResolution,
-} from './framework/stack-resolver'
+  buildUniversalScaffold,
+  materializeUniversalScaffold,
+  detectProjectArchetype,
+  type ArchetypeClassification,
+} from './scaffold/scaffold-engine'
 
 // Planificador topológico Fin-Inicio
 export { node_component_scheduler } from './scheduler/component-scheduler'

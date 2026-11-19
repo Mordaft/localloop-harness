@@ -203,18 +203,18 @@ export function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
     function: {
       name: 'declare_project_dependencies',
       description:
-        'Declara formalmente dependencias y librerías npm adicionales (producción y desarrollo) requeridas según las necesidades de negocio (ej. dexie para IndexedDB, chart.js, etc.).',
+        'Declara formalmente dependencias y librerías adicionales (producción y desarrollo) requeridas según las necesidades de negocio (ej. dexie para IndexedDB, go-redis para GoLang, etc.).',
       parameters: {
         type: 'object',
         properties: {
           dependencies: {
             type: 'object',
-            description: 'Pares clave-valor de paquetes npm y sus versiones semver (ej: {"dexie": "^4.0.11"}).',
+            description: 'Pares clave-valor de paquetes y sus versiones (ej: {"dexie": "^4.0.11"} o {"github.com/redis/go-redis/v9": "v9.5.1"}).',
             additionalProperties: { type: 'string' },
           },
           devDependencies: {
             type: 'object',
-            description: 'Pares clave-valor de paquetes de desarrollo npm y sus versiones semver.',
+            description: 'Pares clave-valor de paquetes de desarrollo y sus versiones.',
             additionalProperties: { type: 'string' },
           },
           reason: {
@@ -223,6 +223,121 @@ export function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
           },
         },
         required: ['dependencies'],
+      },
+    },
+  })
+
+  map.set('propose_project_scaffold', {
+    type: 'function',
+    function: {
+      name: 'propose_project_scaffold',
+      description:
+        'Propone la arquitectura y scaffolding universal del proyecto para cualquier lenguaje o tecnología (Godot C#, Go, Node, Python, Rust, Flutter, etc.): define runtime, arquetipo, manifiestos (project.godot, .csproj, go.mod, package.json), dependencias, scripts de ciclo de vida (setup, start, test) y arnés de pruebas.',
+      parameters: {
+        type: 'object',
+        properties: {
+          runtime: {
+            type: 'string',
+            description: 'Runtime o lenguaje principal del proyecto (ej: "csharp", "go", "node", "python", "rust", "dart", etc.).',
+          },
+          archetype: {
+            type: 'string',
+            description: 'Tipo o arquetipo de arquitectura (ej: "GAME_DESKTOP", "API_SERVICE", "WEB_APP", "CLI_TOOL", "WORKER_SERVICE", "MOBILE_APP", etc.).',
+          },
+          hasUI: {
+            type: 'boolean',
+            description: 'Indica si el proyecto tiene interfaz gráfica web que corre en navegador (requiere HTML/CSS/Bundler) o es nativo/backend.',
+          },
+          frameworkTitle: {
+            type: 'string',
+            description: 'Nombre descriptivo del marco o stack (ej. "Godot 4 + C# (.NET 8)", "GoLang + Redis", "React + TypeScript").',
+          },
+          componentDirectory: {
+            type: 'string',
+            description: 'Directorio canónico donde se alojarán los componentes del código fuente (ej. "scripts", "src/components", "internal/service").',
+          },
+          serviceDirectory: {
+            type: 'string',
+            description: 'Directorio canónico donde se alojarán los servicios o lógica (ej. "scripts", "src/services", "internal/service").',
+          },
+          testDirectory: {
+            type: 'string',
+            description: 'Directorio canónico de pruebas (ej. "tests", "tests/e2e").',
+          },
+          fileExtension: {
+            type: 'string',
+            description: 'Extensión de fichero por defecto para el código fuente (ej: "cs", "go", "ts", "py", "rs", "dart").',
+          },
+          manifestFiles: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                content: { type: 'string' },
+                purpose: { type: 'string' },
+              },
+              required: ['path', 'content'],
+            },
+            description: 'Archivos manifiesto del proyecto (project.godot, MiJuego.csproj, go.mod, package.json, Cargo.toml, pyproject.toml).',
+          },
+          configFiles: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                content: { type: 'string' },
+                purpose: { type: 'string' },
+              },
+              required: ['path', 'content'],
+            },
+            description: 'Archivos de configuración del entorno (docker-compose.yml, tsconfig.json, escenas .tscn, etc.).',
+          },
+          skeletonFiles: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                content: { type: 'string' },
+                purpose: { type: 'string' },
+              },
+              required: ['path', 'content'],
+            },
+            description: 'Archivos esqueleto y punto de entrada inicial (scripts/Main.cs, cmd/server/main.go, src/main.ts, etc.).',
+          },
+          dependencies: {
+            type: 'object',
+            properties: {
+              runtime: { type: 'object', additionalProperties: { type: 'string' } },
+              devOrTest: { type: 'object', additionalProperties: { type: 'string' } },
+            },
+            description: 'Dependencias de producción y desarrollo.',
+          },
+          lifecycle: {
+            type: 'object',
+            properties: {
+              setupCmd: { type: 'string', description: 'Comando o script batch para inicializar dependencias en Windows.' },
+              setupSh: { type: 'string', description: 'Comando o script bash para inicializar dependencias en Unix.' },
+              startCmd: { type: 'string', description: 'Comando o script batch para arrancar la aplicación en Windows.' },
+              startSh: { type: 'string', description: 'Comando o script bash para arrancar la aplicación en Unix.' },
+              testCmd: { type: 'string', description: 'Comando para ejecutar pruebas.' },
+            },
+            description: 'Scripts de ciclo de vida del proyecto.',
+          },
+          testing: {
+            type: 'object',
+            properties: {
+              unitTestRunner: { type: 'string' },
+              unitTestDir: { type: 'string' },
+              e2eTestRunner: { type: 'string' },
+              e2eTestDir: { type: 'string' },
+            },
+            description: 'Configuración del arnés de pruebas.',
+          },
+        },
+        required: ['runtime', 'archetype', 'hasUI'],
       },
     },
   })
