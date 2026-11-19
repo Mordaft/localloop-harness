@@ -369,9 +369,10 @@ export async function node_phase4_business_compile(state: SDLCStateType): Promis
   let startCmdContent = scaffoldStartCmd
   let startShContent = scaffoldStartSh
 
-  if (!startCmdContent) {
+  if (!startCmdContent || !startShContent) {
     const runCmd = state.frameworkConfig?.devCommand || (pkgMgr ? `${pkgMgr} start` : 'echo "Iniciando servicio..."')
-    startCmdContent = `@echo off
+    if (!startCmdContent) {
+      startCmdContent = `@echo off
 echo ========================================================
 echo   LocalLoop - Arranque de Aplicacion y Prueba E2E
 echo   Marco Tecnologico: ${currentFw}
@@ -379,7 +380,9 @@ echo ========================================================
 echo.
 call ${runCmd}
 `
-    startShContent = `#!/usr/bin/env bash
+    }
+    if (!startShContent) {
+      startShContent = `#!/usr/bin/env bash
 set -e
 echo "========================================================"
 echo "  LocalLoop - Arranque de Aplicación y Prueba E2E"
@@ -388,6 +391,7 @@ echo "========================================================"
 echo ""
 ${runCmd}
 `
+    }
   }
 
   // 2. Generar punto de entrada TypeScript (src/main.ts), informe visual E2E y actualizar index.html si no existe aplicación previa

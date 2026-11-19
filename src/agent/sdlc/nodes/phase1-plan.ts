@@ -1,9 +1,7 @@
 import { trace } from '../../../diagnostics'
 import { getSessionCallbacks } from '../../agent-graph'
 import { getPersistentEngram, saveSdlcPhaseArtifact } from '../../../memory/engram-memory'
-import { executeFileSystemTool } from '../../../fs/fs-tools'
-import { writeWorkspaceFileDirect } from '../../../fs/workspace-fs'
-import { FsWriteMode, SessionStatus } from '../../../enums'
+import { SessionStatus } from '../../../enums'
 import { updateSessionMetrics } from '../../../memory/app-db'
 import { generateMermaidDag } from '../../../mermaid'
 import { RuntimeSkillLoader } from '../../skills/runtime-loader'
@@ -14,6 +12,7 @@ import type {
   SDLCStateType,
   TechnicalDebtRecord,
   TechnicalDesignProposal,
+  UniversalProjectScaffold,
 } from '../../sdlc-state'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { emitSDLCProgress } from '../execution/progress-emitter'

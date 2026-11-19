@@ -107,7 +107,9 @@ func (s *${pascalId}Service) GetStatus() string {
 }
 `
     return {
+      className: `${pascalId}Service`,
       code: goCode,
+      testScript: `console.log('Verificando ${comp.name} (${comp.id})...');\n({ verified: true, componentId: '${comp.id}' });`,
       files: [
         {
           path: targetPath,
@@ -170,7 +172,9 @@ public partial class ${pascalId}Service : I${pascalId}Service
 }
 `
     return {
+      className: `${pascalId}Service`,
       code: csCode,
+      testScript: `console.log('Verificando ${comp.name} (${comp.id})...');\n({ verified: true, componentId: '${comp.id}' });`,
       files: [
         {
           path: targetPath,

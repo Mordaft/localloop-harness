@@ -131,6 +131,7 @@ export function buildUniversalScaffold(params: {
   // la propuesta del LLM es la fuente de verdad primaria y se adopta de forma íntegra y soberana.
   if (params.proposedScaffold && params.proposedScaffold.manifestFiles && params.proposedScaffold.manifestFiles.length > 0) {
     const p = params.proposedScaffold
+    const manifests = p.manifestFiles || []
     return {
       runtime: p.runtime || classification.runtime,
       archetype: p.archetype || classification.archetype,
@@ -141,7 +142,11 @@ export function buildUniversalScaffold(params: {
       serviceDirectory: p.serviceDirectory || (classification.runtime === 'csharp' ? 'scripts' : 'src/services'),
       testDirectory: p.testDirectory || 'tests',
       fileExtension: p.fileExtension || (classification.runtime === 'csharp' ? 'cs' : classification.runtime === 'go' ? 'go' : classification.runtime === 'python' ? 'py' : 'ts'),
-      manifestFiles: p.manifestFiles,
+      manifestFiles: manifests.map((m) => ({
+        path: m.path,
+        content: m.content,
+        purpose: m.purpose || 'Manifiesto del proyecto',
+      })),
       configFiles: p.configFiles || [],
       skeletonFiles: p.skeletonFiles || [],
       dependencies: p.dependencies || {
@@ -514,6 +519,12 @@ func TestServiceHealthCheckE2E(t *testing.T) {
 \t}
 }
 `
+
+    skeletonFiles.push({
+      path: 'tests/e2e/health_test.go',
+      content: e2eTestContent,
+      purpose: 'Prueba E2E de verificación de salud del servicio GoLang',
+    })
 
     return {
       runtime: 'go',
@@ -1044,6 +1055,8 @@ export async function materializeUniversalScaffold(
     ...scaffold.skeletonFiles.map((s) => ({ path: s.path, content: s.content, reason: s.purpose })),
     { path: 'setup.cmd', content: scaffold.lifecycle.setupCmd, reason: 'Script de inicialización para Windows' },
     { path: 'setup.sh', content: scaffold.lifecycle.setupSh, reason: 'Script de inicialización para Linux/macOS' },
+    { path: 'start.cmd', content: scaffold.lifecycle.startCmd, reason: 'Script de arranque para Windows' },
+    { path: 'start.sh', content: scaffold.lifecycle.startSh, reason: 'Script de arranque para Linux/macOS' },
   ]
 
   const results: Array<{ path: string; bytesWritten: number }> = []
