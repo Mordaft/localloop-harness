@@ -100,6 +100,7 @@ export interface ComponentNode {
     | 'IN_BUILD'
     | 'UNIT_TESTING'
     | 'VERIFIED'
+    | 'FAILED'
 }
 
 export interface TechnicalDesignProposal {
@@ -155,7 +156,15 @@ export interface ProjectFrameworkConfig {
 export interface ProjectProgressEvent {
   id: string
   timestamp: string
-  type: 'UNIT_TEST_PASS' | 'E2E_AUDIT_PASS' | 'BACKLOG_UPDATED' | 'DEBT_RECORDED' | 'COMPONENT_VERIFIED'
+  type:
+    | 'UNIT_TEST_PASS'
+    | 'UNIT_TEST_FAIL'
+    | 'E2E_AUDIT_PASS'
+    | 'E2E_AUDIT_FAIL'
+    | 'E2E_SIMULATION'
+    | 'BACKLOG_UPDATED'
+    | 'DEBT_RECORDED'
+    | 'COMPONENT_VERIFIED'
   componentId?: string
   evidenceSummary: string
 }

@@ -130,7 +130,7 @@ interface OriginLike {
 }
 
 interface OriginConstructorLike {
-  new (): OriginLike
+  new(): OriginLike
   from(value: unknown): OriginLike
 }
 
@@ -524,7 +524,7 @@ export function sanitizeTsForBrowser(code: string): string {
 
   // 10. Strip method/function parameter types and return types before `{` (including nested parens in callback types)
   out = out.replace(
-    /^(\s*(?:async\s+)?(?:function\s+)?[A-Za-z_$][A-Za-z0-9_$]*)\s*\((.*)\)\s*(?::\s*[^{]+)?\{$/gm,
+    /^(\s*(?:async\s+)?(?:function\s+)?[A-Za-z_$][A-Za-z0-9_$]*)\s*\((.*)\)\s*(?::\s*(?:\{[^{}\n]*\}|[^{\n])+)?\s*\{/gm,
     (match, fnHead, restOfLine) => {
       const headTrim = String(fnHead).trim()
       if (/^(if|for|while|switch|catch|constructor)$/.test(headTrim)) return match
@@ -1323,7 +1323,7 @@ async function executeVirtualBrowserSandboxFallback(
     querySelectorAll: (sel: string) => matchNodes(sel),
   }
 
-  const virtualWindow = {
+  const virtualWindow: any = {
     document: virtualDocument,
     console: customConsole,
     getComputedStyle: (el: VirtualNode) => ({
@@ -1334,6 +1334,8 @@ async function executeVirtualBrowserSandboxFallback(
       fontSize: el?.style?.fontSize || '14px',
     }),
   }
+  virtualWindow.window = virtualWindow
+  virtualWindow.self = virtualWindow
 
   let ok = true
   let returnValue: string | undefined
@@ -1345,18 +1347,20 @@ async function executeVirtualBrowserSandboxFallback(
         /(?:^|\n)\s*(?:import|export|interface|type)\s+|\b(?:private|public|protected|readonly)\s+/.test(options.code)
           ? sanitizeTsForBrowser(options.code)
           : stripMarkdownCodeFences(options.code)
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+      const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor as new (
         cArg: string,
         dArg: string,
         wArg: string,
+        sArg: string,
         body: string,
       ) => (
         c: typeof customConsole,
         d: typeof virtualDocument,
         w: typeof virtualWindow,
+        s: typeof virtualWindow,
       ) => Promise<unknown>
-      const fn = new AsyncFunction('console', 'document', 'window', cleanCode)
-      const res = await fn(customConsole, virtualDocument, virtualWindow)
+      const fn = new AsyncFunction('console', 'document', 'window', 'self', cleanCode)
+      const res = await fn(customConsole, virtualDocument, virtualWindow, virtualWindow)
       if (res !== undefined) {
         returnValue = typeof res === 'string' ? res : JSON.stringify(res)
       }

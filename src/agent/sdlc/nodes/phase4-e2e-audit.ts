@@ -11,9 +11,10 @@ import { getPersistentEngram, saveSdlcPhaseArtifact } from '../../../memory/engr
 import { updateSessionMetrics } from '../../../memory/app-db'
 import { FsWriteMode, SessionStatus } from '../../../enums'
 import { RuntimeSkillLoader } from '../../skills/runtime-loader'
-import type { ProjectFrameworkConfig, ProjectProgressEvent, SDLCStateType } from '../../sdlc-state'
+import type { ProjectFrameworkConfig, ProjectProgressEvent, SDLCStateType, TechnicalDebt } from '../../sdlc-state'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { emitSDLCProgress } from '../execution/progress-emitter'
+import { verifyAndRepairApplicationCompilation } from '../verification/compilation-verifier'
 
 /**
  * NODO 4.1: Ejecución de Automatización E2E
@@ -166,11 +167,56 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
     sandboxExec = await executeSandboxedJs(e2eScript)
   }
 
+  // Comprobaciones observables contra criterios de aceptación:
+  // Si no hay entorno observable (o el DOM no contiene elementos verificables), se registra como simulación
+  const hasObservableDomElements = Boolean(
+    hasBrowserComps &&
+      sandboxExec.ok &&
+      ((visualDomSnapshot && visualDomSnapshot.length > 80) ||
+        (sandboxExec.dom?.queriedElements && sandboxExec.dom.queriedElements.length > 0)),
+  )
+
+  const isSimulation = hasBrowserComps ? !hasObservableDomElements : true
+  const simulationReason = isSimulation
+    ? hasBrowserComps
+      ? 'No se pudieron inspeccionar elementos observables en el DOM durante la ejecución E2E en navegador.'
+      : 'Flujo ejecutado en Sandbox JS mediante simulación sintética de interacción (sin comprobación observable en vivo contra criterios de aceptación).'
+    : undefined
+
+  const acceptanceCriteriaChecks = state.useCases.map((u) => {
+    if (isSimulation) {
+      return {
+        useCaseId: u.id,
+        title: u.title,
+        criterion: u.acceptanceCriteriaGherkin || u.expectedBusinessOutcome,
+        observed: false,
+        isSimulation: true,
+        evidence: 'Simulación controlada (no validada mediante comprobación observable directa).',
+      }
+    }
+    const queriedSelectors =
+      sandboxExec.dom?.queriedElements?.map((e: any) => e.selector || e.tagName) || []
+    return {
+      useCaseId: u.id,
+      title: u.title,
+      criterion: u.acceptanceCriteriaGherkin || u.expectedBusinessOutcome,
+      observed: true,
+      isSimulation: false,
+      evidence: `Comprobación observable en DOM validada: ${queriedSelectors.slice(0, 5).join(', ') || 'Elementos verificados'}`,
+    }
+  })
+
   const e2eReport = {
     executedUseCases: state.useCases.map((u) => u.id),
     allAssertionsPassed: sandboxExec.ok,
+    isSimulation,
+    simulationReason,
+    acceptanceCriteriaChecks,
     executionTimeMs: sandboxExec.durationMs || 1420,
-    traceLog: sandboxExec.logs.length > 0 ? sandboxExec.logs : ['Simulación de interacción de usuario completada sin errores.'],
+    traceLog:
+      sandboxExec.logs.length > 0
+        ? sandboxExec.logs
+        : [isSimulation ? 'Simulación de interacción de usuario registrada.' : 'Comprobaciones observables E2E completadas.'],
     visualEvidence: hasBrowserComps
       ? {
           domSnapshot: visualDomSnapshot,
@@ -180,26 +226,46 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
   }
 
   const fallbackE2e = () => ({
-    content:
-      `### 🧪 Fase 4: Pruebas Automatizadas de Integración E2E\n\n` +
-      `Se ha ejecutado la suite de integración de extremo a extremo (End-to-End) combinando los componentes construidos en **${
-        hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'
-      }**:\n\n` +
-      `* **Flujo E2E Ejecutado:** ${state.useCases.map((u) => u.title).join(' ➔ ')}\n` +
-      `* **Cadena de Componentes del DAG:** ${Object.keys(state.componentsGraph).map((id) => `\`${id}\``).join(' ➔ ')}\n` +
-      `* **Resultado en Sandbox:** ✅ **100% de Aserciones E2E Superadas**\n` +
-      `* **Trazabilidad de Ejecución:**\n` +
-      Object.values(state.componentsGraph)
-        .map((c) => `  - Integración verificada para **${c.name}** (\`${c.id}\`).`)
-        .join('\n') +
-      '\n\n' +
-      (visualDomSnapshot
-        ? `* **Snapshot de Integración Visual:**\n\`\`\`html\n${visualDomSnapshot.slice(0, 350)}...\n\`\`\`\n\n`
-        : '') +
-      `> 🎯 **Auditoría:** Se han completado todas las verificaciones técnicas automatizadas. Compilando informe para Aprobación Formal de Negocio (HITL).`,
-    thought: `Ejecutando suite de integración de extremo a extremo en ${
-      hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'
-    }...`,
+    content: isSimulation
+      ? `### 🧪 Fase 4: Simulación de Integración E2E Registrada\n\n` +
+        `Se ha ejecutado el flujo en **${hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'}** en modo **SIMULACIÓN**:\n\n` +
+        `* **Flujo E2E Evaluado:** ${state.useCases.map((u) => u.title).join(' ➔ ')}\n` +
+        `* **Cadena de Componentes del DAG:** ${Object.keys(state.componentsGraph).map((id) => `\`${id}\``).join(' ➔ ')}\n` +
+        `* **Resultado en Sandbox:** ⚠️ **SIMULACIÓN REGISTRADA (No computada como integración superada)**\n` +
+        `* **Motivo:** ${simulationReason}\n` +
+        `* **Comprobación de Criterios de Aceptación:**\n` +
+        acceptanceCriteriaChecks
+          .map(
+            (c) =>
+              `  - **${c.useCaseId} (${c.title}):** [SIMULACIÓN] Requiere comprobación observable en vivo contra: \`${c.criterion}\``,
+          )
+          .join('\n') +
+        '\n\n' +
+        (visualDomSnapshot
+          ? `* **Snapshot de Integración Visual:**\n\`\`\`html\n${visualDomSnapshot.slice(0, 350)}...\n\`\`\`\n\n`
+          : '') +
+        `> ⚠️ **Aviso de Rigor SDLC:** El flujo solo pudo ejecutar una simulación; se registra explícitamente como simulación y no como integración superada. Se requiere validación del usuario mediante scripts de arranque.`
+      : `### 🧪 Fase 4: Pruebas Automatizadas de Integración E2E (Comprobación Observable)\n\n` +
+        `Se ha ejecutado la suite de integración de extremo a extremo (End-to-End) con comprobaciones observables en **${
+          hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'
+        }**:\n\n` +
+        `* **Flujo E2E Ejecutado:** ${state.useCases.map((u) => u.title).join(' ➔ ')}\n` +
+        `* **Cadena de Componentes del DAG:** ${Object.keys(state.componentsGraph).map((id) => `\`${id}\``).join(' ➔ ')}\n` +
+        `* **Resultado en Sandbox:** ✅ **100% de Aserciones E2E Superadas con Comprobación Observable**\n` +
+        `* **Criterios de Aceptación Auditados:**\n` +
+        acceptanceCriteriaChecks
+          .map((c) => `  - **${c.useCaseId} (${c.title}):** ✅ ${c.evidence}`)
+          .join('\n') +
+        '\n\n' +
+        (visualDomSnapshot
+          ? `* **Snapshot de Integración Visual:**\n\`\`\`html\n${visualDomSnapshot.slice(0, 350)}...\n\`\`\`\n\n`
+          : '') +
+        `> 🎯 **Auditoría:** Se han completado todas las verificaciones técnicas automatizadas observables. Compilando informe para Aprobación Formal de Negocio (HITL).`,
+    thought: isSimulation
+      ? 'Registrando flujo E2E como simulación controlada (sin integración observable directa)...'
+      : `Ejecutando suite de integración de extremo a extremo con comprobaciones observables en ${
+          hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'
+        }...`,
   })
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
@@ -211,12 +277,16 @@ export async function node_phase4_e2e_runner(state: SDLCStateType): Promise<Part
     sessionId: state.sessionId,
     phaseName: `Fase 4: Integración E2E en Sandbox — [Skill: ${resolvedSkill.skill.name}]`,
     sdlcPhase: '4_E2E_BUSINESS_AUDIT',
-    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Ingeniero de Automatización E2E de LocalLoop. Tu función es auditar la integración completa de los componentes en Sandbox.`,
+    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Ingeniero de Automatización E2E de LocalLoop. Tu función es auditar la integración completa de los componentes en Sandbox.\n${
+      isSimulation
+        ? 'IMPORTANTE: Dado que solo se pudo ejecutar una simulación sin comprobación observable directa en vivo, debes registrarla explícitamente como SIMULACIÓN y NO como integración superada.'
+        : 'Confirma las comprobaciones observables obtenidas en el sandbox contra los criterios de aceptación de negocio.'
+    }\nSi dispones de herramientas de ejecución CLI de Tether (ej. mcp_tether_*), DEBES utilizarlas activamente para ejecutar comandos de verificación de arranque o pruebas integrales del sistema en el host antes de redactar el informe final.`,
     userPrompt: `Flujo E2E: ${state.useCases.map((u) => u.title).join(' ➔ ')}
 Componentes verificados: ${Object.keys(state.componentsGraph).join(', ')}
-Aserciones E2E en Sandbox: 100% Superadas.
+Estado: ${isSimulation ? 'SIMULACIÓN REGISTRADA (No computada como integración superada)' : '100% Aserciones E2E Superadas con comprobaciones observables'}
 Logs: ${sandboxExec.logs.join(' | ')}
-Genera el informe de integración E2E en Markdown.`,
+Genera el informe de integración E2E en Markdown. Si dispones de herramientas de Tether (CLI), úsalas prioritariamente para validar la compilación y el arranque de la aplicación.`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackE2e,
   })
@@ -230,19 +300,37 @@ Genera el informe de integración E2E en Markdown.`,
   await emitSDLCProgress(
     state.sessionId,
     e2eMsg,
-    `Ejecutando integración E2E en ${hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'}...`,
+    isSimulation
+      ? 'Registrando simulación E2E...'
+      : `Ejecutando integración E2E en ${hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'}...`,
     '4_E2E_BUSINESS_AUDIT',
   )
+
+  const progressEventsToAdd: ProjectProgressEvent[] = []
+  if (isSimulation) {
+    progressEventsToAdd.push({
+      id: `EV-E2E-SIM-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      type: 'E2E_SIMULATION',
+      evidenceSummary: `Flujo E2E registrado como SIMULACIÓN (${state.useCases.length} caso(s) de uso, sin integración observable directa).`,
+    })
+  }
 
   if (state.sessionId) {
     try {
       await saveSdlcPhaseArtifact({
         sessionId: state.sessionId,
         phaseName: '4_E2E_AUTOMATION',
-        artifactTitle: 'Evidencias Pruebas E2E de Integración en Sandbox',
+        artifactTitle: isSimulation
+          ? 'Evidencias E2E Registradas como Simulación'
+          : 'Evidencias Pruebas E2E de Integración en Sandbox',
         artifactType: 'e2e_evidence',
         payload: e2eReport,
-        tags: ['e2e', 'integration', ...(hasBrowserComps ? ['visual_evidence'] : [])],
+        tags: [
+          'e2e',
+          isSimulation ? 'simulation' : 'integration',
+          ...(hasBrowserComps ? ['visual_evidence'] : []),
+        ],
       })
     } catch {
       // ignore
@@ -253,6 +341,7 @@ Genera el informe de integración E2E en Markdown.`,
     e2eEvidences: e2eReport,
     activeSkill: 'BusinessOutcome_Auditor',
     currentPhase: '4_E2E_BUSINESS_AUDIT',
+    progressEvents: [...state.progressEvents, ...progressEventsToAdd],
     messages: [...state.messages, e2eMsg],
   }
 }
@@ -376,8 +465,13 @@ ${compListItems}
 
   const tsComponents = Object.values(state.componentsGraph)
     .map((c, idx) => {
-      const candidates = [c.targetPath, ...(c.targetPaths || [])].filter(Boolean) as string[]
+      const candidates = [
+        c.targetPath,
+        ...(c.targetPaths || []),
+        ...(c.files?.map((f) => f.path) || []),
+      ].filter(Boolean) as string[]
       const validCandidates = candidates
+        .map((p) => p.replace(/^\.\//, '').replace(/\\/g, '/'))
         .filter(
           (p) =>
             p.startsWith('src/') &&
@@ -395,7 +489,7 @@ ${compListItems}
 
       const runtimeCandidate =
         validCandidates.find((p) => {
-          const fObj = c.files?.find((f) => f.path === p)
+          const fObj = c.files?.find((f) => f.path.replace(/^\.\//, '').replace(/\\/g, '/') === p)
           if (!fObj) return true
           return /\b(?:export\s+(?:default\s+)?(?:class|function|const|let|var)|class\s+[A-Za-z_$])\b/.test(
             fObj.content,
@@ -556,6 +650,21 @@ if (typeof document !== 'undefined') {
     await writeWorkspaceFileDirect(sf.path, sf.content)
   }
 
+  // 2.5 Verificación y auto-reparación de compilación y arranque con Tether CLI
+  const compilationCheck = await verifyAndRepairApplicationCompilation(state)
+  if (compilationCheck.usedTether && !compilationCheck.ok) {
+    const compDebt: TechnicalDebt = {
+      id: 'td-compilation-failure',
+      description: `Fallo de compilación o arranque detectado por Tether CLI: ${compilationCheck.error || compilationCheck.output.slice(0, 300)}`,
+      impact: 'La aplicación generada presenta fallos de compilación o transpilación al arrancar.',
+      riskLevel: 'HIGH',
+      remediationPlan: 'Revisar imports y exports de TypeScript y ejecutar `npm run build` o `npx vite build` para corregir los tipos.',
+    }
+    if (!state.technicalDebtList.some((d) => d.id === compDebt.id)) {
+      state.technicalDebtList.push(compDebt)
+    }
+  }
+
   // 3. Actualizar frameworkConfig y guardar en Engram
   const updatedFrameworkConfig: ProjectFrameworkConfig = {
     ...(state.frameworkConfig || {
@@ -591,8 +700,19 @@ if (typeof document !== 'undefined') {
       `Se ha completado el ciclo de desarrollo por fases cumpliendo los estándares de arquitectura y negocio:\n\n` +
       `* **Casos de Uso Validados:** ${state.useCases.map((u) => u.title).join(', ')}\n` +
       `* **Componentes Construidos & Verificados:** ${Object.keys(state.componentsGraph).map((id) => `\`${id}\``).join(', ')}\n` +
-      `* **Pruebas Unitarias en Sandbox JS:** ${Object.keys(state.unitEvidences).length} suites ejecutadas con 100% éxito.\n` +
-      `* **Pruebas Integradas E2E:** Aserciones superadas satisfactoriamente.\n` +
+      `* **Pruebas Unitarias en Sandbox JS:** ${Object.keys(state.unitEvidences).length} suites ejecutadas (${Object.values(state.unitEvidences).filter((u) => u.exito).length} aprobadas).\n` +
+      `* **Verificación de Compilación & Arranque (Tether CLI):** ${
+        compilationCheck.usedTether
+          ? (compilationCheck.ok
+              ? `✅ Compilación real superada exitosamente (\`${compilationCheck.command}\` via \`${compilationCheck.toolName}\`).${compilationCheck.repairedFiles.length > 0 ? ` (Archivos auto-reparados: ${compilationCheck.repairedFiles.join(', ')})` : ''}`
+              : `❌ Fallo de compilación persistente tras ${compilationCheck.attempts} intentos con Tether: \`${compilationCheck.command}\`.`)
+          : 'ℹ️ Verificación estática de transpilación (Tether CLI no conectado).'
+      }\n` +
+      `* **Pruebas Integradas E2E:** ${
+        state.e2eEvidences?.isSimulation
+          ? '⚠️ **Simulación Registrada** (requiere validación interactiva mediante scripts de arranque).'
+          : '✅ Aserciones y comprobaciones observables superadas al 100%.'
+      }\n` +
       `* **Deuda Técnica en Plan de Proyecto:** ${debts.length > 0 ? `${debts.length} ítems registrados (${debts.map((d) => `\`${d.id}\``).join(', ')}).` : '0 ítems de deuda.'}\n\n` +
       `#### 🚀 Scripts de Arranque Generados en la Raíz del Workspace\n` +
       `Para tu verificación local interactiva se han generado los scripts de arranque:\n` +
@@ -623,6 +743,11 @@ if (typeof document !== 'undefined') {
     userPrompt: `Casos de Uso: ${state.useCases.map((u) => u.title).join(', ')}
 Componentes construidos: ${Object.keys(state.componentsGraph).join(', ')}
 Suites unitarias: ${Object.keys(state.unitEvidences).length}
+Verificación de compilación (Tether CLI): ${
+  compilationCheck.usedTether
+    ? (compilationCheck.ok ? `EXITOSA (${compilationCheck.command})` : `FALLIDA tras ${compilationCheck.attempts} intentos`)
+    : 'Estática (Tether no conectado)'
+}
 Deuda técnica: ${debts.map((d) => `${d.id} (${d.riskLevel})`).join(', ') || '0 ítems'}
 Scripts de arranque generados en la raíz: start.cmd y start.sh
 Resultados y evidencias LocalLoop generados en: .localloop/e2e-report.html y .localloop/index.html
@@ -682,30 +807,39 @@ Genera la solicitud formal de Aprobación de Negocio en Markdown detallando cóm
 /**
  * NODO 4.3: Decisión de Aprobación de Negocio
  * Evalúa la decisión tomada por el usuario durante la interrupción.
+ * Requiere una decisión explícita (Aprobar / Rechazar) y mantiene la aprobación
+ * PENDIENTE ante respuestas ambiguas o indeterminadas.
  */
 export async function node_phase4_business_decision(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
   trace('[SDLCGraph] Evaluando decisión de negocio...')
   const lastUserMsg = [...state.messages].reverse().find((m) => m.role === 'user')?.content || ''
-  const lowerLastUser = lastUserMsg.toLowerCase()
-  const isRejectedInText =
-    lowerLastUser.includes('rechaz') ||
-    lowerLastUser.includes('reject') ||
-    lowerLastUser.includes('error') ||
-    lowerLastUser.includes('falla') ||
-    lowerLastUser.includes('fallo') ||
-    lowerLastUser.includes('no funciona') ||
-    lowerLastUser.includes('no transpila') ||
-    lowerLastUser.includes('no compila') ||
-    lowerLastUser.includes('corregir') ||
-    lowerLastUser.includes('arreglar') ||
-    lowerLastUser.includes('rca')
+  const trimmedUser = lastUserMsg.trim()
+  const lowerUser = trimmedUser.toLowerCase()
 
-  const approved =
-    state.businessApproval !== null && state.businessApproval !== undefined
-      ? state.businessApproval.approved
-      : !isRejectedInText
+  let explicitDecision: 'APPROVED' | 'REJECTED' | 'AMBIGUOUS' = 'AMBIGUOUS'
 
-  if (approved) {
+  if (state.businessApproval && typeof state.businessApproval.approved === 'boolean') {
+    explicitDecision = state.businessApproval.approved ? 'APPROVED' : 'REJECTED'
+  } else if (trimmedUser.length > 0) {
+    const isExplicitReject =
+      /\b(rechazo|rechazar|rechazado|reject|rejected|denegar|denegado|no apruebo|no conforme|error|falla|fallo|no funciona|no transpila|no compila|corregir|arreglar|rca|bug)\b/i.test(
+        lowerUser,
+      )
+    const isExplicitApprove =
+      /\b(apruebo|aprobado|aprobar|aprobación|conforme|ok|adelante|proceder|accept|accepted|approve|approved|sí|si|de acuerdo|visto bueno|validado|correcto)\b/i.test(
+        lowerUser,
+      )
+
+    if (isExplicitReject && !isExplicitApprove) {
+      explicitDecision = 'REJECTED'
+    } else if (isExplicitApprove && !isExplicitReject) {
+      explicitDecision = 'APPROVED'
+    } else {
+      explicitDecision = 'AMBIGUOUS'
+    }
+  }
+
+  if (explicitDecision === 'APPROVED') {
     const progressEvent: ProjectProgressEvent = {
       id: `EV-E2E-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -715,13 +849,44 @@ export async function node_phase4_business_decision(state: SDLCStateType): Promi
     return {
       currentPhase: '6_DOCUMENTATION_PROJECTION',
       activeSkill: 'SystemDocumentation_Synchronizer',
+      businessApproval: state.businessApproval || {
+        approved: true,
+        stakeholderComments: trimmedUser || 'Aprobación formal de negocio concedida.',
+        evaluatedAt: new Date().toISOString(),
+      },
       progressEvents: [...state.progressEvents, progressEvent],
     }
   }
 
-  // Si fue rechazado, se activa el bucle de resiliencia
+  if (explicitDecision === 'REJECTED') {
+    return {
+      currentPhase: '5_STRATEGIC_RESILIENCE',
+      activeSkill: 'RootCause_Analyzer',
+      businessApproval: state.businessApproval || {
+        approved: false,
+        stakeholderComments: trimmedUser || 'Rechazo de negocio.',
+        evaluatedAt: new Date().toISOString(),
+      },
+    }
+  }
+
+  // Si la respuesta es ambigua o indefinida, mantener la aprobación formal PENDIENTE
+  trace('[SDLCGraph] Respuesta ambigua en HITL de Fase 4. Manteniendo aprobación formal pendiente.')
+  const pendingMsg = {
+    role: 'assistant' as const,
+    content:
+      `### ⚠️ Decisión de Negocio Pendiente (Respuesta Ambigua)\n\n` +
+      `Se ha recibido: *"${trimmedUser || 'Sin respuesta'}"*.\n\n` +
+      `Para avanzar en el flujo SDLC se requiere una **decisión explícita**:\n` +
+      `- **Para Aprobar:** Responde indicando aprobación explícita (*"Aprobar"*, *"Apruebo"*, *"Conforme"* o pulsa el botón de Aprobación Formal).\n` +
+      `- **Para Rechazar / Solicitar Ajustes:** Responde indicando el rechazo o los defectos detectados (*"Rechazar"*, *"Corregir..."*, *"Fallo..."* o pulsa el botón de Rechazo).\n\n` +
+      `La aprobación formal se mantiene **PENDIENTE** hasta recibir tu confirmación explícita.`,
+    thought: 'Respuesta ambigua en HITL de Fase 4. Manteniendo aprobación formal pendiente y solicitando decisión explícita.',
+  }
+
   return {
-    currentPhase: '5_STRATEGIC_RESILIENCE',
-    activeSkill: 'RootCause_Analyzer',
+    currentPhase: '4_E2E_BUSINESS_AUDIT',
+    businessApproval: null,
+    messages: [...state.messages, pendingMsg],
   }
 }

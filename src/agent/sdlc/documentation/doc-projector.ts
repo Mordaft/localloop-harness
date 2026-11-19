@@ -118,7 +118,7 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
     `# Fase 2: Dictamen del Gatekeeper y Registro de Deuda Técnica\n\n` +
     `Generado el ${nowIso}\n\n` +
     `## Dictámenes de Arquitectura por Componente:\n` +
-    Object.entries(state.gatekeeperDecisions)
+    Object.entries(state.gatekeeperDecisions || {})
       .map(
         ([id, d]) =>
           `### Componente \`${id}\`\n` +
@@ -141,28 +141,73 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
       : '0 ítems de deuda técnica registrados.\n')
 
   // 4. Fase 4: E2E & Aprobación de Negocio
+  const isSimulation = Boolean(state.e2eEvidences?.isSimulation)
+  const e2ePassed = Boolean(state.e2eEvidences?.allAssertionsPassed)
+  const e2eResultLabel = isSimulation
+    ? '⚠️ Simulación E2E Registrada (No computada como integración superada por falta de comprobación observable en vivo)'
+    : e2ePassed
+      ? '✅ 100% de Aserciones E2E Superadas con Comprobación Observable'
+      : '❌ Fallo en Pruebas de Integración E2E'
+
+  const criteriaChecksMd =
+    state.e2eEvidences?.acceptanceCriteriaChecks && state.e2eEvidences.acceptanceCriteriaChecks.length > 0
+      ? `## Comprobación de Criterios de Aceptación:\n` +
+        state.e2eEvidences.acceptanceCriteriaChecks
+          .map(
+            (c: any) =>
+              `- **${c.useCaseId} (${c.title || c.useCaseId}):** ${
+                c.isSimulation
+                  ? `⚠️ [SIMULACIÓN] ${c.evidence}`
+                  : c.observed
+                    ? `✅ [PASS] ${c.evidence}`
+                    : `❌ [FAIL] ${c.evidence}`
+              }\n  - *Criterio:* \`${c.criterion}\``,
+          )
+          .join('\n') +
+        '\n\n'
+      : ''
+
   const p4E2eDoc =
     `# Fase 4: Evidencias de Pruebas Automatizadas de Integración E2E\n\n` +
     `Generado el ${nowIso}\n\n` +
-    `- **Casos de Uso Evaluados:** ${state.useCases.map((u) => u.title).join(' ➔ ')}\n` +
+    `- **Casos de Uso Evaluados:** ${state.useCases.map((u) => u.title).join(' ➔ ') || 'N/A'}\n` +
     `- **Cadena de Componentes del DAG:** ${Object.keys(state.componentsGraph).join(' ➔ ')}\n` +
-    `- **Resultado de Integración:** ✅ 100% de Aserciones E2E Superadas en Sandbox JS\n` +
+    `- **Resultado de Integración:** ${e2eResultLabel}\n` +
+    (isSimulation && state.e2eEvidences?.simulationReason
+      ? `- **Motivo de Simulación:** ${state.e2eEvidences.simulationReason}\n`
+      : '') +
     `- **Scripts de Arranque Generados:** \`start.cmd\` (Windows) y \`start.sh\` (Linux/macOS) en la raíz del workspace\n` +
     `- **Ficheros de Framework Actualizados:** \`index.html\` y \`package.json\`\n\n` +
+    criteriaChecksMd +
     `## Trazabilidad y Logs de Verificación E2E:\n\`\`\`\n` +
-    ((state.e2eEvidences?.traceLog || []).join('\n') || 'Simulación E2E completada satisfactoriamente.') +
+    ((state.e2eEvidences?.traceLog || []).join('\n') ||
+      (isSimulation
+        ? 'Simulación E2E registrada.'
+        : 'Comprobaciones observables E2E completadas satisfactoriamente.')) +
     `\n\`\`\`\n`
+
+  const approved = Boolean(state.businessApproval?.approved)
+  const approvalLabel = approved
+    ? '✅ APROBACIÓN FORMAL CONCEDIDA'
+    : state.businessApproval?.approved === false
+      ? '⚠️ RECHAZADO / ACTIVACIÓN DE RESILIENCIA'
+      : '⏳ APROBACIÓN FORMAL PENDIENTE'
 
   const p4BusinessDoc =
     `# Fase 4: Informe Ejecutivo y Aprobación Formal de Negocio (HITL)\n\n` +
     `Generado el ${nowIso}\n\n` +
-    `- **Dictamen de Negocio:** ${state.businessApproval?.approved ? '✅ APROBACIÓN FORMAL CONCEDIDA' : '⚠️ RECHAZADO'}\n` +
+    `- **Dictamen de Negocio:** ${approvalLabel}\n` +
     `- **Fecha de Evaluación:** ${state.businessApproval?.evaluatedAt || nowIso}\n` +
-    `- **Comentarios del Stakeholder:** ${state.businessApproval?.stakeholderComments || 'Aprobación formal de negocio otorgada.'}\n\n` +
+    `- **Comentarios del Stakeholder:** ${
+      state.businessApproval?.stakeholderComments ||
+      (approved ? 'Aprobación formal de negocio otorgada.' : 'Pendiente de confirmación explícita.')
+    }\n\n` +
     `## Resumen de Garantías Entregadas:\n` +
     `- Casos de Uso Verificados: ${state.useCases.length}\n` +
     `- Componentes Implementados: ${Object.keys(state.componentsGraph).length}\n` +
-    `- Suites Unitarias en Sandbox: ${Object.keys(state.unitEvidences).length} suites\n` +
+    `- Suites Unitarias Exitosas: ${
+      Object.values(state.unitEvidences).filter((u) => u.exito).length
+    } de ${Object.keys(state.componentsGraph).length}\n` +
     `- Deuda Técnica Controlada: ${state.technicalDebtList.length} ítems\n`
 
   // 5. Fase 5: Resiliencia Estratégica
@@ -173,12 +218,15 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
     `- Todos los módulos cuentan con validaciones defensivas y contratos explícitos.\n` +
     `- Los adaptadores de transición aíslan el sistema legado evitando impacto cascada.\n\n` +
     (state.rcaDiagnosis
-      ? `## Diagnóstico de Causa Raíz (RCA) Registrado:\n` +
+      ? `## Diagnóstico de Causa Raíz (RCA) Derivado de Evidencias Reales:\n` +
         `- **Fallo:** ${state.rcaDiagnosis.failureSummary}\n` +
-        `- **Categoría:** \`${state.rcaDiagnosis.rootCauseCategory}\`\n` +
-        `- **Detalle:** ${state.rcaDiagnosis.detail}\n` +
-        `- **Acción Correctiva:** ${state.rcaDiagnosis.remedyRecommendation}\n`
-      : `## Estado del Ciclo:\nNo se requirió activación reactiva de RCA; aprobación formal en primera pasada.\n`)
+        `- **Categoría de Causa Raíz:** \`${state.rcaDiagnosis.rootCauseCategory}\`\n` +
+        `- **Detalle de Evidencia:** ${state.rcaDiagnosis.detail}\n` +
+        `- **Acción Correctiva Recomendada:** ${state.rcaDiagnosis.remedyRecommendation}\n` +
+        (state.rcaDiagnosis.newBacklogItem
+          ? `- **Nuevo Ítem de Backlog:** \`${state.rcaDiagnosis.newBacklogItem.title}\` (${state.rcaDiagnosis.newBacklogItem.id})\n`
+          : '')
+      : `## Estado del Ciclo:\nNo se requirió activación reactiva de RCA; el ciclo avanzó con aprobación formal.\n`)
 
   // 6. Fase 6: Landscape y Manual de Procesos
   const landscapeDoc =
@@ -215,7 +263,7 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
 
   // Diseños y evidencias por componente
   for (const comp of Object.values(state.componentsGraph)) {
-    const compDesign = state.technicalDesigns[comp.id]?.[0]
+    const compDesign = (state.technicalDesigns || {})[comp.id]?.[0]
     const designMd =
       `# Especificación de Diseño Técnico: ${comp.name} (\`${comp.id}\`)\n\n` +
       `Generado el ${nowIso}\n\n` +
@@ -237,10 +285,14 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
         ? comp.targetPaths.map((p) => `  - \`${p}\``).join('\n')
         : `  - \`${comp.targetPath || `src/modules/${comp.id}.ts`}\``
 
+    const isSuccess = compEvidence ? Boolean(compEvidence.exito) : comp.status === 'VERIFIED'
+    const execError = compEvidence?.error
+
     const unitMd =
       `# Evidencia de Pruebas Unitarias Sandbox: ${comp.name} (\`${comp.id}\`)\n\n` +
       `Generado el ${nowIso}\n\n` +
-      `- **Resultado de Ejecución:** ✅ **SUPERADO (3/3 aserciones exitosas)**\n` +
+      `- **Resultado de Ejecución:** ${isSuccess ? '✅ **SUPERADO (Verificación unitaria exitosa)**' : `❌ **FALLIDO (${execError || 'Aserciones no superadas'})**`}\n` +
+      `- **Estado del Componente en DAG:** \`${comp.status}\`\n` +
       `- **Entorno:** ${
         compEvidence?.modo === 'browser_iframe_sandbox'
           ? 'Browser Iframe Sandbox (con Evidencia Visual DOM & Renderizado)'
@@ -248,11 +300,14 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
       }\n` +
       `- **Archivos de Código Fuente (Multi-Fichero):**\n${filesList}\n\n` +
       `## Aserciones Verificadas:\n` +
-      `- \`[PASS]\` Instanciación e integridad de contratos conforme a \`${state.marketArchStandard}\`.\n` +
-      `- \`[PASS]\` Validación defensiva y manejo de excepciones ante parámetros inválidos.\n` +
-      (compEvidence?.modo === 'browser_iframe_sandbox'
-        ? `- \`[PASS]\` Integridad de elementos DOM, layout visual y renderizado en navegador.\n\n`
-        : `- \`[PASS]\` Happy path: Ejecución de lógica de negocio y cálculo preciso.\n\n`) +
+      (isSuccess
+        ? `- \`[PASS]\` Instanciación e integridad de contratos conforme a \`${state.marketArchStandard}\`.\n` +
+          `- \`[PASS]\` Validación defensiva y manejo de excepciones ante parámetros inválidos.\n` +
+          (compEvidence?.modo === 'browser_iframe_sandbox'
+            ? `- \`[PASS]\` Integridad de elementos DOM, layout visual y renderizado en navegador.\n\n`
+            : `- \`[PASS]\` Happy path: Ejecución de lógica de negocio y cálculo preciso.\n\n`)
+        : `- \`[FAIL]\` Ejecución fallida en sandbox: ${execError || 'Aserciones no superadas'}.\n` +
+          `- \`[FAIL]\` Componente marcado como FAILED; dependientes no desbloqueados.\n\n`) +
       (compEvidence?.domSnapshot
         ? `## Evidencia Visual de DOM (Snapshot del Navegador):\n\`\`\`html\n${compEvidence.domSnapshot.slice(0, 1500)}\n\`\`\`\n\n`
         : '') +
@@ -260,7 +315,8 @@ export async function node_phase6_doc_projection(state: SDLCStateType): Promise<
         ? `## Evidencia Visual (Captura Renderizada):\n- [Captura Visual]: Screenshot Data URL registrado (${compEvidence.screenshotDataUrl.slice(0, 60)}...)\n\n`
         : '') +
       `## Logs de Sandbox:\n\`\`\`\n` +
-      (compEvidence?.logs?.join('\n') || 'Ejecución unitaria superada sin errores.') +
+      (compEvidence?.logs?.join('\n') ||
+        (isSuccess ? 'Ejecución unitaria superada sin errores.' : `Fallo detectado: ${execError || 'Error'}`)) +
       `\n\`\`\`\n`
     await writeDoc(`doc/fase-3-construccion-pruebas/EVIDENCIA_PRUEBAS_${comp.id.toUpperCase()}.md`, unitMd, `Evidencia de Pruebas ${comp.id}`)
     await writeDoc(`.localloop/evidences/EVIDENCIA_PRUEBAS_${comp.id.toUpperCase()}.md`, unitMd, `Evidencia de Pruebas ${comp.id} en .localloop`)

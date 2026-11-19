@@ -815,6 +815,7 @@ if (typeof document !== 'undefined') {
       isBrowserComponent: true,
       browserTest: {
         html: htmlIndex,
+        code: testScriptShell,
         selectors: ['#tetris-canvas', '#touch-controls', '#google-ads-container', '.touch-btn', 'ins.adsbygoogle'],
         captureScreenshot: true,
       },

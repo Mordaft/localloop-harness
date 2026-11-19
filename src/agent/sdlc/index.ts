@@ -55,6 +55,6 @@ export {
   node_phase4_business_decision,
 } from './nodes/phase4-e2e-audit'
 
-export { node_phase5_resilience } from './nodes/phase5-resilience'
+export { node_phase5_resilience, deriveRcaFromEvidence } from './nodes/phase5-resilience'
 
 export { node_phase6_doc_projection } from './documentation/doc-projector'

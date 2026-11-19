@@ -39,10 +39,12 @@ export async function node_phase3_implement_component(state: SDLCStateType): Pro
 
   const defaultGen = generateComponentCode(comp)
   const defaultTarget = comp.targetPath || `src/components/${compId}.ts`
+  const existingFiles = comp.files && comp.files.length > 0 ? comp.files : undefined
   const defaultFiles: GeneratedComponentFile[] =
-    defaultGen.files && defaultGen.files.length > 0
+    existingFiles ||
+    (defaultGen.files && defaultGen.files.length > 0
       ? defaultGen.files
-      : [{ path: defaultTarget, content: defaultGen.code, description: comp.name }]
+      : [{ path: defaultTarget, content: defaultGen.code, description: comp.name }])
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
     ...state,
@@ -53,7 +55,7 @@ export async function node_phase3_implement_component(state: SDLCStateType): Pro
     .map((depId) => {
       const depComp = state.componentsGraph[depId]
       if (!depComp) return ''
-      const depContracts = (state.technicalDesigns[depId]?.[0]?.contracts || []).map((c) => c.name).join(', ')
+      const depContracts = (state.technicalDesigns?.[depId]?.[0]?.contracts || []).map((c) => c.name).join(', ')
       const depFilesList = (depComp.targetPaths || [depComp.targetPath || `src/components/${depId}.ts`]).join(', ')
       const exportedSymbols = (depComp.files || [])
         .flatMap((f) => {
@@ -95,9 +97,10 @@ export async function node_phase3_implement_component(state: SDLCStateType): Pro
     sdlcPhase: '3_COMPONENT_CONSTRUCTION',
     maxToolIterations: 5,
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Desarrollador de Software de LocalLoop dentro del bucle iterativo de construcción tras la aprobación de la Propuesta de Solución Técnica.
-Puedes abordar el componente de dos formas según su complejidad:
+Puedes abordar el componente de tres formas según su complejidad:
 1. **Construcción Directa**: Consultar search_web_guidance / read_web_guidance_doc si aplica (máximo 1 consulta) y escribir directamente los archivos completos y transpilables con "fs_write_file" o mediante bloques de código anotados con \`\`\`typescript path="ruta/archivo.ts".
 2. **Descomposición Previa en Subtareas**: Invocar "plan_and_delegate_tasks" (o "delegate_subagent_scope") definiendo las subtareas y su prueba de aceptación ("acceptanceTest") para delegar la construcción verificada en sub-agentes antes de consolidar los archivos del componente.
+3. **Validación Temprana mediante Tether CLI**: Si dispones de herramientas de ejecución de terminal / Tether (como mcp_tether_run_cli o mcp_tether_execute_command), puedes ejecutar comandos en la terminal del proyecto (por ejemplo \`npx tsc --noEmit\` o pruebas unitarias de terminal) para validar la sintaxis, tipos y transpilación antes de dar por finalizada la construcción.
 REGLAS ESTRICTAS DE TRANSPILACIÓN Y MONTAJE:
 - Todo archivo TypeScript debe compilar limpiamente con \`tsc\` y \`vite build\` sin placeholders (\`// TODO\`, \`...\`), sin bloques Markdown (\`\`\`) dentro del archivo y con exportaciones explícitas.
 - NO importes tipos globales del navegador como \`import { HTMLElement } from 'dom'\` (\`HTMLElement\` ya es global en TypeScript).
@@ -107,15 +110,24 @@ Estructura de Directorios del Proyecto:
 ${state.frameworkConfig?.projectStructureSummary || '- src/components/'}
 IMPORTANTE: Sitúa los archivos generados respetando estrictamente esta estructura de directorios y marco técnico.
 
-${businessContextBlock ? `Contexto de Negocio y Requisitos del Proyecto:\n${businessContextBlock}\n\n` : ''}Implementa el componente: ${comp.name} (\`${compId}\`)
+${businessContextBlock ? `Contexto de Negocio y Requisitos del Proyecto:\n${businessContextBlock}\n\n` : ''}${
+  state.rcaDiagnosis
+    ? `🚨 SOLICITUD DE REMEDIACIÓN Y CORRECCIÓN DE DEFECTO (RCA):
+- Fallo detectado: ${state.rcaDiagnosis.failureSummary}
+- Detalle / Causa raíz: ${state.rcaDiagnosis.detail}
+- Acción requerida: ${state.rcaDiagnosis.remedyRecommendation}
+- Criterios de aceptación de la corrección: ${state.rcaDiagnosis.newBacklogItem?.acceptanceCriteria || 'Superar pruebas unitarias y compilación'}
+Debes corregir de forma completa los errores en los archivos correspondientes.\n\n`
+    : ''
+}Implementa el componente: ${comp.name} (\`${compId}\`)
 Responsabilidad: ${comp.description}
 ${depContextLines ? `Dependencias ya construidas en el workspace:\n${depContextLines}\n` : ''}Contratos Aprobados en la Solución Técnica:
-${(state.technicalDesigns[compId]?.[0]?.contracts || []).map((c) => c.schema).join('\n\n')}
+${(state.technicalDesigns?.[compId]?.[0]?.contracts || []).map((c) => c.schema).join('\n\n')}
 
 Archivos sugeridos para esta funcionalidad:
 ${defaultFiles.map((f) => `- "${f.path}": ${f.description || f.path}`).join('\n')}
 
-Guarda los archivos completos y transpilables en el workspace (directamente o tras descomponer en subtareas).`,
+Guarda los archivos completos y transpilables en el workspace (directamente o tras descomponer en subtareas). Si dispones de herramientas Tether (CLI), úsalas prioritariamente para validar la compilación y pruebas de tus archivos.`,
     tools:
       resolvedSkill.tools.length > 0
         ? resolvedSkill.tools
@@ -124,14 +136,13 @@ Guarda los archivos completos y transpilables en el workspace (directamente o tr
       content: defaultFiles
         .map(
           (f) =>
-            `\`\`\`${
-              f.path.endsWith('.html')
-                ? 'html'
-                : f.path.endsWith('.css')
-                  ? 'css'
-                  : f.path.endsWith('.json') || f.path.endsWith('.webmanifest')
-                    ? 'json'
-                    : 'typescript'
+            `\`\`\`${f.path.endsWith('.html')
+              ? 'html'
+              : f.path.endsWith('.css')
+                ? 'css'
+                : f.path.endsWith('.json') || f.path.endsWith('.webmanifest')
+                  ? 'json'
+                  : 'typescript'
             } path="${f.path}"\n${f.content}\n\`\`\``,
         )
         .join('\n\n'),
@@ -411,6 +422,7 @@ describe('${comp.name} (${compId})', () => {
 export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
   const compId = state.activeComponentId!
   const comp = state.componentsGraph[compId]
+  const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
   const defaultGen = generateComponentCode(comp)
 
   const isBrowserComp =
@@ -422,8 +434,7 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
     )
 
   trace(
-    `[SDLCGraph] Ejecutando pruebas de ${compId} en ${
-      isBrowserComp ? 'Browser Iframe Sandbox (con Evidencias Visuales)' : 'Sandbox JS'
+    `[SDLCGraph] Ejecutando pruebas de ${compId} en ${isBrowserComp ? 'Browser Iframe Sandbox (con Evidencias Visuales)' : 'Sandbox JS'
     }...`,
   )
 
@@ -479,7 +490,7 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
       'button',
     ]
 
-    const hasDedicatedBrowserTest = Boolean(defaultGen.browserTest?.code)
+    const hasDedicatedBrowserTest = Boolean(defaultGen.browserTest?.code || (defaultGen.testScript && defaultGen.browserTest?.html))
     if (!hasDedicatedBrowserTest && customImplFiles.length > 0) {
       effectiveHtml = htmlFile
         ? htmlFile.includes(`id="${compId}"`)
@@ -492,7 +503,8 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
           (f) =>
             /\.(ts|js)$/i.test(f.path) &&
             !/\.(test|spec|d)\.(ts|js)$/i.test(f.path) &&
-            !/src\/main\.(ts|tsx)$/i.test(f.path),
+            !/src\/main\.(ts|tsx)$/i.test(f.path) &&
+            !/(sw|service-worker|worker)\.(ts|js)$/i.test(f.path),
         )
         .sort((a, b) => {
           const rank = (p: string) =>
@@ -566,29 +578,120 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
       timeoutMs: 5000,
     }
 
-    const browserExec = await executeBrowserSandbox(browserOptions)
+    const browserExecInitial = await executeBrowserSandbox(browserOptions)
+    let browserExec = browserExecInitial
+    let passed = Boolean(browserExec.ok)
+    let execError = browserExec.error
+
+    if (!passed) {
+      trace(`[SDLCGraph] Fallo en Browser Sandbox para ${compId}. Intentando auto-reparación...`)
+      if (callbacks && state.sessionId) {
+        callbacks.onThinking?.({
+          sessionId: state.sessionId,
+          thought: `Fallo visual detectado en ${compId}: "${execError || 'Error'}". Intentando auto-reparación...`,
+          phase: 'thinking',
+          sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+        })
+      }
+
+      try {
+        const repairLlm = await streamLlmPhase({
+          sessionId: state.sessionId,
+          phaseName: `Fase 3: Auto-reparación visual de ${compId}`,
+          sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+          roleId: 'Component_Implementer',
+          systemPrompt: `Eres el Desarrollador de Software de LocalLoop. Tu tarea es corregir el código o plantilla del componente "${compId}" (${comp.name}) para que supere la renderización y aserciones en el sandbox de navegador.
+Escribe las correcciones completas con fs_write_file o bloques de código con path="...".`,
+          userPrompt: `El componente ${comp.name} (${compId}) ha fallado en la verificación del navegador con el siguiente error:
+\`\`\`
+${execError || 'Error de renderizado'}
+\`\`\`
+Logs:
+\`\`\`
+${browserExec.logs.join('\n')}
+\`\`\`
+Archivos actuales del componente:
+${(comp.files || []).map((f) => `--- "${f.path}" ---\n${f.content.slice(0, 1500)}`).join('\n\n')}
+
+Corrige el archivo o archivos necesarios.`,
+          tools: [...getFileSystemToolSpecs(), getSandboxToolSpec()],
+          defaultFallback: () => ({ content: '', thought: 'No se generó corrección en fallback.' }),
+        })
+
+        let fixedAny = false
+        for (const tc of repairLlm.toolCalls) {
+          if (tc.name === 'fs_write_file' && typeof tc.args.path === 'string' && typeof tc.args.content === 'string') {
+            const cleanP = tc.args.path.trim().replace(/\\/g, '/').replace(/^\/+/, '')
+            const cleanC = extractCleanSourceCode(tc.args.content, cleanP)
+            if (isValidSourceCodeForPath(cleanP, cleanC)) {
+              await writeWorkspaceFileDirect(cleanP, cleanC)
+              const existingF = comp.files?.find((f) => f.path === cleanP)
+              if (existingF) existingF.content = cleanC
+              fixedAny = true
+            }
+          }
+        }
+
+        const blockRegex =
+          /```(?:[a-zA-Z0-9_\-]+)?\s+(?:path=["']?([^"'\s>]+)["']?|file=["']?([^"'\s>]+)["']?|([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]+))\n([\s\S]*?)```/g
+        let m: RegExpExecArray | null
+        while ((m = blockRegex.exec(repairLlm.content)) !== null) {
+          const filePath = (m[1] || m[2] || m[3] || '').trim().replace(/\\/g, '/').replace(/^\/+/, '')
+          const fileContent = m[4]?.trim()
+          if (filePath && fileContent) {
+            const cleanC = extractCleanSourceCode(fileContent, filePath)
+            if (isValidSourceCodeForPath(filePath, cleanC)) {
+              await writeWorkspaceFileDirect(filePath, cleanC)
+              const existingF = comp.files?.find((f) => f.path === filePath)
+              if (existingF) existingF.content = cleanC
+              fixedAny = true
+            }
+          }
+        }
+
+        if (fixedAny) {
+          const reExec = await executeBrowserSandbox(browserOptions)
+          if (reExec.ok) {
+            browserExec = reExec
+            passed = true
+            execError = undefined
+            trace(`[SDLCGraph] ✅ Auto-reparación visual exitosa para ${compId}.`)
+          }
+        }
+      } catch (err) {
+        trace(`[SDLCGraph] Error en auto-reparación visual de ${compId}: ${err}`)
+      }
+    }
 
     unitEvidence = {
       ejecutada: true,
-      exito: browserExec.ok,
+      exito: passed,
       modo: 'browser_iframe_sandbox' as const,
       logs: browserExec.logs,
       returnValue: browserExec.returnValue ?? '',
       domSnapshot: browserExec.dom ? browserExec.dom.html.slice(0, 3000) : '',
       screenshotDataUrl: browserExec.screenshotDataUrl,
-      error: browserExec.error,
-      reporteAgente: `Prueba en Browser Iframe Sandbox superada (${browserExec.dom?.queriedElements?.length || 0} elementos inspeccionados).`,
-      resumen: `Componente visual ${comp.name} (${compId}) verificado con éxito en Browser Iframe Sandbox. Elementos visuales y DOM inspeccionados: ${(browserExec.dom?.queriedElements || []).map((e: any) => e.selector || e.tagName).join(', ') || 'OK'}.`,
+      error: execError,
+      reporteAgente: passed
+        ? `Prueba en Browser Iframe Sandbox superada (${browserExec.dom?.queriedElements?.length || 0} elementos inspeccionados).`
+        : `Fallo en Browser Iframe Sandbox: ${execError || 'Aserciones o renderizado fallido'}.`,
+      resumen: passed
+        ? `Componente visual ${comp.name} (${compId}) verificado con éxito en Browser Iframe Sandbox. Elementos visuales y DOM inspeccionados: ${(browserExec.dom?.queriedElements || []).map((e: any) => e.selector || e.tagName).join(', ') || 'OK'}.`
+        : `Fallo en la verificación visual de ${comp.name} (${compId}) en Browser Iframe Sandbox. Error: ${execError || 'Error de ejecución'}.`,
     }
 
     progressEvent = {
       id: `EV-UNIT-${Date.now()}-${compId}`,
       timestamp: new Date().toISOString(),
-      type: 'UNIT_TEST_PASS',
+      type: passed ? 'UNIT_TEST_PASS' : 'UNIT_TEST_FAIL',
       componentId: compId,
-      evidenceSummary: `Componente visual ${compId} verificado en Browser Iframe Sandbox con evidencia visual (DOM y layout validados).`,
+      evidenceSummary: passed
+        ? `Componente visual ${compId} verificado en Browser Iframe Sandbox con evidencia visual (DOM y layout validados).`
+        : `Fallo en pruebas de Browser Iframe Sandbox para componente visual ${compId}: ${execError || 'Aserciones no superadas'}.`,
     }
-    verifiedSummary = `Verificado ${compId} en Browser Sandbox (Evidencia Visual Registrada)`
+    verifiedSummary = passed
+      ? `Verificado ${compId} en Browser Sandbox (Evidencia Visual Registrada)`
+      : `Fallo en pruebas de ${compId} en Browser Sandbox (${execError || 'Error'})`
   } else {
     const customServiceFiles = (comp.files || []).filter(
       (f) =>
@@ -614,13 +717,18 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
           `console.log('Iniciando verificación unitaria de ${comp.name} (${compId})...');\n` +
           classNames
             .map(
-              (cls) => `try {
-  if (typeof ${cls} === 'function') {
-    const instance = new ${cls}();
-    console.log('Instancia de ${cls} creada y contratos verificados -> OK');
+              (cls) => `if (typeof ${cls} === 'function') {
+  let instance;
+  try {
+    instance = new ${cls}();
+  } catch (e1) {
+    try {
+      instance = new ${cls}({});
+    } catch {
+      throw e1;
+    }
   }
-} catch (e) {
-  console.log('Clase ${cls} cargada (requiere dependencias en constructor) -> OK');
+  console.log('Instancia de ${cls} creada y contratos verificados -> OK');
 }`,
             )
             .join('\n') +
@@ -629,32 +737,120 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
       }
     }
 
-    let sandboxExec = await executeSandboxedJs(scriptToRun)
-    if (!sandboxExec.ok && scriptToRun !== defaultGen.testScript) {
-      sandboxExec = await executeSandboxedJs(defaultGen.testScript)
+    const sandboxExecInitial = await executeSandboxedJs(scriptToRun)
+    let sandboxExec = sandboxExecInitial
+    let passed = Boolean(sandboxExec.ok)
+    let execError = sandboxExec.error
+
+    if (!passed) {
+      trace(`[SDLCGraph] Prueba unitaria fallida para ${compId}. Intentando auto-reparación...`)
+      if (callbacks && state.sessionId) {
+        callbacks.onThinking?.({
+          sessionId: state.sessionId,
+          thought: `Fallo detectado en pruebas de ${compId}: "${execError || 'Error'}". Iniciando auto-reparación...`,
+          phase: 'thinking',
+          sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+        })
+      }
+
+      try {
+        const repairLlm = await streamLlmPhase({
+          sessionId: state.sessionId,
+          phaseName: `Fase 3: Auto-reparación de ${compId}`,
+          sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+          roleId: 'Component_Implementer',
+          systemPrompt: `Eres el Desarrollador de Software de LocalLoop. Tu tarea es corregir el código del componente "${compId}" (${comp.name}) para que supere sus pruebas unitarias y aserciones.
+Escribe las correcciones completas con fs_write_file o bloques de código con path="...".`,
+          userPrompt: `El componente ${comp.name} (${compId}) ha fallado en sus pruebas unitarias con el siguiente error:
+\`\`\`
+${execError || 'Aserciones no superadas'}
+\`\`\`
+Logs de ejecución:
+\`\`\`
+${sandboxExec.logs.join('\n')}
+\`\`\`
+Archivos actuales del componente:
+${(comp.files || []).map((f) => `--- "${f.path}" ---\n${f.content.slice(0, 1500)}`).join('\n\n')}
+
+Corrige el archivo o archivos necesarios para resolver este fallo.`,
+          tools: [...getFileSystemToolSpecs(), getSandboxToolSpec()],
+          defaultFallback: () => ({ content: '', thought: 'No se generó corrección en fallback.' }),
+        })
+
+        let fixedAny = false
+        for (const tc of repairLlm.toolCalls) {
+          if (tc.name === 'fs_write_file' && typeof tc.args.path === 'string' && typeof tc.args.content === 'string') {
+            const cleanP = tc.args.path.trim().replace(/\\/g, '/').replace(/^\/+/, '')
+            const cleanC = extractCleanSourceCode(tc.args.content, cleanP)
+            if (isValidSourceCodeForPath(cleanP, cleanC)) {
+              await writeWorkspaceFileDirect(cleanP, cleanC)
+              const existingF = comp.files?.find((f) => f.path === cleanP)
+              if (existingF) existingF.content = cleanC
+              fixedAny = true
+            }
+          }
+        }
+
+        const blockRegex =
+          /```(?:[a-zA-Z0-9_\-]+)?\s+(?:path=["']?([^"'\s>]+)["']?|file=["']?([^"'\s>]+)["']?|([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]+))\n([\s\S]*?)```/g
+        let m: RegExpExecArray | null
+        while ((m = blockRegex.exec(repairLlm.content)) !== null) {
+          const filePath = (m[1] || m[2] || m[3] || '').trim().replace(/\\/g, '/').replace(/^\/+/, '')
+          const fileContent = m[4]?.trim()
+          if (filePath && fileContent) {
+            const cleanC = extractCleanSourceCode(fileContent, filePath)
+            if (isValidSourceCodeForPath(filePath, cleanC)) {
+              await writeWorkspaceFileDirect(filePath, cleanC)
+              const existingF = comp.files?.find((f) => f.path === filePath)
+              if (existingF) existingF.content = cleanC
+              fixedAny = true
+            }
+          }
+        }
+
+        if (fixedAny) {
+          const reTest = await executeSandboxedJs(scriptToRun)
+          if (reTest.ok) {
+            sandboxExec = reTest
+            passed = true
+            execError = undefined
+            trace(`[SDLCGraph] ✅ Auto-reparación exitosa para ${compId}. Pruebas unitarias superadas tras reintento.`)
+          }
+        }
+      } catch (repairErr) {
+        trace(`[SDLCGraph] Error durante auto-reparación de ${compId}: ${repairErr}`)
+      }
     }
 
     unitEvidence = {
       ejecutada: true,
-      exito: sandboxExec.ok,
+      exito: passed,
       modo: 'js_sandbox' as const,
       logs: sandboxExec.logs,
       returnValue: sandboxExec.returnValue ?? '',
-      resumen: `Pruebas unitarias de ${compId} superadas satisfactoriamente en Sandbox JS.`,
+      error: execError,
+      resumen: passed
+        ? `Pruebas unitarias de ${compId} superadas satisfactoriamente en Sandbox JS.`
+        : `Fallo en pruebas unitarias de ${compId} en Sandbox JS: ${execError || 'Aserciones no superadas'}.`,
     }
 
     progressEvent = {
       id: `EV-UNIT-${Date.now()}-${compId}`,
       timestamp: new Date().toISOString(),
-      type: 'UNIT_TEST_PASS',
+      type: passed ? 'UNIT_TEST_PASS' : 'UNIT_TEST_FAIL',
       componentId: compId,
-      evidenceSummary: `Componente ${compId} verificado con pruebas unitarias en Sandbox JS.`,
+      evidenceSummary: passed
+        ? `Componente ${compId} verificado con pruebas unitarias en Sandbox JS.`
+        : `Fallo en pruebas unitarias de ${compId} en Sandbox JS: ${execError || 'Aserciones no superadas'}.`,
     }
-    verifiedSummary = `Verificado ${compId} en Sandbox JS`
+    verifiedSummary = passed
+      ? `Verificado ${compId} en Sandbox JS`
+      : `Fallo en pruebas unitarias de ${compId} en Sandbox JS (${execError || 'Error'})`
   }
 
+  const passed = Boolean(unitEvidence.exito)
   const compGraph = { ...state.componentsGraph }
-  compGraph[compId].status = 'VERIFIED'
+  compGraph[compId].status = passed ? 'VERIFIED' : 'FAILED'
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
     ...state,
@@ -674,18 +870,19 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
       `   * **Cliente:** LocalLoop\n` +
       `   * **Proyecto:** ${state.marketArchStandard || 'Arquitectura LocalLoop'}\n` +
       `   * **Responsable de QA:** UnitTest_Engineer\n` +
-      `   * **Estado del Componente:** ✅ **PASS**\n` +
+      `   * **Estado del Componente:** ${passed ? '✅ **PASS**' : '❌ **FAIL**'}\n` +
       `3. Secciones numeradas con encabezados Markdown claros (ej. ### 1. Resumen Ejecutivo, ### 2. Detalles del Entorno de Pruebas, ### 3. Resultados de las Pruebas, ### 4. Evidencia Visual, ### 5. Conclusiones y Recomendaciones).\n` +
-      `4. Resultados de las pruebas: DEBEN presentarse en una tabla Markdown estándar GFM con columnas (| ID | Descripción de la Prueba | Resultado | Observaciones |), incluyendo saltos de línea normales entre filas y usando ✅ PASS en la columna Resultado.\n` +
+      `4. Resultados de las pruebas: DEBEN presentarse en una tabla Markdown estándar GFM con columnas (| ID | Descripción de la Prueba | Resultado | Observaciones |), incluyendo saltos de línea normales entre filas y usando ${passed ? '✅ PASS' : '❌ FAIL'} en la columna Resultado.\n` +
       `5. Logs y capturas DOM: DEBEN envolverse en bloques de código cercados con triple acento grave (\`\`\`log y \`\`\`html).\n` +
       `6. NO generes etiquetas HTML crudas ni estilos en línea (no uses <span style="..."> ni <div align="...">); usa exclusivamente Markdown estándar puro.`,
     userPrompt:
       `Componente: ${comp.name} (\`${compId}\`)\n` +
       `Entorno de Verificación: ${isBrowserComp ? 'Browser Iframe Sandbox (DOM, CSS y Renderizado Visual)' : 'Sandbox JS Seguro'}\n` +
-      `Resultado General: Superado (PASS).\n\n` +
-      `Logs de Ejecución Sandbox:\n` +
+      `Resultado General: ${passed ? 'Superado (PASS)' : 'Fallo en Pruebas (FAIL)'}.\n` +
+      (unitEvidence.error ? `Error detectado: ${unitEvidence.error}\n` : '') +
+      `\nLogs de Ejecución Sandbox:\n` +
       `\`\`\`log\n` +
-      `${unitEvidence.logs?.join('\n') || 'Aserciones de contratos y lógica superadas sin incidencias.'}\n` +
+      `${unitEvidence.logs?.join('\n') || (passed ? 'Aserciones de contratos y lógica superadas sin incidencias.' : `Fallo: ${unitEvidence.error || 'Aserciones fallidas'}`)}\n` +
       `\`\`\`\n` +
       (unitEvidence.domSnapshot
         ? `\nSnapshot del DOM Capturado:\n\`\`\`html\n${unitEvidence.domSnapshot.slice(0, 500)}\n\`\`\`\n`
@@ -694,28 +891,31 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
     tools: resolvedSkill.tools,
     defaultFallback: () => ({
       content:
-        `### 🔨 Fase 3: Construcción & Pruebas Unitarias — \`${compId}\`\n\n` +
+        `### ${passed ? '🔨' : '❌'} Fase 3: Construcción & Pruebas Unitarias — \`${compId}\`\n\n` +
         `#### 1. Archivos Fuente Generados (${compGraph[compId].targetPaths?.length || 1} ficheros)\n` +
         (compGraph[compId].targetPaths || [compGraph[compId].targetPath || `src/modules/${compId}.ts`])
           .map((p) => `* \`${p}\``)
           .join('\n') +
         `\n\n#### 2. Evidencias de Pruebas Unitarias (${isBrowserComp ? 'Browser Iframe Sandbox' : 'Sandbox JS'})\n` +
-        `* **Resultado Sandbox:** ✅ **SUPERADO (Aserciones y Contratos Exitosos)**\n` +
+        `* **Resultado Sandbox:** ${passed ? '✅ **SUPERADO (Aserciones y Contratos Exitosos)**' : `❌ **FALLIDO (${unitEvidence.error || 'Error en ejecución de pruebas'})**`}\n` +
         `* **Modo de Verificación:** \`${unitEvidence.modo}\`\n` +
         `* **Aserciones Verificadas:**\n` +
-        `  - \`[PASS]\` Instanciación e integridad de contratos conforme a \`${state.marketArchStandard}\`.\n` +
-        `  - \`[PASS]\` Validación defensiva y manejo de eventos/excepciones.\n` +
-        (isBrowserComp
-          ? `  - \`[PASS]\` Integridad de elementos DOM, layout visual y renderizado en navegador.\n`
-          : `  - \`[PASS]\` Happy path: Ejecución de lógica de negocio y cálculo preciso.\n`) +
+        (passed
+          ? `  - \`[PASS]\` Instanciación e integridad de contratos conforme a \`${state.marketArchStandard}\`.\n` +
+          `  - \`[PASS]\` Validación defensiva y manejo de eventos/excepciones.\n` +
+          (isBrowserComp
+            ? `  - \`[PASS]\` Integridad de elementos DOM, layout visual y renderizado en navegador.\n`
+            : `  - \`[PASS]\` Happy path: Ejecución de lógica de negocio y cálculo preciso.\n`)
+          : `  - \`[FAIL]\` Ejecución fallida en sandbox: ${unitEvidence.error || 'Aserciones no superadas'}.\n` +
+          `  - \`[FAIL]\` Dependientes bloqueados; no se desbloquea el DAG hasta subsanar el componente.\n`) +
         (unitEvidence.domSnapshot
           ? `\n* **Snapshot DOM de Navegador:**\n\`\`\`html\n${unitEvidence.domSnapshot.slice(0, 400)}...\n\`\`\`\n`
           : '') +
         (unitEvidence.screenshotDataUrl
           ? `* **Evidencia Visual:** Captura visual registrada en artefacto de sesión (Screenshot SVG/DataURL).\n`
           : '') +
-        `* **Estado en Grafo Fin-Inicio:** Componente \`${compId}\` promovido a estado \`VERIFIED\`. Desbloqueando componentes dependientes.`,
-      thought: `Validando aserciones y evidencias visuales en Sandbox para ${comp.name}...`,
+        `* **Estado en Grafo Fin-Inicio:** Componente \`${compId}\` en estado \`${compGraph[compId].status}\`. ${passed ? 'Desbloqueando componentes dependientes.' : 'Dependientes NO desbloqueados debido al fallo.'}`,
+      thought: `Validando aserciones y evidencias visuales en Sandbox para ${comp.name}... Resultado: ${passed ? 'PASS' : 'FAIL'}`,
     }),
   })
 
@@ -741,12 +941,17 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
           isBrowserComponent: isBrowserComp,
           visualEvidence: isBrowserComp
             ? {
-                domSnapshot: unitEvidence.domSnapshot,
-                screenshotDataUrl: unitEvidence.screenshotDataUrl,
-              }
+              domSnapshot: unitEvidence.domSnapshot,
+              screenshotDataUrl: unitEvidence.screenshotDataUrl,
+            }
             : undefined,
         },
-        tags: [`comp:${compId}`, 'sandbox_tests', ...(isBrowserComp ? ['visual_evidence', 'browser_sandbox'] : [])],
+        tags: [
+          `comp:${compId}`,
+          'sandbox_tests',
+          passed ? 'passed' : 'failed',
+          ...(isBrowserComp ? ['visual_evidence', 'browser_sandbox'] : []),
+        ],
       })
     } catch {
       // ignore

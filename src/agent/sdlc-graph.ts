@@ -93,11 +93,19 @@ const workflow = new StateGraph(SDLCState)
 
   // Bifurcación Decisión Formal de Negocio (HITL)
   .addConditionalEdges('phase4_business_decision', (state) => {
+    if (state.currentPhase === '4_E2E_BUSINESS_AUDIT') {
+      return 'phase4_business_decision'
+    }
     return state.currentPhase === '5_STRATEGIC_RESILIENCE' ? 'phase5_resilience' : 'phase6_doc_projection'
   })
 
-  // Retorno del bucle de resiliencia al plan
-  .addEdge('phase5_resilience', 'phase1_strategy_and_plan')
+  // Enrutamiento tras el bucle de resiliencia (salto directo a Fase 3 para desarrollo y pruebas unitarias de remediación)
+  .addConditionalEdges('phase5_resilience', (state) => {
+    if (state.currentPhase === '3_COMPONENT_CONSTRUCTION' && state.activeComponentId) {
+      return 'phase3_implement_component'
+    }
+    return 'phase1_strategy_and_plan'
+  })
 
   // Cierre
   .addEdge('phase6_doc_projection', END)

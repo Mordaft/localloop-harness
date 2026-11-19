@@ -160,31 +160,30 @@ export async function executeSessionTurn(
         }
         const lowerPrompt = userPrompt.toLowerCase()
         if (currentPhase === '4_E2E_BUSINESS_AUDIT') {
-          if (
-            lowerPrompt.includes('rechazo') ||
-            lowerPrompt.includes('rechazar') ||
-            lowerPrompt.includes('reject') ||
-            lowerPrompt.includes('error') ||
-            lowerPrompt.includes('falla') ||
-            lowerPrompt.includes('fallo') ||
-            lowerPrompt.includes('no funciona') ||
-            lowerPrompt.includes('no transpila') ||
-            lowerPrompt.includes('no compila') ||
-            lowerPrompt.includes('corregir') ||
-            lowerPrompt.includes('arreglar') ||
-            lowerPrompt.includes('rca')
-          ) {
+          const isExplicitReject =
+            /\b(rechazo|rechazar|rechazado|reject|rejected|denegar|denegado|no apruebo|no conforme|error|falla|fallo|no funciona|no transpila|no compila|corregir|arreglar|rca|bug)\b/i.test(
+              lowerPrompt,
+            )
+          const isExplicitApprove =
+            /\b(apruebo|aprobado|aprobar|aprobación|conforme|ok|adelante|proceder|accept|accepted|approve|approved|sí|si|de acuerdo|visto bueno|validado|correcto)\b/i.test(
+              lowerPrompt,
+            )
+
+          if (isExplicitReject && !isExplicitApprove) {
             updatePayload.businessApproval = {
               approved: false,
               stakeholderComments: userPrompt.trim(),
               evaluatedAt: new Date().toISOString(),
             }
-          } else {
+          } else if (isExplicitApprove && !isExplicitReject) {
             updatePayload.businessApproval = {
               approved: true,
               stakeholderComments: userPrompt.trim(),
               evaluatedAt: new Date().toISOString(),
             }
+          } else {
+            // Decisión ambigua: mantener aprobación formal pendiente
+            updatePayload.businessApproval = null
           }
         } else {
           // Asegurar que respuestas de Fase 0 o Fase 1 nunca auto-aprueben la Fase 4 por adelantado

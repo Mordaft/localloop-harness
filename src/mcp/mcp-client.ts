@@ -1552,14 +1552,33 @@ export function buildRoleMcpPromptSupplementFromAssignment(assignment?: RoleMcpA
     )
     .join('\n')
 
+  const hasCliTools = assignment.tools.some((t) => t.categories.includes('CLI_EXECUTION_AND_BUILD'))
+  const cliToolNames = assignment.tools
+    .filter((t) => t.categories.includes('CLI_EXECUTION_AND_BUILD'))
+    .map((t) => `\`${t.tool.qualifiedName}\``)
+    .join(', ')
+
+  const cliMandate = hasCliTools
+    ? [
+        '\n🚨 [INSTRUCCIÓN PRIORITARIA: USO DE TETHER PARA EJECUCIÓN CLI, COMPILACIÓN Y RESOLUCIÓN DE ERRORES]:',
+        `Tienes disponible la integración de Tether mediante las herramientas: ${cliToolNames}.`,
+        'DEBES utilizar estas herramientas activamente mediante llamadas a tool_calls para:',
+        '1. Ejecutar comandos reales en la terminal shell del host (ej: `npm run build`, `npm run dev`, `npx tsc --noEmit`, `npm test`, `npm install`).',
+        '2. Verificar la compilación real del proyecto y de los componentes construidos antes de emitir informes o dar por finalizada la fase.',
+        '3. Si un comando devuelve errores de compilación o transpilación (TypeScript/Vite/SyntaxError), lee el log de error devuelto, identifica el fichero y la línea afectada, modifica el código usando las herramientas de edición/escritura de archivos para corregirlo, y vuelve a ejecutar la compilación con Tether hasta que pase limpiamente.',
+        '4. NUNCA asumas que el código compila sin haberlo ejecutado a través de Tether cuando estas herramientas estén disponibles.',
+      ].join('\n')
+    : ''
+
   return [
     '\n\n[CAPACIDADES MCP ASIGNADAS DINÁMICAMENTE A TU ROL]',
     `Rol activo: ${assignment.roleId} (${assignment.roleDescription})`,
     `Directiva de uso MCP: ${directive}`,
+    cliMandate,
     'Herramientas MCP disponibles en tu contexto actual:',
     toolLines,
     'IMPORTANTE: Cuando necesites ejecutar acciones de CLI, construcción, pruebas, lectura/escritura o consulta externa cubiertas por estas herramientas MCP, invócalas directamente mediante tool_calls antes de emitir tu veredicto final.',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 /**
@@ -1766,6 +1785,117 @@ export async function testContext7Connection(server: StoredMcpServer): Promise<{
       toolsCount: 0,
       tools: [],
       error: errorMsg,
+    }
+  }
+}
+
+/**
+ * Localiza la mejor herramienta MCP disponible para ejecución CLI en terminal host (priorizando Tether).
+ */
+export function findCliExecutionTool(report?: McpCapabilityAssignmentReport | null): McpToolDefinition | null {
+  const rep = report ?? getCachedMcpCapabilityReport()
+  if (!rep || rep.tools.length === 0) return null
+
+  // 1. Priorizar herramienta del servidor Tether con capacidad CLI_EXECUTION_AND_BUILD
+  const tetherTool = rep.tools.find(
+    (t) =>
+      t.categories.includes('CLI_EXECUTION_AND_BUILD') &&
+      (t.tool.serverName.toLowerCase().includes('tether') || t.tool.qualifiedName.toLowerCase().includes('tether')),
+  )
+  if (tetherTool) return tetherTool.tool
+
+  // 2. Cualquier herramienta del servidor Tether
+  const anyTetherTool = rep.tools.find(
+    (t) =>
+      t.tool.serverName.toLowerCase().includes('tether') ||
+      t.tool.qualifiedName.toLowerCase().includes('tether'),
+  )
+  if (anyTetherTool) return anyTetherTool.tool
+
+  // 3. Cualquier herramienta con capacidad CLI_EXECUTION_AND_BUILD
+  const anyCliTool = rep.tools.find((t) => t.categories.includes('CLI_EXECUTION_AND_BUILD'))
+  if (anyCliTool) return anyCliTool.tool
+
+  return null
+}
+
+/**
+ * Indica si hay herramientas MCP de Tether o ejecución CLI disponibles en el registro.
+ */
+export function isTetherAvailable(report?: McpCapabilityAssignmentReport | null): boolean {
+  return Boolean(findCliExecutionTool(report))
+}
+
+/**
+ * Ejecuta un comando en la máquina anfitriona a través de Tether MCP o la herramienta CLI disponible.
+ * Adapta los argumentos al esquema esperado por la herramienta (cmd, command, script, etc.).
+ */
+export async function executeCliViaMcp(
+  command: string,
+  authContext?: McpAuthConnectContext,
+  tool?: McpToolDefinition | null,
+): Promise<{ ok: boolean; output: string; exitCode: number }> {
+  const cliTool = tool ?? findCliExecutionTool()
+  if (!cliTool) {
+    return {
+      ok: false,
+      output: 'No hay ninguna herramienta CLI o de Tether disponible en el registro de capacidades MCP.',
+      exitCode: 1,
+    }
+  }
+
+  const args: Record<string, unknown> = {}
+  const props = cliTool.inputSchema?.properties || {}
+  if ('command' in props) {
+    args.command = command
+  }
+  if ('cmd' in props) {
+    args.cmd = command
+  }
+  if ('script' in props) {
+    args.script = command
+  }
+  if (Object.keys(args).length === 0) {
+    args.cmd = command
+    args.command = command
+  }
+
+  try {
+    const rawOutput = await callMcpTool(cliTool, args, authContext)
+    let exitCode = 0
+    let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput)
+
+    try {
+      const parsed = JSON.parse(text)
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (typeof parsed.exitCode === 'number') exitCode = parsed.exitCode
+        if (typeof parsed.code === 'number') exitCode = parsed.code
+        const stdOut = typeof parsed.stdout === 'string' ? parsed.stdout : ''
+        const stdErr = typeof parsed.stderr === 'string' ? parsed.stderr : ''
+        if (stdOut || stdErr) {
+          text = `${stdOut}\n${stdErr}`.trim()
+        }
+      }
+    } catch {
+      // texto plano
+    }
+
+    const hasErrorSignals =
+      exitCode !== 0 ||
+      /\b(?:error TS\d+|failed to compile|syntaxerror|compilation failed|build failed|cannot find module|failed to resolve import)\b/i.test(
+        text,
+      )
+
+    return {
+      ok: !hasErrorSignals,
+      output: text,
+      exitCode,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      output: err instanceof Error ? err.message : String(err),
+      exitCode: 1,
     }
   }
 }

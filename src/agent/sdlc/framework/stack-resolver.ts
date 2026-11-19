@@ -200,12 +200,13 @@ export function resolveFrameworkStack(userText: string, contextInitiative = ''):
   if (bundler === 'vite') {
     extraConfigFiles.push({
       path: 'vite.config.ts',
-      content: `import { defineConfig } from 'vite';
+      content: `/// <reference types="vitest" />
+import { defineConfig } from 'vite';
 
 export default defineConfig({
   server: {
     port: 3000,
-    open: true,
+    open: false,
   },
   test: {
     globals: true,
