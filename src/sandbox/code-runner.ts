@@ -167,11 +167,14 @@ export async function executeSandboxedJs(
     trace('sandbox.executed', { ok: true, durationMs: result.durationMs })
     return result
   } catch (err) {
+    const durationMs = Math.round(performance.now() - startedAt)
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    trace('sandbox.executed', { ok: false, durationMs, error: errorMsg })
     return {
       ok: false,
       logs,
-      error: err instanceof Error ? err.message : String(err),
-      durationMs: Math.round(performance.now() - startedAt),
+      error: errorMsg,
+      durationMs,
     }
   }
 }

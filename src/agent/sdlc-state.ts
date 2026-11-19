@@ -239,6 +239,14 @@ export const SDLCState = Annotation.Root({
     reducer: (curr, next) => (next ? { ...curr, ...next } : curr),
     default: () => null,
   }),
+  declaredDependencies: Annotation<Record<string, string>>({
+    reducer: (curr, next) => ({ ...curr, ...next }),
+    default: () => ({}),
+  }),
+  declaredDevDependencies: Annotation<Record<string, string>>({
+    reducer: (curr, next) => ({ ...curr, ...next }),
+    default: () => ({}),
+  }),
   phase1FrameworkAgreed: Annotation<boolean>({
     reducer: (_, next) => next,
     default: () => false,

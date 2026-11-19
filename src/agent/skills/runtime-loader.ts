@@ -198,6 +198,35 @@ export function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
     },
   })
 
+  map.set('declare_project_dependencies', {
+    type: 'function',
+    function: {
+      name: 'declare_project_dependencies',
+      description:
+        'Declara formalmente dependencias y librerías npm adicionales (producción y desarrollo) requeridas según las necesidades de negocio (ej. dexie para IndexedDB, chart.js, etc.).',
+      parameters: {
+        type: 'object',
+        properties: {
+          dependencies: {
+            type: 'object',
+            description: 'Pares clave-valor de paquetes npm y sus versiones semver (ej: {"dexie": "^4.0.11"}).',
+            additionalProperties: { type: 'string' },
+          },
+          devDependencies: {
+            type: 'object',
+            description: 'Pares clave-valor de paquetes de desarrollo npm y sus versiones semver.',
+            additionalProperties: { type: 'string' },
+          },
+          reason: {
+            type: 'string',
+            description: 'Justificación técnica de por qué se requieren estas dependencias.',
+          },
+        },
+        required: ['dependencies'],
+      },
+    },
+  })
+
   map.set('set_quality_gates', {
     type: 'function',
     function: {

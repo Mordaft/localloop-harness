@@ -11,7 +11,7 @@ import { getPersistentEngram, saveSdlcPhaseArtifact } from '../../../memory/engr
 import { updateSessionMetrics } from '../../../memory/app-db'
 import { FsWriteMode, SessionStatus } from '../../../enums'
 import { RuntimeSkillLoader } from '../../skills/runtime-loader'
-import type { ProjectFrameworkConfig, ProjectProgressEvent, SDLCStateType, TechnicalDebt } from '../../sdlc-state'
+import type { ProjectFrameworkConfig, ProjectProgressEvent, SDLCStateType, TechnicalDebtRecord } from '../../sdlc-state'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { emitSDLCProgress } from '../execution/progress-emitter'
 import { verifyAndRepairApplicationCompilation } from '../verification/compilation-verifier'
@@ -653,12 +653,15 @@ if (typeof document !== 'undefined') {
   // 2.5 Verificación y auto-reparación de compilación y arranque con Tether CLI
   const compilationCheck = await verifyAndRepairApplicationCompilation(state)
   if (compilationCheck.usedTether && !compilationCheck.ok) {
-    const compDebt: TechnicalDebt = {
+    const compDebt: TechnicalDebtRecord = {
       id: 'td-compilation-failure',
+      componentId: state.activeComponentId || 'system',
+      title: 'Fallo de compilación detectado por Tether CLI',
       description: `Fallo de compilación o arranque detectado por Tether CLI: ${compilationCheck.error || compilationCheck.output.slice(0, 300)}`,
-      impact: 'La aplicación generada presenta fallos de compilación o transpilación al arrancar.',
-      riskLevel: 'HIGH',
-      remediationPlan: 'Revisar imports y exports de TypeScript y ejecutar `npm run build` o `npx vite build` para corregir los tipos.',
+      riskLevel: 'ALTO',
+      mitigationPlan: 'Revisar imports y exports de TypeScript y ejecutar `npm run build` o `npx vite build` para corregir los tipos.',
+      syncedToMcp: false,
+      createdAt: new Date().toISOString(),
     }
     if (!state.technicalDebtList.some((d) => d.id === compDebt.id)) {
       state.technicalDebtList.push(compDebt)

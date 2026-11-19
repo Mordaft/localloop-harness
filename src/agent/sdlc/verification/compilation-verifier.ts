@@ -4,7 +4,7 @@ import {
   readWorkspaceFile,
   writeWorkspaceFileDirect,
 } from '../../../fs/workspace-fs'
-import { executeFileSystemTool, getFileSystemToolSpecs } from '../../../fs/fs-tools'
+import { getFileSystemToolSpecs } from '../../../fs/fs-tools'
 import {
   extractCleanSourceCode,
   getSandboxToolSpec,
@@ -18,8 +18,9 @@ import {
 } from '../../../mcp/mcp-client'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { getSessionCallbacks } from '../../agent-graph'
-import { FsWriteMode } from '../../../enums'
-import type { GeneratedComponentFile, SDLCStateType } from '../../sdlc-state'
+import { appendSessionMessage } from '../../../memory/app-db'
+import { RuntimeSkillLoader } from '../../skills/runtime-loader'
+import type { SDLCStateType } from '../../sdlc-state'
 
 export interface CompilationVerificationResult {
   ok: boolean
@@ -112,7 +113,6 @@ export async function verifyAndRepairApplicationCompilation(
 ): Promise<CompilationVerificationResult> {
   const maxIterations = options?.maxRepairIterations ?? 3
   const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
-  const pkgMgr = state.frameworkConfig?.packageManager || 'npm'
   const bundler = state.frameworkConfig?.bundler || 'none'
   const buildCmd =
     bundler === 'vite' ? 'npx vite build' : state.frameworkConfig?.buildCommand || 'npm run build'
@@ -121,8 +121,16 @@ export async function verifyAndRepairApplicationCompilation(
   const preCleaned = await validateAndCleanWorkspaceImports()
   const repairedFiles: string[] = [...preCleaned]
 
-  const cliTool = findCliExecutionTool()
-  const hasTether = isTetherAvailable() && Boolean(cliTool)
+  const authContext: McpAuthConnectContext = options?.authContext ?? {
+    agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-verifier',
+    agentName: 'LocalLoop (Compilation_Verifier)',
+    workspace: (state.mcpServerConfig as any)?.workspace || 'localloop-workspace',
+  }
+
+  // Sincronizar capacidades MCP para asegurar que Tether está descubierto y registrado en memoria
+  const mcpReport = await RuntimeSkillLoader.syncMcpCapabilities({ authContext }).catch(() => null)
+  const cliTool = findCliExecutionTool(mcpReport)
+  const hasTether = isTetherAvailable(mcpReport) && Boolean(cliTool)
 
   if (!hasTether || !cliTool) {
     trace('[SDLCGraph] Tether CLI no disponible. Realizando verificación estática de transpilación.')
@@ -143,16 +151,10 @@ export async function verifyAndRepairApplicationCompilation(
     callbacks.onThinking?.({
       sessionId: state.sessionId,
       thought: `Verificando compilación y arranque real de la aplicación con Tether (${cliTool.qualifiedName}): "${buildCmd}"...`,
-      phase: 'thinking',
+      phase: 'executing_tools',
       sdlcPhase: '4_E2E_BUSINESS_AUDIT',
       activeTool: cliTool.qualifiedName,
     })
-  }
-
-  const authContext: McpAuthConnectContext = options?.authContext ?? {
-    agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-verifier',
-    agentName: 'LocalLoop (Compilation_Verifier)',
-    workspace: state.mcpServerConfig?.workspace || 'localloop-workspace',
   }
 
   let attempt = 0
@@ -164,9 +166,41 @@ export async function verifyAndRepairApplicationCompilation(
     attempt++
     trace(`[SDLCGraph] Intento ${attempt}/${maxIterations} de compilación mediante Tether: "${buildCmd}"`)
 
+    if (callbacks && state.sessionId) {
+      callbacks.onThinking?.({
+        sessionId: state.sessionId,
+        thought: `[Tether CLI] Ejecutando: "${buildCmd}" (intento ${attempt}/${maxIterations})...`,
+        phase: 'executing_tools',
+        sdlcPhase: '4_E2E_BUSINESS_AUDIT',
+        activeTool: cliTool.qualifiedName,
+      })
+    }
+
     const execRes = await executeCliViaMcp(buildCmd, authContext, cliTool)
     lastOutput = execRes.output
     lastExitCode = execRes.exitCode
+
+    if (state.sessionId) {
+      await appendSessionMessage({
+        sessionId: state.sessionId,
+        role: 'tool',
+        toolName: cliTool.qualifiedName,
+        content: `[Tether CLI] Comando: "${buildCmd}" (intento ${attempt}/${maxIterations}) | Código: ${execRes.exitCode} | Estado: ${execRes.ok ? 'EXITOSO' : 'FALLIDO'}\n\n${execRes.output.slice(0, 1500)}`,
+      }).catch(() => {})
+      callbacks?.onStepUpdate?.(state.sessionId)
+    }
+
+    if (callbacks && state.sessionId) {
+      callbacks.onThinking?.({
+        sessionId: state.sessionId,
+        thought: execRes.ok
+          ? `[Tether CLI] Compilación verificada exitosamente ("${buildCmd}")`
+          : `[Tether CLI] Fallo de compilación detectado ("${buildCmd}"). Iniciando auto-reparación...`,
+        phase: 'thinking',
+        sdlcPhase: '4_E2E_BUSINESS_AUDIT',
+        activeTool: cliTool.qualifiedName,
+      })
+    }
 
     if (execRes.ok) {
       isClean = true
@@ -174,7 +208,9 @@ export async function verifyAndRepairApplicationCompilation(
       break
     }
 
-    trace(`[SDLCGraph] ❌ Fallo de compilación detectado por Tether (intento ${attempt}/${maxIterations}):\n${lastOutput}`)
+    trace(
+      `[SDLCGraph] ❌ Fallo de compilación detectado por Tether (intento ${attempt}/${maxIterations}, exitCode ${lastExitCode}):\n${lastOutput}`,
+    )
 
     if (callbacks && state.sessionId) {
       callbacks.onThinking?.({

@@ -1388,82 +1388,136 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   authContext?: McpAuthConnectContext,
 ): Promise<string> {
-  trace('mcp.tool.call', { server: tool.serverName, tool: tool.name, qualifiedName: tool.qualifiedName })
+  const startTime = Date.now()
+  const isTether =
+    /tether/i.test(tool.serverName) ||
+    /tether/i.test(tool.name) ||
+    /tether/i.test(tool.qualifiedName)
 
-  const servers = await listMcpServers()
-  const matchedServer: StoredMcpServer = servers.find(
-    (s) => s.name === tool.serverName || s.url === tool.serverUrl,
-  ) ?? {
-    name: tool.serverName,
-    url: tool.serverUrl,
-    transport: McpTransportType.SSE,
-    enabled: true,
-    createdAt: new Date().toISOString(),
+  trace('mcp.tool.call', { server: tool.serverName, tool: tool.name, qualifiedName: tool.qualifiedName })
+  trace('mcp.tool.start', { server: tool.serverName, tool: tool.name, qualifiedName: tool.qualifiedName, args })
+  if (isTether) {
+    trace('tether.cli.start', { server: tool.serverName, tool: tool.name, qualifiedName: tool.qualifiedName, args })
   }
 
-  // Sanitize relative or virtual workspace directory arguments (e.g. "Prueba 12", "workspace")
-  // that cause Windows PTY / CreateProcess to fail with "The directory name is invalid"
-  const sanitizedArgs: Record<string, unknown> = { ...args }
-  const isAbsoluteOsPath = (val: string) => /^([a-zA-Z]:[\\/]|\\\\|\/(?!workspace\b)[a-zA-Z0-9._-]+)/.test(val.trim())
-  const serverAbsWorkspace =
-    matchedServer.workspace && isAbsoluteOsPath(matchedServer.workspace)
-      ? matchedServer.workspace.trim()
-      : undefined
+  try {
+    const servers = await listMcpServers()
+    const matchedServer: StoredMcpServer = servers.find(
+      (s) => s.name === tool.serverName || s.url === tool.serverUrl,
+    ) ?? {
+      name: tool.serverName,
+      url: tool.serverUrl,
+      transport: McpTransportType.SSE,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    }
 
-  for (const dirKey of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
-    if (typeof sanitizedArgs[dirKey] === 'string') {
-      const rawDir = String(sanitizedArgs[dirKey]).trim()
-      if (!rawDir || !isAbsoluteOsPath(rawDir)) {
-        if (serverAbsWorkspace) {
-          sanitizedArgs[dirKey] = serverAbsWorkspace
-        } else {
-          delete sanitizedArgs[dirKey]
+    // Sanitize relative or virtual workspace directory arguments (e.g. "Prueba 12", "workspace")
+    // that cause Windows PTY / CreateProcess to fail with "The directory name is invalid"
+    const sanitizedArgs: Record<string, unknown> = { ...args }
+    const isAbsoluteOsPath = (val: string) => /^([a-zA-Z]:[\\/]|\\\\|\/(?!workspace\b)[a-zA-Z0-9._-]+)/.test(val.trim())
+    const serverAbsWorkspace =
+      matchedServer.workspace && isAbsoluteOsPath(matchedServer.workspace)
+        ? matchedServer.workspace.trim()
+        : undefined
+
+    for (const dirKey of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
+      if (typeof sanitizedArgs[dirKey] === 'string') {
+        const rawDir = String(sanitizedArgs[dirKey]).trim()
+        if (!rawDir || !isAbsoluteOsPath(rawDir)) {
+          if (serverAbsWorkspace) {
+            sanitizedArgs[dirKey] = serverAbsWorkspace
+          } else {
+            delete sanitizedArgs[dirKey]
+          }
         }
       }
     }
-  }
 
-  let payload = await invokeMcpServerRpc(
-    matchedServer,
-    'tools/call',
-    {
-      name: tool.name,
-      arguments: sanitizedArgs,
-    },
-    authContext,
-  )
-
-  const payloadStr = JSON.stringify(payload ?? '')
-  if (
-    payloadStr.includes('The directory name is invalid') ||
-    payloadStr.includes('directory name is invalid')
-  ) {
-    const retryArgs: Record<string, unknown> = { ...sanitizedArgs }
-    for (const k of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir', 'path']) {
-      delete retryArgs[k]
-    }
-    const retryPayload = await invokeMcpServerRpc(
+    let payload = await invokeMcpServerRpc(
       matchedServer,
       'tools/call',
       {
         name: tool.name,
-        arguments: retryArgs,
+        arguments: sanitizedArgs,
       },
       authContext,
     )
-    if (retryPayload && !retryPayload.error) {
-      payload = retryPayload
+
+    const payloadStr = JSON.stringify(payload ?? '')
+    if (
+      payloadStr.includes('The directory name is invalid') ||
+      payloadStr.includes('directory name is invalid')
+    ) {
+      const retryArgs: Record<string, unknown> = { ...sanitizedArgs }
+      for (const k of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir', 'path']) {
+        delete retryArgs[k]
+      }
+      const retryPayload = await invokeMcpServerRpc(
+        matchedServer,
+        'tools/call',
+        {
+          name: tool.name,
+          arguments: retryArgs,
+        },
+        authContext,
+      )
+      if (retryPayload && !retryPayload.error) {
+        payload = retryPayload
+      }
     }
-  }
 
-  if (!payload) {
-    throw new Error(`Servidor MCP ${tool.serverName} (${tool.serverUrl}) no respondió a la invocación de ${tool.name}`)
-  }
+    if (!payload) {
+      throw new Error(`Servidor MCP ${tool.serverName} (${tool.serverUrl}) no respondió a la invocación de ${tool.name}`)
+    }
 
-  if (payload.error) {
-    throw new Error(payload.error.message ?? 'Error en llamada MCP')
+    if (payload.error) {
+      throw new Error(payload.error.message ?? 'Error en llamada MCP')
+    }
+
+    const resultStr = JSON.stringify(payload.result ?? {})
+    const elapsedMs = Date.now() - startTime
+
+    trace('mcp.tool.complete', {
+      server: tool.serverName,
+      tool: tool.name,
+      qualifiedName: tool.qualifiedName,
+      elapsedMs,
+      outputPreview: resultStr.slice(0, 400),
+    })
+
+    if (isTether) {
+      trace('tether.cli.complete', {
+        server: tool.serverName,
+        tool: tool.name,
+        qualifiedName: tool.qualifiedName,
+        elapsedMs,
+        outputPreview: resultStr.slice(0, 500),
+      })
+    }
+
+    return resultStr
+  } catch (err) {
+    const elapsedMs = Date.now() - startTime
+    const errMsg = err instanceof Error ? err.message : String(err)
+    trace('mcp.tool.error', {
+      server: tool.serverName,
+      tool: tool.name,
+      qualifiedName: tool.qualifiedName,
+      elapsedMs,
+      error: errMsg,
+    })
+    if (isTether) {
+      trace('tether.cli.error', {
+        server: tool.serverName,
+        tool: tool.name,
+        qualifiedName: tool.qualifiedName,
+        elapsedMs,
+        error: errMsg,
+      })
+    }
+    throw err
   }
-  return JSON.stringify(payload.result ?? {})
 }
 
 /**
@@ -1837,6 +1891,7 @@ export async function executeCliViaMcp(
 ): Promise<{ ok: boolean; output: string; exitCode: number }> {
   const cliTool = tool ?? findCliExecutionTool()
   if (!cliTool) {
+    trace('tether.execute.unavailable', { command })
     return {
       ok: false,
       output: 'No hay ninguna herramienta CLI o de Tether disponible en el registro de capacidades MCP.',
@@ -1844,8 +1899,15 @@ export async function executeCliViaMcp(
     }
   }
 
+  const startTime = Date.now()
+  trace('tether.execute.start', {
+    command,
+    tool: cliTool.qualifiedName,
+    server: cliTool.serverName,
+  })
+
   const args: Record<string, unknown> = {}
-  const props = cliTool.inputSchema?.properties || {}
+  const props = (cliTool.inputSchema?.properties as Record<string, unknown>) || {}
   if ('command' in props) {
     args.command = command
   }
@@ -1886,15 +1948,33 @@ export async function executeCliViaMcp(
         text,
       )
 
+    const elapsedMs = Date.now() - startTime
+    trace('tether.execute.complete', {
+      command,
+      tool: cliTool.qualifiedName,
+      ok: !hasErrorSignals,
+      exitCode,
+      elapsedMs,
+      outputPreview: text.slice(0, 500),
+    })
+
     return {
       ok: !hasErrorSignals,
       output: text,
       exitCode,
     }
   } catch (err) {
+    const elapsedMs = Date.now() - startTime
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    trace('tether.execute.error', {
+      command,
+      tool: cliTool.qualifiedName,
+      elapsedMs,
+      error: errorMsg,
+    })
     return {
       ok: false,
-      output: err instanceof Error ? err.message : String(err),
+      output: errorMsg,
       exitCode: 1,
     }
   }

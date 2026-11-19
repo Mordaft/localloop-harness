@@ -138,7 +138,7 @@ export function identifyTargetComponentForRemediation(
   const allTextsToSearch = [
     lowerFeedback,
     ...(state.technicalDebtList || []).map((d) => (d.description || '').toLowerCase()),
-    ...(state.e2eEvidences?.traceLog || []).map((t) => t.toLowerCase()),
+    ...(state.e2eEvidences?.traceLog || []).map((t: string) => t.toLowerCase()),
   ].join(' ')
 
   for (const comp of Object.values(graph)) {

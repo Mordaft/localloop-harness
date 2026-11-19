@@ -27,8 +27,10 @@ import {
 } from '../../../llm/llm-client'
 import { getLlmConfig } from '../../../llm/llm-config'
 import { getEngramToolSpecs, getSessionCallbacks } from '../../agent-graph'
+import { appendSessionMessage } from '../../../memory/app-db'
 import {
   callMcpTool,
+  findCliExecutionTool,
   getMcpToolsForRole,
   ROLE_CAPABILITY_MATRIX,
 } from '../../../mcp/mcp-client'
@@ -300,6 +302,13 @@ export async function streamLlmPhase(params: {
           `[SDLCGraph] Ejecutando herramienta invocada por el LLM (iteración ${iteration + 1}/${maxToolIterations}): ${tc.name}`,
           tc.args,
         )
+        const toolStartTime = Date.now()
+        trace('tool.execute.start', {
+          toolName: tc.name,
+          args: tc.args,
+          sdlcPhase,
+          iteration: iteration + 1,
+        })
         if (callbacks && sessionId) {
           callbacks.onThinking?.({
             sessionId,
@@ -515,23 +524,77 @@ export async function streamLlmPhase(params: {
           } else {
             toolResultOutput = JSON.stringify({ status: 'ok', tool: tc.name, args: tc.args })
           }
+
+          const elapsedMs = Date.now() - toolStartTime
+          trace('tool.execute.complete', {
+            toolName: tc.name,
+            elapsedMs,
+            sdlcPhase,
+            outputPreview: toolResultOutput.slice(0, 400),
+          })
+
+          if (callbacks && sessionId) {
+            callbacks.onThinking?.({
+              sessionId,
+              thought: `Herramienta ${tc.name} completada en ${elapsedMs}ms`,
+              phase: 'thinking',
+              activeTool: tc.name,
+              sdlcPhase,
+            })
+          }
         } catch (toolErr) {
+          const elapsedMs = Date.now() - toolStartTime
           trace(`[SDLCGraph] Error al ejecutar herramienta ${tc.name}: ${toolErr}`)
+          trace('tool.execute.error', {
+            toolName: tc.name,
+            elapsedMs,
+            sdlcPhase,
+            error: toolErr instanceof Error ? toolErr.message : String(toolErr),
+          })
           toolResultOutput = JSON.stringify({
             error: toolErr instanceof Error ? toolErr.message : String(toolErr),
           })
         }
 
+        const sanitizedOutput = toolResultOutput.replace(
+          /"data:image\/[^";]+;base64,[A-Za-z0-9+/=]{120,}"/g,
+          '"data:image/png;base64,[captura_disponible_en_inspector_ui]"',
+        )
+
         conversationMessages.push({
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.name,
-          content: toolResultOutput,
+          content: sanitizedOutput,
         })
+
+        if (sessionId) {
+          await appendSessionMessage({
+            sessionId,
+            role: 'tool',
+            toolName: tc.name,
+            toolCallId: tc.id,
+            content: sanitizedOutput.slice(0, 2000),
+          }).catch(() => {})
+          callbacks?.onStepUpdate?.(sessionId)
+        }
       }
 
-      // Si no se invocaron herramientas de lectura/consulta (p. ej. solo se invocó fs_write_file o approve_design), salimos del bucle
+      // Si no se invocaron herramientas de lectura/consulta (p. ej. solo se invocó fs_write_file o approve_design), evaluamos invitar a Tether o salir
       if (!hasIterativeQueryTool) {
+        const cliTool = findCliExecutionTool(mcpReport)
+        if (
+          cliTool &&
+          iteration === 0 &&
+          allExecutedToolCalls.some((tc) => tc.name === 'fs_write_file')
+        ) {
+          hasIterativeQueryTool = true
+          conversationMessages.push({
+            role: 'user',
+            content: `Se han guardado los archivos. Tienes disponible la herramienta de Tether "${cliTool.qualifiedName}". Puedes invocarla mediante tool_calls para ejecutar la compilación o validación real (ej: \`npx tsc --noEmit\` o \`npm run build\`) y verificar que no existen errores antes de finalizar.`,
+          })
+          continue
+        }
         break
       }
     }

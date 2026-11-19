@@ -1,3 +1,4 @@
+import { trace } from '../diagnostics'
 import { FileProposalStatus, FsWriteMode, type FsWriteMode as FsWriteModeType } from '../enums'
 import type { OpenAiToolSpec } from '../llm/llm-client'
 import { createFileProposal, listFileProposals, updateFileProposalStatus } from '../memory/app-db'
@@ -73,6 +74,38 @@ export function getFileSystemToolSpecs(): OpenAiToolSpec[] {
 }
 
 export async function executeFileSystemTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  options: {
+    sessionId: number
+    fsWriteMode: FsWriteModeType
+    onProposalCreated?: (proposalId: number, path: string) => void
+  },
+): Promise<{ output: string; requiresHumanConfirmation?: boolean; proposalId?: number }> {
+  const startTime = Date.now()
+  trace('fs.tool.start', { toolName, args })
+  try {
+    const res = await internalExecuteFileSystemTool(toolName, args, options)
+    const elapsedMs = Date.now() - startTime
+    trace('fs.tool.complete', {
+      toolName,
+      elapsedMs,
+      outputPreview: res.output.slice(0, 300),
+      requiresHumanConfirmation: res.requiresHumanConfirmation,
+    })
+    return res
+  } catch (err) {
+    const elapsedMs = Date.now() - startTime
+    trace('fs.tool.error', {
+      toolName,
+      elapsedMs,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    throw err
+  }
+}
+
+async function internalExecuteFileSystemTool(
   toolName: string,
   args: Record<string, unknown>,
   options: {
