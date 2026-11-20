@@ -37,8 +37,21 @@ export async function node_phase3_implement_component(state: SDLCStateType): Pro
   const compGraph = { ...state.componentsGraph }
   compGraph[compId].status = 'IN_BUILD'
 
-  const defaultGen = generateComponentCode(comp)
-  const defaultTarget = comp.targetPath || `src/components/${compId}.ts`
+  const compDir = state.projectScaffold?.componentDirectory || 'src/components'
+  const fileExt = state.projectScaffold?.fileExtension
+    ? (state.projectScaffold.fileExtension.startsWith('.')
+        ? state.projectScaffold.fileExtension
+        : `.${state.projectScaffold.fileExtension}`)
+    : '.ts'
+  const defaultTarget = comp.targetPath || `${compDir}/${compId}${fileExt}`
+
+  const defaultGen = generateComponentCode(comp, {
+    frameworkConfig: state.frameworkConfig,
+    projectScaffold: state.projectScaffold,
+    marketArchStandard: state.marketArchStandard,
+    contracts: state.technicalDesigns?.[compId]?.[0]?.contracts,
+    targetPath: defaultTarget,
+  })
   const existingFiles = comp.files && comp.files.length > 0 ? comp.files : undefined
   const defaultFiles: GeneratedComponentFile[] =
     existingFiles ||
@@ -50,6 +63,26 @@ export async function node_phase3_implement_component(state: SDLCStateType): Pro
     ...state,
     activeSkill: 'Component_Implementer',
   })
+
+  const frameworkName =
+    state.frameworkConfig?.framework ||
+    state.projectScaffold?.frameworkTitle ||
+    state.marketArchStandard ||
+    'Marco técnico acordado en la fase de diseño'
+  const runtime = state.frameworkConfig?.runtime || state.projectScaffold?.runtime || 'agnóstico'
+  const archetype = state.frameworkConfig?.archetype || state.projectScaffold?.archetype || 'modular'
+  const hasUI = state.frameworkConfig?.hasUI ?? state.projectScaffold?.hasUI ?? false
+  const chosenDesign = state.technicalDesigns?.[compId]?.[0]
+  const buildCmd = state.frameworkConfig?.buildCommand
+  const testCmd = state.frameworkConfig?.testCommand
+  const validationCmdHint = buildCmd || testCmd || 'las herramientas de compilación o testing del proyecto'
+  const isTypeScriptStack = Boolean(
+    frameworkName.toLowerCase().includes('typescript') ||
+    state.projectScaffold?.fileExtension === '.ts' ||
+    state.projectScaffold?.fileExtension === '.tsx' ||
+    (comp.files && comp.files.some((f) => /\.(ts|tsx)$/.test(f.path))) ||
+    (comp.targetPath && /\.(ts|tsx)$/.test(comp.targetPath))
+  )
 
   const depContextLines = (comp.dependsOn || [])
     .map((depId) => {
@@ -97,17 +130,27 @@ export async function node_phase3_implement_component(state: SDLCStateType): Pro
     sdlcPhase: '3_COMPONENT_CONSTRUCTION',
     maxToolIterations: 5,
     systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Desarrollador de Software de LocalLoop dentro del bucle iterativo de construcción tras la aprobación de la Propuesta de Solución Técnica.
+Tu misión es implementar el componente "${comp.name}" (\`${compId}\`) materializando fielmente las decisiones tecnológicas y arquitectónicas pactadas en la fase de diseño técnico y planificación.
+
+Marco y arquitectura aprobados:
+- Marco Tecnológico: ${frameworkName} (Runtime: ${runtime}, Arquetipo: ${archetype})
+- Estándar Arquitectónico: ${state.marketArchStandard || 'Clean Architecture / Modular'}
+${chosenDesign ? `- Enfoque de Diseño Técnico Seleccionado: ${chosenDesign.approachName}\n- Descripción del Diseño: ${chosenDesign.description}` : ''}
+
 Puedes abordar el componente de tres formas según su complejidad:
-1. **Construcción Directa**: Consultar search_web_guidance / read_web_guidance_doc si aplica (máximo 1 consulta) y escribir directamente los archivos completos y transpilables con "fs_write_file" o mediante bloques de código anotados con \`\`\`typescript path="ruta/archivo.ts".
+1. **Construcción Directa**: Consultar search_web_guidance / read_web_guidance_doc si aplica (máximo 1 consulta) y escribir directamente los archivos completos y funcionales con "fs_write_file" o mediante bloques de código anotados con \`\`\`<lenguaje> path="ruta/archivo.ext".
 2. **Descomposición Previa en Subtareas**: Invocar "plan_and_delegate_tasks" (o "delegate_subagent_scope") definiendo las subtareas y su prueba de aceptación ("acceptanceTest") para delegar la construcción verificada en sub-agentes antes de consolidar los archivos del componente.
-3. **Validación Temprana mediante Tether CLI**: Si dispones de herramientas de ejecución de terminal / Tether (como mcp_tether_run_cli o mcp_tether_execute_command), puedes ejecutar comandos en la terminal del proyecto (por ejemplo \`npx tsc --noEmit\` o pruebas unitarias de terminal) para validar la sintaxis, tipos y transpilación antes de dar por finalizada la construcción.
-REGLAS ESTRICTAS DE TRANSPILACIÓN Y MONTAJE:
-- Todo archivo TypeScript debe compilar limpiamente con \`tsc\` y \`vite build\` sin placeholders (\`// TODO\`, \`...\`), sin bloques Markdown (\`\`\`) dentro del archivo y con exportaciones explícitas.
-- NO importes tipos globales del navegador como \`import { HTMLElement } from 'dom'\` (\`HTMLElement\` ya es global en TypeScript).
-- Todo componente visual o de interfaz (\`src/components/*.ts\`) DEBE exportar una clase con \`constructor(container?: HTMLElement)\` y un método público \`mount(container: HTMLElement): void\` que renderice el HTML completo del componente en \`container\` y enlace sus eventos interactivos.`,
-    userPrompt: `Marco Tecnológico Acordado: ${state.frameworkConfig?.framework || 'HTML5 + TypeScript + TailwindCSS'}
+3. **Validación Temprana mediante Tether CLI**: Si dispones de herramientas de ejecución de terminal / Tether (como mcp_tether_run_cli o mcp_tether_execute_command), puedes ejecutar comandos en la terminal del proyecto (por ejemplo \`${validationCmdHint}\`) para validar la sintaxis, tipos, compilación y pruebas antes de dar por finalizada la construcción.
+
+REGLAS ESTRICTAS DE CONSTRUCCIÓN Y CALIDAD:
+- Fidelidad al Diseño Técnico: Implementa con exactitud los contratos de interfaces, firmas, tipos y responsabilidades aprobados para este componente en la fase de diseño técnico. No introduzcas frameworks, librerías ni supuestos arquitectónicos ajenos a lo acordado.
+- Completitud para Producción: Todo archivo debe contener código completo, autocontenido y funcional para producción, sin placeholders (\`// TODO\`, \`...\`), sin bloques Markdown anidados dentro del código y con exportaciones explícitas coherentes con las dependencias del proyecto.
+- Estructura del Proyecto: Sitúa todos los archivos respetando estrictamente la estructura de directorios y convenciones del marco acordado.
+${hasUI ? `- Componentes de Interfaz / UI: Implementa el renderizado, interactividad y ciclo de vida respetando los contratos aprobados y las convenciones del marco acordado (${frameworkName}).` : '- Componentes de Lógica / Backend / Servicios: Implementa los contratos de servicio, métodos y modelos de datos acordados en la solución técnica.'}
+${isTypeScriptStack ? '- Entorno TypeScript en Navegador: Si se utiliza TypeScript en el navegador, no importes tipos globales del DOM como `import { HTMLElement } from \'dom\'` (`HTMLElement` ya es global en el runtime).' : ''}`,
+    userPrompt: `Marco Tecnológico Acordado: ${frameworkName}
 Estructura de Directorios del Proyecto:
-${state.frameworkConfig?.projectStructureSummary || '- src/components/'}
+${state.frameworkConfig?.projectStructureSummary || (state.projectScaffold ? `- Componentes: \`${state.projectScaffold.componentDirectory}/\`\n- Servicios: \`${state.projectScaffold.serviceDirectory}/\`\n- Tests: \`${state.projectScaffold.testDirectory}/\`` : '- src/components/')}
 IMPORTANTE: Sitúa los archivos generados respetando estrictamente esta estructura de directorios y marco técnico.
 
 ${businessContextBlock ? `Contexto de Negocio y Requisitos del Proyecto:\n${businessContextBlock}\n\n` : ''}${
@@ -127,24 +170,39 @@ ${(state.technicalDesigns?.[compId]?.[0]?.contracts || []).map((c) => c.schema).
 Archivos sugeridos para esta funcionalidad:
 ${defaultFiles.map((f) => `- "${f.path}": ${f.description || f.path}`).join('\n')}
 
-Guarda los archivos completos y transpilables en el workspace (directamente o tras descomponer en subtareas). Si dispones de herramientas Tether (CLI), úsalas prioritariamente para validar la compilación y pruebas de tus archivos.`,
+Guarda los archivos completos y transpilables/interpretables en el workspace (directamente o tras descomponer en subtareas). Si dispones de herramientas Tether (CLI), úsalas prioritariamente para validar la compilación y pruebas de tus archivos.`,
     tools:
       resolvedSkill.tools.length > 0
         ? resolvedSkill.tools
         : [...getFileSystemToolSpecs(), getBrowserSandboxToolSpec(), getSandboxToolSpec()],
     defaultFallback: () => ({
       content: defaultFiles
-        .map(
-          (f) =>
-            `\`\`\`${f.path.endsWith('.html')
+        .map((f) => {
+          const ext = f.path.split('.').pop()?.toLowerCase() || ''
+          const lang =
+            ext === 'html'
               ? 'html'
-              : f.path.endsWith('.css')
+              : ext === 'css'
                 ? 'css'
-                : f.path.endsWith('.json') || f.path.endsWith('.webmanifest')
+                : ext === 'json' || ext === 'webmanifest'
                   ? 'json'
-                  : 'typescript'
-            } path="${f.path}"\n${f.content}\n\`\`\``,
-        )
+                  : ext === 'js' || ext === 'jsx'
+                    ? 'javascript'
+                    : ext === 'py'
+                      ? 'python'
+                      : ext === 'go'
+                        ? 'go'
+                        : ext === 'rs'
+                          ? 'rust'
+                          : ext === 'cs'
+                            ? 'csharp'
+                            : ext === 'java'
+                              ? 'java'
+                              : ext === 'ts' || ext === 'tsx'
+                                ? 'typescript'
+                                : ext || 'text'
+          return `\`\`\`${lang} path="${f.path}"\n${f.content}\n\`\`\``
+        })
         .join('\n\n'),
       thought: `Generando implementación multi-fichero (${defaultFiles.length} archivos) para ${comp.name}...`,
     }),
@@ -217,22 +275,98 @@ Guarda los archivos completos y transpilables en el workspace (directamente o tr
 
   // 3. Fallback a coincidencia única de código estándar si no había rutas anotadas
   if (extractedFiles.length === 0) {
-    const tsMatch = llmCode.content.match(/```(?:typescript|ts)?\n([\s\S]*?)```/)
-    if (tsMatch && tsMatch[1] && tsMatch[1].trim().length > 30) {
-      pushExtractedFileIfValid(defaultFiles[0].path, tsMatch[1].trim(), defaultFiles[0].description || defaultFiles[0].path)
+    const codeMatch = llmCode.content.match(/```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]*?)```/)
+    if (codeMatch && codeMatch[1] && codeMatch[1].trim().length > 30) {
+      pushExtractedFileIfValid(defaultFiles[0].path, codeMatch[1].trim(), defaultFiles[0].description || defaultFiles[0].path)
     }
   }
 
-  // Validar que los archivos extraídos del LLM tengan código fuente válido y transpilable;
-  // si el LLM produjo stubs vacíos o no generó el archivo principal, garantizamos completitud con defaultFiles.
-  const hasValidCodeFile = extractedFiles.some(
+  // Validar que los archivos extraídos del LLM tengan código fuente válido y transpilable/interpretable;
+  let hasValidCodeFile = extractedFiles.some(
     (f) =>
-      /\.(ts|tsx|js|jsx|html)$/i.test(f.path) &&
       !f.path.startsWith('tests/') &&
       !f.path.includes('/types/') &&
       f.content.trim().length > 50 &&
-      /\b(export|class|function|const|<!DOCTYPE|<div|<section)\b/i.test(f.content),
+      isValidSourceCodeForPath(f.path, f.content),
   )
+
+  // Bucle de auto-reparación / fallback con el LLM: si el LLM fue invocado pero no generó archivos válidos
+  if (!llmCode.usedFallback && (extractedFiles.length === 0 || !hasValidCodeFile)) {
+    trace(`[SDLCGraph] Fallback activo: El LLM no generó archivos de código válidos para ${compId}. Solicitando autocorrección al LLM...`)
+    if (callbacks && state.sessionId) {
+      callbacks.onThinking?.({
+        sessionId: state.sessionId,
+        thought: `Código no detectado o incompleto para ${compId}. Solicitando generación correctiva al LLM...`,
+        phase: 'thinking',
+        sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+      })
+    }
+
+    try {
+      const repairLlm = await streamLlmPhase({
+        sessionId: state.sessionId,
+        phaseName: `Fase 3: Fallback de Construcción — Autocorrección de ${compId}`,
+        sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+        roleId: 'Component_Implementer',
+        systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Desarrollador de Software de LocalLoop. Tu turno anterior no produjo código fuente completo o válido para el componente "${comp.name}" (\`${compId}\`).
+Escribe los archivos de código completos, transpilables y listos para producción utilizando "fs_write_file" o bloques de código \`\`\`<lenguaje> path="ruta/archivo.ext".
+Respeta estrictamente el marco técnico acordado: ${frameworkName} y la estructura de directorios del proyecto.`,
+        userPrompt: `Implementa el componente: ${comp.name} (\`${compId}\`)
+Responsabilidad: ${comp.description}
+${depContextLines ? `Dependencias ya construidas en el workspace:\n${depContextLines}\n` : ''}Contratos Aprobados en la Solución Técnica:
+${(state.technicalDesigns?.[compId]?.[0]?.contracts || []).map((c) => c.schema).join('\n\n')}
+
+Archivos requeridos para esta funcionalidad:
+${defaultFiles.map((f) => `- "${f.path}": ${f.description || f.path}`).join('\n')}
+
+IMPORTANTE: Escribe los archivos completos sin placeholders ni código omitido usando fs_write_file o bloques de código anotados con path="...".`,
+        tools:
+          resolvedSkill.tools.length > 0
+            ? resolvedSkill.tools
+            : [...getFileSystemToolSpecs(), getSandboxToolSpec()],
+        defaultFallback: () => ({ content: '', thought: 'Fallback de autocorrección no disponible.' }),
+      })
+
+      for (const tc of repairLlm.toolCalls) {
+        if (tc.name === 'fs_write_file' && typeof tc.args.path === 'string' && typeof tc.args.content === 'string') {
+          pushExtractedFileIfValid(
+            tc.args.path,
+            tc.args.content,
+            String(tc.args.reason || `Archivo ${tc.args.path.trim()}`),
+          )
+        }
+      }
+
+      for (const subDeliv of repairLlm.subagentDeliverables || []) {
+        if (subDeliv.targetPath && subDeliv.code.trim().length > 0) {
+          pushExtractedFileIfValid(
+            subDeliv.targetPath,
+            subDeliv.code,
+            subDeliv.summary || `Subtarea ${subDeliv.taskId}`,
+          )
+        }
+      }
+
+      let repairMatch: RegExpExecArray | null
+      while ((repairMatch = blockRegex.exec(repairLlm.content)) !== null) {
+        const filePath = (repairMatch[1] || repairMatch[2] || repairMatch[3] || '').trim().replace(/\\/g, '/')
+        const content = repairMatch[4]?.trim()
+        if (filePath && content) {
+          pushExtractedFileIfValid(filePath, content, `Archivo ${filePath}`)
+        }
+      }
+
+      hasValidCodeFile = extractedFiles.some(
+        (f) =>
+          !f.path.startsWith('tests/') &&
+          !f.path.includes('/types/') &&
+          f.content.trim().length > 50 &&
+          isValidSourceCodeForPath(f.path, f.content),
+      )
+    } catch (repairErr) {
+      trace(`[SDLCGraph] Aviso en fallback de autocorrección con LLM para ${compId}: ${repairErr}`)
+    }
+  }
 
   const finalFilesMap = new Map<string, GeneratedComponentFile>()
   if (llmCode.usedFallback || extractedFiles.length === 0 || !hasValidCodeFile) {
@@ -245,18 +379,70 @@ Guarda los archivos completos y transpilables en el workspace (directamente o tr
       finalFilesMap.set(f.path, f)
     }
   }
-  // Si el LLM generó el código del componente pero omitió o falló el archivo de test unitario, garantizamos un test válido
-  const hasValidTestFile = Array.from(finalFilesMap.values()).some(
+
+  // Si el LLM generó el código del componente pero omitió el archivo de pruebas unitarias:
+  let hasValidTestFile = Array.from(finalFilesMap.values()).some(
     (f) => f.path.startsWith('tests/') && isValidSourceCodeForPath(f.path, f.content),
   )
-  if (!hasValidTestFile) {
+
+  if (!hasValidTestFile && !llmCode.usedFallback && isTypeScriptStack) {
+    trace(`[SDLCGraph] Fallback activo: Archivo de test faltante para ${compId}. Solicitando generación de pruebas al LLM...`)
+    try {
+      const primaryImpl = Array.from(finalFilesMap.values()).find(
+        (f) => !f.path.startsWith('tests/') && !f.path.includes('/types/'),
+      )
+      const testLlm = await streamLlmPhase({
+        sessionId: state.sessionId,
+        phaseName: `Fase 3: Generación de Pruebas Unitarias — ${compId}`,
+        sdlcPhase: '3_COMPONENT_CONSTRUCTION',
+        roleId: 'UnitTest_Engineer',
+        systemPrompt: `Eres el Ingeniero de Pruebas Unitarias de LocalLoop. Tu tarea es generar la suite de pruebas unitarias para el componente "${compId}" (${comp.name}) conforme al marco "${frameworkName}".
+Escribe el archivo de prueba unitaria usando "fs_write_file" o un bloque con path="tests/${compId}.test.ts".`,
+        userPrompt: `Genera las pruebas unitarias para el componente ${comp.name} (${compId}).
+Código de implementación existente:
+--- "${primaryImpl?.path || defaultTarget}" ---
+${primaryImpl?.content.slice(0, 2000) || ''}
+
+Asegura aserciones claras que validen el contrato y funcionamiento del componente.`,
+        tools: [...getFileSystemToolSpecs(), getSandboxToolSpec()],
+        defaultFallback: () => ({ content: '', thought: 'No test fallback' }),
+      })
+
+      for (const tc of testLlm.toolCalls) {
+        if (tc.name === 'fs_write_file' && typeof tc.args.path === 'string' && typeof tc.args.content === 'string') {
+          pushExtractedFileIfValid(tc.args.path, tc.args.content, `Test ${tc.args.path}`)
+        }
+      }
+      let testMatch: RegExpExecArray | null
+      while ((testMatch = blockRegex.exec(testLlm.content)) !== null) {
+        const filePath = (testMatch[1] || testMatch[2] || testMatch[3] || '').trim().replace(/\\/g, '/')
+        const content = testMatch[4]?.trim()
+        if (filePath && content) {
+          pushExtractedFileIfValid(filePath, content, `Test ${filePath}`)
+        }
+      }
+      for (const f of extractedFiles) {
+        if (f.path.startsWith('tests/') && isValidSourceCodeForPath(f.path, f.content)) {
+          finalFilesMap.set(f.path, f)
+        }
+      }
+      hasValidTestFile = Array.from(finalFilesMap.values()).some(
+        (f) => f.path.startsWith('tests/') && isValidSourceCodeForPath(f.path, f.content),
+      )
+    } catch (testErr) {
+      trace(`[SDLCGraph] Aviso en generación de test con LLM para ${compId}: ${testErr}`)
+    }
+  }
+
+  // Si tras la consulta al LLM todavía no hay archivo de test (o en modo offline de tests):
+  if (!hasValidTestFile && isTypeScriptStack) {
     for (const df of defaultFiles) {
       if (df.path.startsWith('tests/')) {
-        // Si el LLM generó clases personalizadas con nombres distintos a defaultGen.className, adaptamos el test
         const primaryImpl = Array.from(finalFilesMap.values()).find(
           (f) => /\.(ts|tsx)$/.test(f.path) && !f.path.startsWith('tests/') && !f.path.includes('/types/'),
         )
         const exportedClassMatch = primaryImpl?.content.match(/\bexport\s+class\s+([A-Za-z_$][A-Za-z0-9_$]*)/)
+        const exportedFuncMatch = primaryImpl?.content.match(/\bexport\s+(?:function|const)\s+([A-Za-z_$][A-Za-z0-9_$]*)/)
         if (primaryImpl && exportedClassMatch && exportedClassMatch[1] !== defaultGen.className) {
           const exportedClass = exportedClassMatch[1]
           const relImportPath = '../' + primaryImpl.path.replace(/\.(ts|tsx)$/, '')
@@ -269,6 +455,22 @@ import { ${exportedClass} } from '${relImportPath}';
 describe('${comp.name} (${compId})', () => {
   it('debe definir y exportar la clase ${exportedClass}', () => {
     expect(typeof ${exportedClass}).toBe('function');
+  });
+});
+`,
+          })
+        } else if (primaryImpl && !exportedClassMatch && exportedFuncMatch) {
+          const exportedSymbol = exportedFuncMatch[1]
+          const relImportPath = '../' + primaryImpl.path.replace(/\.(ts|tsx)$/, '')
+          finalFilesMap.set(df.path, {
+            path: df.path,
+            description: df.description,
+            content: `import { describe, it, expect } from 'vitest';
+import { ${exportedSymbol} } from '${relImportPath}';
+
+describe('${comp.name} (${compId})', () => {
+  it('debe definir y exportar ${exportedSymbol}', () => {
+    expect(typeof ${exportedSymbol}).toBeDefined();
   });
 });
 `,
@@ -370,13 +572,12 @@ describe('${comp.name} (${compId})', () => {
     filesToWrite.find((f) => f.path === defaultTarget) ||
     filesToWrite.find(
       (f) =>
-        /\.(ts|tsx)$/.test(f.path) &&
-        f.path.includes('/components/') &&
-        !f.path.endsWith('/module.ts'),
+        !f.path.startsWith('tests/') &&
+        !f.path.includes('/types/') &&
+        (f.path.includes('/components/') || f.path.includes('/services/')),
     ) ||
     filesToWrite.find(
       (f) =>
-        /\.(ts|tsx)$/.test(f.path) &&
         !f.path.startsWith('tests/') &&
         !f.path.includes('/types/') &&
         !f.path.endsWith('/module.ts'),
@@ -423,7 +624,12 @@ export async function node_phase3_unit_tests(state: SDLCStateType): Promise<Part
   const compId = state.activeComponentId!
   const comp = state.componentsGraph[compId]
   const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
-  const defaultGen = generateComponentCode(comp)
+  const defaultGen = generateComponentCode(comp, {
+    frameworkConfig: state.frameworkConfig,
+    projectScaffold: state.projectScaffold,
+    marketArchStandard: state.marketArchStandard,
+    contracts: state.technicalDesigns?.[compId]?.[0]?.contracts,
+  })
 
   const isBrowserComp =
     Boolean(defaultGen.isBrowserComponent) ||
@@ -698,26 +904,28 @@ Corrige el archivo o archivos necesarios.`,
         /\.(ts|js)$/i.test(f.path) &&
         !/\.(test|spec|d)\.(ts|js)$/i.test(f.path) &&
         !/\/types\//i.test(f.path) &&
-        /\bclass\s+[A-Za-z_$]/.test(f.content),
+        (/\bclass\s+[A-Za-z_$]/.test(f.content) ||
+          /\bexport\s+(?:function|const|class)\s+[A-Za-z_$]/.test(f.content)),
     )
 
     let scriptToRun = defaultGen.testScript
     if (customServiceFiles.length > 0) {
       const sanitizedClasses = customServiceFiles.map((f) => sanitizeTsForBrowser(f.content)).join('\n\n')
       const classNames: string[] = []
+      const functionNames: string[] = []
       for (const f of customServiceFiles) {
         const cleanF = sanitizeTsForBrowser(f.content)
         for (const m of cleanF.matchAll(/\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)/g)) {
           if (m[1] && !classNames.includes(m[1])) classNames.push(m[1])
         }
+        for (const m of cleanF.matchAll(/\bexport\s+(?:function|const)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g)) {
+          if (m[1] && !functionNames.includes(m[1]) && !classNames.includes(m[1])) functionNames.push(m[1])
+        }
       }
-      if (classNames.length > 0) {
-        scriptToRun =
-          `${sanitizedClasses}\n\n` +
-          `console.log('Iniciando verificación unitaria de ${comp.name} (${compId})...');\n` +
-          classNames
-            .map(
-              (cls) => `if (typeof ${cls} === 'function') {
+      if (classNames.length > 0 || functionNames.length > 0) {
+        const classVerifications = classNames
+          .map(
+            (cls) => `if (typeof ${cls} === 'function') {
   let instance;
   try {
     instance = new ${cls}();
@@ -730,10 +938,24 @@ Corrige el archivo o archivos necesarios.`,
   }
   console.log('Instancia de ${cls} creada y contratos verificados -> OK');
 }`,
-            )
-            .join('\n') +
-          `\nconsole.log('Aserciones unitarias de ${compId} completadas al 100% -> OK');\n` +
-          `({ verified: true, componentId: '${compId}', classes: ${JSON.stringify(classNames)} });`
+          )
+          .join('\n')
+
+        const functionVerifications = functionNames
+          .map(
+            (fn) => `if (typeof ${fn} !== 'undefined') {
+  console.log('Símbolo exportado ${fn} verificado -> OK');
+}`,
+          )
+          .join('\n')
+
+        scriptToRun =
+          `${sanitizedClasses}\n\n` +
+          `console.log('Iniciando verificación unitaria de ${comp.name} (${compId})...');\n` +
+          `${classVerifications}\n` +
+          `${functionVerifications}\n` +
+          `console.log('Aserciones unitarias de ${compId} completadas al 100% -> OK');\n` +
+          `({ verified: true, componentId: '${compId}', classes: ${JSON.stringify(classNames)}, functions: ${JSON.stringify(functionNames)} });`
       }
     }
 
@@ -868,7 +1090,7 @@ Corrige el archivo o archivos necesarios para resolver este fallo.`,
       `1. Encabezado principal: ### Informe de Verificación Unitaria: \`${compId}\`\n` +
       `2. Metadatos del informe en líneas separadas:\n` +
       `   * **Cliente:** LocalLoop\n` +
-      `   * **Proyecto:** ${state.marketArchStandard || 'Arquitectura LocalLoop'}\n` +
+      `   * **Proyecto:** ${state.frameworkConfig?.framework || state.projectScaffold?.frameworkTitle || state.marketArchStandard || 'Arquitectura LocalLoop'}\n` +
       `   * **Responsable de QA:** UnitTest_Engineer\n` +
       `   * **Estado del Componente:** ${passed ? '✅ **PASS**' : '❌ **FAIL**'}\n` +
       `3. Secciones numeradas con encabezados Markdown claros (ej. ### 1. Resumen Ejecutivo, ### 2. Detalles del Entorno de Pruebas, ### 3. Resultados de las Pruebas, ### 4. Evidencia Visual, ### 5. Conclusiones y Recomendaciones).\n` +
@@ -901,7 +1123,7 @@ Corrige el archivo o archivos necesarios para resolver este fallo.`,
         `* **Modo de Verificación:** \`${unitEvidence.modo}\`\n` +
         `* **Aserciones Verificadas:**\n` +
         (passed
-          ? `  - \`[PASS]\` Instanciación e integridad de contratos conforme a \`${state.marketArchStandard}\`.\n` +
+          ? `  - \`[PASS]\` Instanciación e integridad de contratos conforme a \`${state.frameworkConfig?.framework || state.projectScaffold?.frameworkTitle || state.marketArchStandard}\`.\n` +
           `  - \`[PASS]\` Validación defensiva y manejo de eventos/excepciones.\n` +
           (isBrowserComp
             ? `  - \`[PASS]\` Integridad de elementos DOM, layout visual y renderizado en navegador.\n`

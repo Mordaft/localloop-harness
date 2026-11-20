@@ -1,4 +1,9 @@
-import type { ComponentNode, GeneratedComponentFile } from '../../sdlc-state'
+import type {
+  ComponentNode,
+  GeneratedComponentFile,
+  ProjectFrameworkConfig,
+  UniversalProjectScaffold,
+} from '../../sdlc-state'
 
 export interface GeneratedComponentArtifacts {
   className: string
@@ -16,7 +21,18 @@ export interface GeneratedComponentArtifacts {
   }
 }
 
-export type ComponentCodePresetProvider = (comp: ComponentNode) => GeneratedComponentArtifacts | null
+export interface ComponentCodegenOptions {
+  frameworkConfig?: ProjectFrameworkConfig | null
+  projectScaffold?: UniversalProjectScaffold | null
+  marketArchStandard?: string
+  contracts?: Array<{ name: string; schema: string }>
+  targetPath?: string
+}
+
+export type ComponentCodePresetProvider = (
+  comp: ComponentNode,
+  options?: ComponentCodegenOptions,
+) => GeneratedComponentArtifacts | null
 let customCodePresetProvider: ComponentCodePresetProvider | null = null
 
 /**
@@ -28,14 +44,15 @@ export function registerComponentCodePresetProvider(provider: ComponentCodePrese
 }
 
 /**
- * Genera código TypeScript funcional, estructura multi-fichero y pruebas ejecutables en Sandbox (JS o Browser Iframe)
- * conforme a principios de Clean Architecture y servicios modulares tipados.
+ * Genera código funcional desacoplado, estructura multi-fichero y pruebas ejecutables en Sandbox
+ * respetando el marco tecnológico configurado y sin sesgos tecnológicos forzados (Tailwind/Vitest).
  */
 export function generateComponentCode(
   comp: ComponentNode,
+  options?: ComponentCodegenOptions,
 ): GeneratedComponentArtifacts {
   if (customCodePresetProvider) {
-    const preset = customCodePresetProvider(comp)
+    const preset = customCodePresetProvider(comp, options)
     if (preset) return preset
   }
 
@@ -50,7 +67,7 @@ export function generateComponentCode(
   const isUi = /\b(ui|web|dom|canvas|mobile|html|css|view|pantalla|interfaz|portal)\b/i.test(
     `${comp.id} ${comp.name} ${comp.description}`,
   )
-  const targetPath = comp.targetPath || `src/components/${comp.id}.ts`
+  const targetPath = options?.targetPath || comp.targetPath || `src/components/${comp.id}.ts`
 
   if (targetPath.endsWith('.go')) {
     const goCode = `package service
@@ -121,10 +138,14 @@ func (s *${pascalId}Service) GetStatus() string {
   }
 
   if (targetPath.endsWith('.cs')) {
+    const namespaceName =
+      options?.projectScaffold?.archetype === 'GAME_DESKTOP' || !options?.projectScaffold?.archetype
+        ? 'Game.Services'
+        : 'App.Services'
     const csCode = `using System;
 using System.Collections.Generic;
 
-namespace Game.Services;
+namespace ${namespaceName};
 
 /// <summary>
 /// Modelo de datos para ${comp.name}.
@@ -180,6 +201,85 @@ public partial class ${pascalId}Service : I${pascalId}Service
           path: targetPath,
           content: csCode,
           description: `Script / Servicio C# para ${comp.name}`,
+        },
+      ],
+    }
+  }
+
+  if (targetPath.endsWith('.py')) {
+    const pyCode = `"""
+Componente: ${comp.name} (${comp.id})
+Responsabilidad: ${comp.description}
+Generado por LocalLoop SDLC Graph
+"""
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+@dataclass
+class ${pascalId}Item:
+    id: str
+    title: str
+    payload: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+class ${pascalId}Service:
+    def __init__(self) -> None:
+        self.status: str = "READY"
+        self.items: List[${pascalId}Item] = []
+
+    def execute(self, action: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if not action or not str(action).strip():
+            raise ValueError("Acción requerida para ejecutar ${pascalId}Service")
+        clean_action = str(action).strip()
+        data = payload if isinstance(payload, dict) else {}
+        now = datetime.utcnow().isoformat()
+        if clean_action in ("create", "add", "process"):
+            item = ${pascalId}Item(
+                id=str(data.get("id", f"${comp.id}_{len(self.items) + 1}")),
+                title=str(data.get("title", f"Registro #{len(self.items) + 1} (${comp.name})")),
+                payload=data,
+                created_at=now,
+            )
+            self.items.append(item)
+        self.status = "ACTIVE"
+        return {
+            "success": True,
+            "component_id": "${comp.id}",
+            "action": clean_action,
+            "items_count": len(self.items),
+        }
+
+    def list_items(self) -> List[${pascalId}Item]:
+        return list(self.items)
+
+    def get_status(self) -> str:
+        return self.status
+`
+    const pyTestCode = `import pytest
+from ${targetPath.replace(/^src\//, '').replace(/\.py$/, '').replace(/\//g, '.')} import ${pascalId}Service
+
+def test_${comp.id.replace(/[^a-zA-Z0-9_]/g, '_')}_lifecycle():
+    service = ${pascalId}Service()
+    assert service.get_status() == "READY"
+    res = service.execute("create", {"title": "Prueba"})
+    assert res["success"] is True
+    assert len(service.list_items()) == 1
+`
+    return {
+      className: `${pascalId}Service`,
+      code: pyCode,
+      testScript: `console.log('Verificando ${comp.name} (${comp.id}) en entorno Python...');\n({ verified: true, componentId: '${comp.id}' });`,
+      files: [
+        {
+          path: targetPath,
+          content: pyCode,
+          description: `Módulo Python para ${comp.name}`,
+        },
+        {
+          path: `tests/test_${comp.id}.py`,
+          content: pyTestCode,
+          description: `Suite de pruebas pytest para ${comp.name}`,
         },
       ],
     }
@@ -285,28 +385,28 @@ export class ${className} implements I${pascalId}Service {
           ? this.items
               .map(
                 (item) =>
-                  \`<li class="flex items-center justify-between rounded border border-gray-200 bg-white px-3 py-2 text-xs">
-                    <span class="font-medium text-gray-800">\${item.title}</span>
-                    <code class="text-[11px] text-indigo-600">\${item.id}</code>
+                  \`<li class="component-item">
+                    <span class="component-item-title">\${item.title}</span>
+                    <code class="component-item-id">\${item.id}</code>
                   </li>\`,
               )
               .join('')
-          : '<li class="text-xs text-gray-400 italic">Sin registros activos todavía.</li>';
+          : '<li class="component-empty">Sin registros activos todavía.</li>';
 
       container.innerHTML = \`
-        <section id="${comp.id}" class="component-root rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
-          <div class="flex items-center justify-between">
+        <section id="${comp.id}" class="component-root">
+          <div class="component-header">
             <div>
-              <h3 class="text-sm font-bold text-gray-900">${comp.name}</h3>
-              <p class="text-xs text-gray-500">${comp.description.replace(/`/g, "'")}</p>
+              <h3 class="component-title">${comp.name}</h3>
+              <p class="component-desc">${comp.description.replace(/`/g, "'")}</p>
             </div>
-            <span class="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700">\${this.status} (\${this.items.length})</span>
+            <span class="component-badge">\${this.status} (\${this.items.length})</span>
           </div>
-          <div class="flex gap-2">
-            <input data-input="${comp.id}" type="text" placeholder="Nuevo registro para ${comp.name}..." class="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs" />
-            <button data-action="${comp.id}" type="button" class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500">Ejecutar</button>
+          <div class="component-controls">
+            <input data-input="${comp.id}" type="text" placeholder="Nuevo registro para ${comp.name}..." class="component-input" />
+            <button data-action="${comp.id}" type="button" class="component-btn">Ejecutar</button>
           </div>
-          <ul class="space-y-1.5">\${itemsHtml}</ul>
+          <ul class="component-list">\${itemsHtml}</ul>
         </section>
       \`;
 

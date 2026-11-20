@@ -16,6 +16,7 @@ export {
 export {
   generateComponentCode,
   type GeneratedComponentArtifacts,
+  type ComponentCodegenOptions,
 } from './codegen/component-codegen'
 
 // Scaffolding universal agnóstico

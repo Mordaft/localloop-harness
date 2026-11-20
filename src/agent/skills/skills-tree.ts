@@ -141,8 +141,10 @@ export const SKILL_TREE: SkillBranch[] = [
           scope: `component_${state.activeComponentId ?? 'unknown'}`,
           tags: ['approved_design', 'local_contracts'],
         }),
-        buildSystemPrompt: (state) =>
-          `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle autónomo post-aprobación. Tu prioridad absoluta es generar código TypeScript/HTML/CSS 100% funcional, completo, autocontenido y transpilable sin errores de tipos ni imports rotos. Puedes escribir los archivos directamente invocando fs_write_file o mediante bloques de código anotados (\`\`\`typescript path="src/..."\`). Si decides consultar search_web_guidance, hazlo en 1 sola llamada rápida antes de emitir el código completo. NUNCA dejes stubs vacíos ni pidas confirmación al usuario.`,
+        buildSystemPrompt: (state) => {
+          const fw = state.frameworkConfig?.framework || state.projectScaffold?.frameworkTitle
+          return `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle autónomo post-aprobación. Tu prioridad absoluta es generar código ${fw ? `conforme al marco acordado (${fw})` : 'conforme al marco acordado en la fase de diseño'} 100% funcional, completo, autocontenido y listo para producción sin errores de sintaxis, tipos ni dependencias rotas. Puedes escribir los archivos directamente invocando fs_write_file o mediante bloques de código anotados (\`\`\`<lenguaje> path="ruta/archivo.ext"\`). Si decides consultar search_web_guidance, hazlo en 1 sola llamada rápida antes de emitir el código completo. NUNCA dejes stubs vacíos ni pidas confirmación al usuario.`
+        },
       },
       {
         id: 'UnitTest_Engineer',
