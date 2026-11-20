@@ -22,8 +22,10 @@ export {
 export {
   buildUniversalScaffold,
   materializeUniversalScaffold,
-  detectProjectArchetype,
-  type ArchetypeClassification,
+  registerScaffoldPresetProvider,
+  ScaffoldViabilityError,
+  type ScaffoldPresetProvider,
+  type BuildScaffoldParams,
 } from './scaffold/scaffold-engine'
 
 // Planificador topológico Fin-Inicio

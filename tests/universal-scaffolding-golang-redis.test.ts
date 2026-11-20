@@ -1,11 +1,11 @@
 import assert from 'node:assert'
-import './fixtures/presets'
+import { disableTestPresets, enableTestPresets } from './fixtures/presets'
 import { compiledSDLCGraph } from '../src/agent/sdlc-graph'
 import { getVirtualFile, clearVirtualFiles } from '../src/fs/workspace-fs'
 import {
-  detectProjectArchetype,
   buildUniversalScaffold,
   materializeUniversalScaffold,
+  ScaffoldViabilityError,
 } from '../src/agent/sdlc/scaffold/scaffold-engine'
 import { generateComponentCode } from '../src/agent/sdlc/codegen/component-codegen'
 
@@ -14,29 +14,22 @@ async function runUniversalScaffoldingTests() {
   clearVirtualFiles()
 
   // =========================================================================
-  // Test 1: Clasificación analítica de Arquetipos y Detección de Runtime
+  // Test 1: Invalidación Estricta de Viabilidad sin Propuesta Técnica del LLM
   // =========================================================================
-  console.log('[Test 1] Verificando detección analítica de arquetipo y runtime...')
+  console.log('[Test 1] Verificando invalidación estricta de viabilidad sin propuesta técnica...')
 
-  const goRedisReq = detectProjectArchetype(
-    'Crear microservicios backend en GoLang utilizando Redis como base de datos temporal',
+  disableTestPresets()
+  assert.throws(
+    () => {
+      buildUniversalScaffold({
+        userText: 'Crear microservicios backend en GoLang utilizando Redis como base de datos temporal',
+      })
+    },
+    (err: any) => err instanceof ScaffoldViabilityError,
+    'Debe lanzar ScaffoldViabilityError invalidando la viabilidad del proyecto si el LLM no detalla el scaffolding',
   )
-  assert.strictEqual(goRedisReq.runtime, 'go', 'Debe clasificar como runtime Go')
-  assert.strictEqual(goRedisReq.archetype, 'API_SERVICE', 'Debe clasificar como API_SERVICE')
-  assert.strictEqual(goRedisReq.hasUI, false, 'No debe requerir UI para servicio backend en Go')
-  assert.ok(goRedisReq.frameworkTitle.includes('GoLang'), 'Título debe incluir GoLang')
-  assert.ok(goRedisReq.frameworkTitle.includes('Redis'), 'Título debe incluir Redis')
-
-  const pythonReq = detectProjectArchetype('Microservicio de procesamiento de datos con FastAPI y Python')
-  assert.strictEqual(pythonReq.runtime, 'python', 'Debe clasificar como runtime Python')
-  assert.strictEqual(pythonReq.hasUI, false, 'No debe requerir UI para FastAPI backend')
-
-  const reactReq = detectProjectArchetype('Crear una aplicación web interactiva con React y TypeScript')
-  assert.strictEqual(reactReq.runtime, 'node', 'Debe clasificar como runtime Node')
-  assert.strictEqual(reactReq.archetype, 'WEB_APP', 'Debe clasificar como WEB_APP')
-  assert.strictEqual(reactReq.hasUI, true, 'Debe requerir UI para React')
-
-  console.log('✓ Detección analítica de arquetipos superada con éxito.')
+  enableTestPresets()
+  console.log('✓ Invalidación inmediata de viabilidad verificada con éxito.')
 
   // =========================================================================
   // Test 2: Construcción de Scaffold Universal para GoLang + Redis

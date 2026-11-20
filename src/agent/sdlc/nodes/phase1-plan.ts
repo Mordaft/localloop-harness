@@ -19,7 +19,6 @@ import { emitSDLCProgress } from '../execution/progress-emitter'
 import { generateComponentDesign } from '../codegen/component-design'
 import {
   buildUniversalScaffold,
-  detectProjectArchetype,
   materializeUniversalScaffold,
 } from '../scaffold/scaffold-engine'
 
@@ -252,49 +251,53 @@ export async function node_phase1_strategy_and_plan(state: SDLCStateType): Promi
           .map((u) => `  - **${u.id} (${u.title}):** ${u.expectedBusinessOutcome}`)
           .join('\n')
 
-  const detectedScaffold = buildUniversalScaffold({
-    userText: initiativeNarrative,
-    contextInitiative: initiativeTitle,
-    initiativeTitle,
-    declaredDependencies: state.declaredDependencies,
-    declaredDevDependencies: state.declaredDevDependencies,
-  })
+  const fallbackPlan = () => {
+    let presetTitle = 'Arquitectura Propuesta'
+    let presetManifests = 'Manifiestos del proyecto'
+    try {
+      const probe = buildUniversalScaffold({
+        initiativeTitle,
+        userText: initiativeNarrative,
+        contextInitiative: initiativeTitle,
+      })
+      presetTitle = probe.frameworkTitle
+      presetManifests = probe.manifestFiles.map((m) => `\`${m.path}\``).join(', ')
+    } catch {
+      // Si no hay propuesta ni preset, se refleja en el informe
+    }
 
-  const fallbackPlan = () => ({
-    content:
-      `### 📋 Fase 1: Evaluación de Requerimientos y Propuesta de Solución Técnica (DAG Fin-Inicio)\n\n` +
-      `He procesado tu definición de la **Fase 0** para **${initiativeTitle}** y he diseñado la **Propuesta de Solución Técnica** que servirá de base para el bucle iterativo de construcción:\n\n` +
-      `#### 0. Síntesis de tu Definición y Requerimientos Capturados (Fase 0)\n` +
-      `* **Iniciativa:** ${initiativeTitle}\n` +
-      `* **Narrativa / Objetivo:** ${initiativeNarrative}\n` +
-      `* **Requerimientos de Negocio Incorporados:**\n${capturedNeedsMd}\n\n` +
-      `#### 1. Plan de Hitos de Negocio (WBS)\n` +
-      `* **Hito 1 (Diseño de Solución Técnica & Contratos):** Modelado de contratos de interfaz y arquitectura limpia conforme a \`${state.marketArchStandard}\`.\n` +
-      `* **Hito 2 (Bucle Iterativo de Construcción de Componentes):** Construcción por componente (directa o mediante descomposición previa en subtareas) y validación unitaria en Sandbox.\n` +
-      `* **Hito 3 (Transición & Auditoría E2E):** Convivencia con sistemas existentes, verificación E2E y auditoría de resultados de negocio.\n\n` +
-      `#### 2. Diseño de Componentes, Estrategia de Construcción y Dependencias Fin-Inicio (DAG)\n` +
-      `${compList}\n\n` +
-      `#### 3. Topología Visual del Grafo (Diagrama Mermaid)\n` +
-      `${generateMermaidDag(componentsGraph)}\n\n` +
-      `#### 4. Contratos Técnicos Base Propuestos\n` +
-      `${contractsMarkdown}\n\n` +
-      `#### 5. Marco de Referencia del Desarrollo y Estructura Propuesta\n` +
-      `Para enmarcar el desarrollo propongo el siguiente marco de trabajo estándar:\n` +
-      `* **Framework / Stack sugerido:** \`${detectedScaffold.frameworkTitle}\` (Runtime: \`${detectedScaffold.runtime}\`, Arquetipo: \`${detectedScaffold.archetype}\`)\n` +
-      `* **Estructura prevista:**\n` +
-      `  - Directorio de componentes y servicios: \`${detectedScaffold.componentDirectory}/\`\n` +
-      `  - Directorio de tests: \`${detectedScaffold.testDirectory}/\`\n` +
-      `  - Manifiestos base: ${detectedScaffold.manifestFiles.map((m) => `\`${m.path}\``).join(', ')}\n` +
-      `  - Scripts de ciclo de vida (\`setup.cmd\` y \`setup.sh\`)\n\n` +
-      `💬 **Iteración con el Usuario (Fase 1 - Marco de Referencia y Aprobación de Propuesta Técnica):**\n` +
-      `Por favor, revisa esta **Propuesta de Solución Técnica** e indícame en el chat si la apruebas o si deseas ajustar algún componente, contrato o el marco tecnológico (ej. GoLang con Redis, Python/FastAPI, Angular con Material, React, HTML5+TS+Tailwind, etc.).\n` +
-      `Con tu aprobación:\n` +
-      `1. Generaré los scripts \`setup.cmd\` y \`setup.sh\` y archivos base en la raíz del workspace.\n` +
-      `2. Entraremos en el **bucle autónomo de construcción de componentes** siguiendo el DAG Fin-Inicio sin interrupciones innecesarias hasta completar la solución integrable.\n\n` +
-      `> ⚙️ **Pausa de Fase 1 (HITL):** Esperando tu aprobación o ajustes de la propuesta técnica en el chat para formalizar el setup e iniciar el bucle de construcción.`,
-    thought:
-      'Evaluando requerimientos técnicos junto a los componentes de alto nivel, diseñando contratos de solución técnica y preparando propuesta para aprobación HITL...',
-  })
+    return {
+      content:
+        `### 📋 Fase 1: Evaluación de Requerimientos y Propuesta de Solución Técnica (DAG Fin-Inicio)\n\n` +
+        `He procesado tu definición de la **Fase 0** para **${initiativeTitle}** y he diseñado la **Propuesta de Solución Técnica** que servirá de base para el bucle iterativo de construcción:\n\n` +
+        `#### 0. Síntesis de tu Definición y Requerimientos Capturados (Fase 0)\n` +
+        `* **Iniciativa:** ${initiativeTitle}\n` +
+        `* **Narrativa / Objetivo:** ${initiativeNarrative}\n` +
+        `* **Requerimientos de Negocio Incorporados:**\n${capturedNeedsMd}\n\n` +
+        `#### 1. Plan de Hitos de Negocio (WBS)\n` +
+        `* **Hito 1 (Diseño de Solución Técnica & Contratos):** Modelado de contratos de interfaz y arquitectura limpia conforme a \`${state.marketArchStandard}\`.\n` +
+        `* **Hito 2 (Bucle Iterativo de Construcción de Componentes):** Construcción por componente (directa o mediante descomposición previa en subtareas) y validación unitaria en Sandbox.\n` +
+        `* **Hito 3 (Transición & Auditoría E2E):** Convivencia con sistemas existentes, verificación E2E y auditoría de resultados de negocio.\n\n` +
+        `#### 2. Diseño de Componentes, Estrategia de Construcción y Dependencias Fin-Inicio (DAG)\n` +
+        `${compList}\n\n` +
+        `#### 3. Topología Visual del Grafo (Diagrama Mermaid)\n` +
+        `${generateMermaidDag(componentsGraph)}\n\n` +
+        `#### 4. Contratos Técnicos Base Propuestos\n` +
+        `${contractsMarkdown}\n\n` +
+        `#### 5. Marco de Referencia del Desarrollo y Estructura Propuesta\n` +
+        `Para enmarcar el desarrollo propongo el siguiente marco de trabajo estándar:\n` +
+        `* **Framework / Stack sugerido:** \`${presetTitle}\`\n` +
+        `* **Manifiestos y scripts previstos:** ${presetManifests}\n\n` +
+        `💬 **Iteración con el Usuario (Fase 1 - Marco de Referencia y Aprobación de Propuesta Técnica):**\n` +
+        `Por favor, revisa esta **Propuesta de Solución Técnica** e indícame en el chat si la apruebas o si deseas ajustar algún componente, contrato o el marco tecnológico.\n` +
+        `Con tu aprobación:\n` +
+        `1. Generaré los scripts de ciclo de vida (\`setup.cmd\` y \`setup.sh\`) y archivos base en la raíz del workspace.\n` +
+        `2. Entraremos en el **bucle autónomo de construcción de componentes** siguiendo el DAG Fin-Inicio sin interrupciones innecesarias hasta completar la solución integrable.\n\n` +
+        `> ⚙️ **Pausa de Fase 1 (HITL):** Esperando tu aprobación o ajustes de la propuesta técnica en el chat para formalizar el setup e iniciar el bucle de construcción.`,
+      thought:
+        'Evaluando requerimientos técnicos junto a los componentes de alto nivel, diseñando contratos de solución técnica y preparando propuesta para aprobación HITL...',
+    }
+  }
 
   const resolvedSkill = RuntimeSkillLoader.resolveContext({
     ...state,
@@ -306,7 +309,7 @@ export async function node_phase1_strategy_and_plan(state: SDLCStateType): Promi
     phaseName: `Fase 1: Propuesta de Solución Técnica y DAG — [Skill: ${resolvedSkill.skill.name}]`,
     sdlcPhase: '1_STRATEGY_AND_PLAN',
     maxToolIterations: 3,
-    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Soluciones Técnicas y Planificador de LocalLoop. Tu misión es evaluar los requerimientos técnicos y funcionales de la Fase 0 junto con la propuesta de componentes de alto nivel y diseñar una Propuesta de Solución Técnica completa que debe ser aprobada por el usuario antes de entrar al bucle iterativo de construcción. Si el proyecto involucra tecnologías web (HTML, CSS, DOM, PWA), puedes consultar search_web_guidance y read_web_guidance_doc. Responde en Markdown estructurado y profesional.`,
+    systemPrompt: `${resolvedSkill.systemPrompt}\n\nEres el Arquitecto de Soluciones Técnicas y Planificador de LocalLoop. Tu misión es evaluar los requerimientos técnicos y funcionales de la Fase 0 junto con la propuesta de componentes de alto nivel y diseñar una Propuesta de Solución Técnica completa que debe ser aprobada por el usuario antes de entrar al bucle iterativo de construcción. Debes proponer el marco de referencia tecnológico, manifiestos base, dependencias y ciclo de vida mediante la herramienta propose_project_scaffold. Si el proyecto involucra tecnologías web (HTML, CSS, DOM, PWA), puedes consultar search_web_guidance y read_web_guidance_doc. Responde en Markdown estructurado y profesional.`,
     userPrompt: `Iniciativa: ${state.phase0Data?.step1?.rawBusinessLanguageText || state.useCases[0]?.title || 'Desarrollo de Software'}
 Estándar de Arquitectura: ${state.marketArchStandard}
 Necesidades de Negocio y Requerimientos:
@@ -321,7 +324,7 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
 1. Evaluación Técnica de Requerimientos y Plan de Hitos (WBS)
 2. Diseño de la Solución Técnica por Componente: contratos/interfaces principales, responsabilidades técnicas, análisis de trade-offs y si cada componente se construirá de forma directa o mediante descomposición previa en subtareas verificables.
 3. Grafo de Dependencias Fin-Inicio (DAG) explicando la precedencia de cada componente y representándolo en un bloque Mermaid (\`\`\`mermaid\ngraph TD\n...\`\`\`).
-4. Marco de Referencia del Desarrollo y Estructura Propuesta (ej. HTML5+TypeScript+TailwindCSS, Angular con Material, React, etc.).
+4. Marco de Referencia del Desarrollo y Estructura Propuesta (debes invocar propose_project_scaffold para definir manifiestos, configuraciones y comandos de ciclo de vida).
 5. Solicitud explícita de aprobación al usuario (Iteración con el Usuario - Marco de Referencia y Propuesta Técnica) para pasar al bucle iterativo de construcción de componentes.`,
     tools: resolvedSkill.tools,
     defaultFallback: fallbackPlan,
@@ -330,7 +333,7 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
   // Procesar herramientas invocadas por el LLM
   let declaredDependencies: Record<string, string> = { ...(state.declaredDependencies || {}) }
   let declaredDevDependencies: Record<string, string> = { ...(state.declaredDevDependencies || {}) }
-  let proposedScaffold: UniversalProjectScaffold = detectedScaffold
+  let rawProposedScaffold: Partial<UniversalProjectScaffold> | undefined = undefined
 
   for (const tc of llmPlan.toolCalls) {
     if (tc.name === 'declare_project_dependencies') {
@@ -347,27 +350,7 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
         }
       }
     } else if (tc.name === 'propose_project_scaffold') {
-      const p = tc.args as Record<string, any>
-      proposedScaffold = {
-        runtime: String(p.runtime || detectedScaffold.runtime),
-        archetype: String(p.archetype || detectedScaffold.archetype),
-        frameworkTitle: String(p.frameworkTitle || detectedScaffold.frameworkTitle),
-        hasUI: typeof p.hasUI === 'boolean' ? p.hasUI : detectedScaffold.hasUI,
-        packageManager: p.packageManager || detectedScaffold.packageManager,
-        componentDirectory: String(p.componentDirectory || detectedScaffold.componentDirectory),
-        serviceDirectory: String(p.serviceDirectory || detectedScaffold.serviceDirectory),
-        testDirectory: String(p.testDirectory || detectedScaffold.testDirectory),
-        fileExtension: String(p.fileExtension || detectedScaffold.fileExtension || ''),
-        manifestFiles: Array.isArray(p.manifestFiles) && p.manifestFiles.length > 0 ? p.manifestFiles : detectedScaffold.manifestFiles,
-        configFiles: Array.isArray(p.configFiles) ? p.configFiles : detectedScaffold.configFiles,
-        skeletonFiles: Array.isArray(p.skeletonFiles) ? p.skeletonFiles : detectedScaffold.skeletonFiles,
-        dependencies: p.dependencies ? {
-          runtime: { ...detectedScaffold.dependencies.runtime, ...(p.dependencies.runtime || {}) },
-          devOrTest: { ...detectedScaffold.dependencies.devOrTest, ...(p.dependencies.devOrTest || {}) },
-        } : detectedScaffold.dependencies,
-        testing: p.testing ? { ...detectedScaffold.testing, ...p.testing } : detectedScaffold.testing,
-        lifecycle: p.lifecycle ? { ...detectedScaffold.lifecycle, ...p.lifecycle } : detectedScaffold.lifecycle,
-      }
+      rawProposedScaffold = tc.args as Record<string, any>
     } else if (tc.name === 'create_components_dag' && Array.isArray(tc.args.components)) {
       for (const rawComp of tc.args.components) {
         if (!rawComp || typeof rawComp !== 'object') continue
@@ -420,6 +403,72 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
           },
         ]
       }
+    }
+  }
+
+  // Validación e instanciación estricta del scaffolding
+  let proposedScaffold: UniversalProjectScaffold | undefined = undefined
+  let scaffoldViabilityFailure: string | null = null
+
+  try {
+    proposedScaffold = buildUniversalScaffold({
+      proposedScaffold: rawProposedScaffold,
+      declaredDependencies,
+      declaredDevDependencies,
+      initiativeTitle,
+      userText: initiativeNarrative,
+      contextInitiative: initiativeTitle,
+    })
+  } catch (err) {
+    scaffoldViabilityFailure = err instanceof Error ? err.message : String(err)
+    trace(`[SDLCGraph] Fallo de viabilidad técnica de scaffolding: ${scaffoldViabilityFailure}`)
+  }
+
+  // REGLA FUNDAMENTAL DE GOBERNANZA:
+  // Si el LLM no detalló la información necesaria o está offline, ese error invalida completamente
+  // la viabilidad del proyecto: se detiene inmediatamente el flujo informando al usuario del problema.
+  if (!proposedScaffold) {
+    const failureContent =
+      `### ❌ Detención Inmediata del SDLC — Viabilidad del Proyecto Invalidada\n\n` +
+      `El Arquitecto de Solución Técnica (LLM) no ha podido detallar la propuesta formal de arquitectura y scaffolding para la iniciativa.\n\n` +
+      `> 🛑 **Motivo de Invalidación:** ${scaffoldViabilityFailure || 'La herramienta `propose_project_scaffold` no fue invocada con los manifiestos y estructura requeridos.'}\n\n` +
+      `**Regla de Integridad de LocalLoop:** Sin una arquitectura y ciclo de vida formalmente especificados por el modelo, **la viabilidad del proyecto queda completamente invalidada**. El flujo se detiene inmediatamente para evitar construir componentes sobre asunciones o marcos no fundamentados.\n\n` +
+      `Por favor, verifica la disponibilidad del modelo o reformula los requerimientos funcionales de la iniciativa para reintentar la planificación técnica.`
+
+    const failureMsg = {
+      role: 'assistant' as const,
+      content: failureContent,
+      thought: 'Viabilidad técnica invalidada: no se definió la arquitectura y scaffolding formal requerido.',
+    }
+
+    if (state.sessionId) {
+      try {
+        await updateSessionMetrics(state.sessionId, {
+          currentPhase: '1_STRATEGY_AND_PLAN',
+          status: SessionStatus.FAILED,
+        })
+      } catch {
+        // ignore
+      }
+    }
+
+    await emitSDLCProgress(
+      state.sessionId,
+      failureMsg,
+      'Fase 1: Viabilidad Técnica Invalidada (Flujo Detenido)',
+      '1_STRATEGY_AND_PLAN',
+    )
+
+    return {
+      componentsGraph,
+      projectPlan,
+      technicalDesigns: initialTechnicalDesigns,
+      gatekeeperDecisions: initialGatekeeperDecisions,
+      technicalDebtList: initialDebtList,
+      currentPhase: '1_STRATEGY_AND_PLAN',
+      phase1FrameworkAgreed: false,
+      projectScaffold: undefined,
+      messages: [...state.messages, failureMsg],
     }
   }
 
@@ -487,28 +536,30 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
     state.useCases?.[0]?.expectedBusinessOutcome ||
     ''
 
-  // 1. Construir el Scaffold Universal agnóstico al lenguaje (GoLang, Node, Python, Godot C#, etc.)
-  // Si el usuario en su respuesta HITL especificó explícitamente un cambio de framework/tecnología diferente
-  // a la propuesta inicial de Fase 1, la decisión del usuario prevalece sobre el borrador previo.
-  const userDetected = detectProjectArchetype(lastUserText, contextInitiative)
-  const isUserTechChange =
-    Boolean(lastUserText.trim()) &&
-    Boolean(state.projectScaffold) &&
-    userDetected.frameworkTitle !== state.projectScaffold?.frameworkTitle &&
-    /\b(?:angular|react|vue|svelte|phaser|tailwind|go|golang|python|fastapi|django|flask|rust|cargo|godot|c#|csharp|\.net|dotnet)\b/i.test(
-      lastUserText,
-    )
+  let scaffold = state.projectScaffold
 
-  const scaffold = buildUniversalScaffold({
-    userText: lastUserText || contextInitiative || 'HTML5 + TypeScript + TailwindCSS',
-    contextInitiative,
-    initiativeTitle,
-    declaredDependencies: state.declaredDependencies,
-    declaredDevDependencies: state.declaredDevDependencies,
-    proposedScaffold: isUserTechChange ? undefined : (state.projectScaffold || undefined),
-  })
+  if (lastUserText.trim()) {
+    try {
+      const userScaffold = buildUniversalScaffold({
+        userText: lastUserText,
+        contextInitiative,
+        initiativeTitle,
+        declaredDependencies: state.declaredDependencies,
+        declaredDevDependencies: state.declaredDevDependencies,
+      })
+      if (userScaffold) {
+        scaffold = userScaffold
+      }
+    } catch {
+      // Se mantiene state.projectScaffold si no hay un nuevo scaffold propuesto
+    }
+  }
 
-  // 2. Materializar físicamente todos los archivos del scaffold en el workspace
+  if (!scaffold) {
+    throw new Error('No existe un scaffolding formal propuesto para el proyecto. Viabilidad invalidada.')
+  }
+
+  // 1. Materializar físicamente todos los archivos del scaffold en el workspace
   await materializeUniversalScaffold(scaffold, {
     sessionId: state.sessionId,
     onProposalCreated: callbacks?.onProposalCreated,

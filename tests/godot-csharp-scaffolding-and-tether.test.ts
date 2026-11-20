@@ -1,10 +1,10 @@
 import assert from 'node:assert'
-import './fixtures/presets'
+import { disableTestPresets, enableTestPresets } from './fixtures/presets'
 import { compiledSDLCGraph } from '../src/agent/sdlc-graph'
 import { getVirtualFile, clearVirtualFiles } from '../src/fs/workspace-fs'
 import {
-  detectProjectArchetype,
   buildUniversalScaffold,
+  ScaffoldViabilityError,
 } from '../src/agent/sdlc/scaffold/scaffold-engine'
 import { generateComponentCode } from '../src/agent/sdlc/codegen/component-codegen'
 import { analyzeAndAssignMcpCapabilities, clearMcpCapabilityCache, type McpToolDefinition } from '../src/mcp/mcp-client'
@@ -16,20 +16,22 @@ async function runGodotCsharpTests() {
   clearMcpCapabilityCache()
 
   // =========================================================================
-  // Test 1: Clasificación de Arquetipo GAME_DESKTOP con Godot Engine y C#
+  // Test 1: Invalidación Inmediata de Viabilidad si no hay propuesta técnica formal
   // =========================================================================
-  console.log('[Test 1] Verificando detección de juego de escritorio en Godot Engine con C#...')
+  console.log('[Test 1] Verificando invalidación estricta de viabilidad sin propuesta técnica...')
 
-  const godotReq = detectProjectArchetype(
-    'Desarrollar un videojuego de plataformas de escritorio utilizando Godot Engine con C#',
+  disableTestPresets()
+  assert.throws(
+    () => {
+      buildUniversalScaffold({
+        userText: 'Desarrollar un videojuego de plataformas de escritorio utilizando Godot Engine con C#',
+      })
+    },
+    (err: any) => err instanceof ScaffoldViabilityError,
+    'Debe lanzar ScaffoldViabilityError invalidando la viabilidad del proyecto si el LLM no detalla el scaffolding',
   )
-  assert.strictEqual(godotReq.runtime, 'csharp', 'Debe clasificar como runtime C#')
-  assert.strictEqual(godotReq.archetype, 'GAME_DESKTOP', 'Debe clasificar como GAME_DESKTOP')
-  assert.strictEqual(godotReq.hasUI, false, 'No debe requerir UI Web/DOM (se ejecuta en ventana nativa del SO)')
-  assert.ok(godotReq.frameworkTitle.includes('Godot 4'), 'Título debe incluir Godot 4')
-  assert.ok(godotReq.frameworkTitle.includes('C#'), 'Título debe incluir C#')
-
-  console.log('✓ Detección analítica de Godot + C# superada con éxito.')
+  enableTestPresets()
+  console.log('✓ Invalidación inmediata de viabilidad verificada con éxito.')
 
   // =========================================================================
   // Test 2: Construcción de Scaffold Universal para Godot Engine 4.x + C# .NET 8

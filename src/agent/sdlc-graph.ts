@@ -129,7 +129,8 @@ export {
   type SubagentComponentDeliverable,
   buildUniversalScaffold,
   materializeUniversalScaffold,
-  detectProjectArchetype,
+  registerScaffoldPresetProvider,
+  ScaffoldViabilityError,
   generateComponentCode,
   type GeneratedComponentArtifacts,
 } from './sdlc'

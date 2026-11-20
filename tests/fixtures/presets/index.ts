@@ -7,8 +7,10 @@ import {
   registerComponentDesignPresetProvider,
   type ComponentDesignResult,
 } from '../../../src/agent/sdlc/codegen/component-design'
+import { registerScaffoldPresetProvider } from '../../../src/agent/sdlc/scaffold/scaffold-engine'
 import { getBillingErpCodePreset, getBillingErpDesignPreset } from './billing-erp-preset'
 import { getTetrisPwaCodePreset, getTetrisPwaDesignPreset } from './tetris-pwa-preset'
+import { getTestPresetScaffold } from './scaffold-presets'
 
 /**
  * Proveedor unificado de código para fixtures de prueba
@@ -37,11 +39,12 @@ export function getTestPresetComponentDesign(comp: ComponentNode, standard: stri
 }
 
 /**
- * Habilita los presets de fixtures de pruebas en los motores de generación de código y diseño del SDLC.
+ * Habilita los presets de fixtures de pruebas en los motores de generación de código, diseño y scaffolding del SDLC.
  */
 export function enableTestPresets(): void {
   registerComponentCodePresetProvider(getTestPresetComponentCode)
   registerComponentDesignPresetProvider(getTestPresetComponentDesign)
+  registerScaffoldPresetProvider(getTestPresetScaffold)
 }
 
 /**
@@ -50,6 +53,7 @@ export function enableTestPresets(): void {
 export function disableTestPresets(): void {
   registerComponentCodePresetProvider(null)
   registerComponentDesignPresetProvider(null)
+  registerScaffoldPresetProvider(null)
 }
 
 // Auto-habilitar cuando se importa desde el entorno de pruebas
