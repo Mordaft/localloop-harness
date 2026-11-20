@@ -358,8 +358,6 @@ export async function node_phase4_business_compile(state: SDLCStateType): Promis
   // 1. Generar scripts de arranque en la raíz del workspace para la verificación local E2E
   const currentFw = state.frameworkConfig?.framework || state.projectScaffold?.frameworkTitle || 'Aplicación'
   const pkgMgr = state.frameworkConfig?.packageManager || state.projectScaffold?.packageManager
-  const bundler = state.frameworkConfig?.bundler || 'none'
-  const isVite = bundler === 'vite'
   const runtime = state.projectScaffold?.runtime || state.frameworkConfig?.runtime || 'generic'
   const hasUI = state.projectScaffold?.hasUI ?? state.frameworkConfig?.hasUI ?? false
 
@@ -601,23 +599,6 @@ if (typeof document !== 'undefined') {
     },
   ]
 
-  // Solo para proyectos web con Vite donde no exista previamente index.html se provee el punto de entrada
-  if (hasUI && isVite) {
-    const existingRootIndex = await readWorkspaceFile('index.html').catch(() => null)
-    const hasValidRootIndex = Boolean(
-      existingRootIndex &&
-        existingRootIndex.content &&
-        existingRootIndex.content.includes('<script'),
-    )
-    if (!hasValidRootIndex) {
-      startFiles.push({
-        path: 'index.html',
-        content: indexHtmlContent,
-        reason: 'Punto de entrada HTML principal en la raíz del proyecto Vite',
-      })
-    }
-  }
-
   // Solo para proyectos basados en TypeScript/JavaScript (Web o Node) se genera main.ts si no existe previamente
   const isTsOrJs =
     state.projectScaffold?.fileExtension === 'ts' ||
@@ -649,7 +630,7 @@ if (typeof document !== 'undefined') {
     await writeWorkspaceFileDirect(sf.path, sf.content)
   }
 
-  // 2.5 Verificación y auto-reparación de compilación y arranque con Tether CLI
+  // 2.5 Verificación de compilación y arranque con Tether CLI
   const compilationCheck = await verifyAndRepairApplicationCompilation(state)
   if (compilationCheck.usedTether && !compilationCheck.ok) {
     const compDebt: TechnicalDebtRecord = {
@@ -658,12 +639,42 @@ if (typeof document !== 'undefined') {
       title: 'Fallo de compilación detectado por Tether CLI',
       description: `Fallo de compilación o arranque detectado por Tether CLI: ${compilationCheck.error || compilationCheck.output.slice(0, 300)}`,
       riskLevel: 'ALTO',
-      mitigationPlan: 'Revisar imports y exports de TypeScript y ejecutar `npm run build` o `npx vite build` para corregir los tipos.',
+      mitigationPlan: 'Revisar imports y exports y corregir los defectos en las fases de diseño y construcción.',
       syncedToMcp: false,
       createdAt: new Date().toISOString(),
     }
     if (!state.technicalDebtList.some((d) => d.id === compDebt.id)) {
       state.technicalDebtList.push(compDebt)
+    }
+
+    const failureMsg = {
+      role: 'assistant' as const,
+      content:
+        `### ❌ Fase 4: Fallo de Compilación y Verificación de Arranque\n\n` +
+        `Se ha detectado un fallo al verificar la compilación o arranque de la aplicación con Tether CLI:\n\n` +
+        `> 🛑 **Detalle:** \`${compilationCheck.error || compilationCheck.output.slice(0, 300)}\`\n\n` +
+        `> 🔄 **Acción Automática:** La Fase 4 valida sin alterar el contenido del proyecto. Se activa el bucle de Resiliencia Estratégica (Fase 5) para diagnosticar la causa raíz y devolver la solución a las fases de diseño y construcción.`,
+      thought: 'Fallo de compilación o arranque en Fase 4. Redirigiendo a Fase 5 (Resiliencia & RCA) para corrección...',
+    }
+
+    if (state.sessionId) {
+      await updateSessionMetrics(state.sessionId, {
+        currentPhase: '5_STRATEGIC_RESILIENCE',
+        status: SessionStatus.WAITING_APPROVAL,
+      }).catch(() => {})
+    }
+
+    await emitSDLCProgress(
+      state.sessionId,
+      failureMsg,
+      'Fallo de compilación detectado. Activando Resiliencia...',
+      '4_E2E_BUSINESS_AUDIT',
+    )
+
+    return {
+      currentPhase: '5_STRATEGIC_RESILIENCE',
+      technicalDebtList: state.technicalDebtList,
+      messages: [...state.messages, failureMsg],
     }
   }
 

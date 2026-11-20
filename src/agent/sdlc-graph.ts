@@ -89,7 +89,12 @@ const workflow = new StateGraph(SDLCState)
 
   // Flujo Fase 4 (E2E & HITL)
   .addEdge('phase4_e2e_runner', 'phase4_business_compile')
-  .addEdge('phase4_business_compile', 'phase4_business_decision')
+  .addConditionalEdges('phase4_business_compile', (state) => {
+    if (state.currentPhase === '5_STRATEGIC_RESILIENCE') {
+      return 'phase5_resilience'
+    }
+    return 'phase4_business_decision'
+  })
 
   // Bifurcación Decisión Formal de Negocio (HITL)
   .addConditionalEdges('phase4_business_decision', (state) => {

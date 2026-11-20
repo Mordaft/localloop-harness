@@ -268,13 +268,15 @@ async function runTetherCompilationRepairTests(): Promise<void> {
   assert(compileRes.currentPhase === '4_E2E_BUSINESS_AUDIT', 'Debe permanecer en Fase 4')
   assert(Boolean(compileRes.frameworkConfig?.startScriptsGenerated), 'Debe haber generado scripts de arranque')
 
-  // Comprobar que en startFiles y workspace existen start.cmd, start.sh y src/main.ts
+  // Comprobar que en startFiles y workspace existen start.cmd, start.sh y NO existe index.html generado por Fase 4
   const startCmd = await readWorkspaceFile('start.cmd')
   assert(Boolean(startCmd.content), 'start.cmd debe existir')
   const startSh = await readWorkspaceFile('start.sh')
   assert(Boolean(startSh.content), 'start.sh debe existir')
+  const rootIndex = await readWorkspaceFile('index.html').catch(() => null)
+  assert(rootIndex === null, 'node_phase4_business_compile NO debe generar index.html en la raíz')
 
-  // Ahora probar si Tether falla persistente: se debe registrar deuda técnica
+  // Ahora probar si Tether falla persistente: se debe registrar deuda técnica y transicionar a Resiliencia (Fase 5)
   const failingState: SDLCStateType = {
     ...testState,
     technicalDebtList: [],
@@ -303,7 +305,11 @@ async function runTetherCompilationRepairTests(): Promise<void> {
     failingState.technicalDebtList.some((d) => d.id === 'td-compilation-failure'),
     'Debe registrar deuda técnica "td-compilation-failure" cuando la compilación falla con Tether',
   )
-  console.log('✓ Integración en node_phase4_business_compile y registro de deuda técnica verificado.')
+  assert(
+    failCompileRes.currentPhase === '5_STRATEGIC_RESILIENCE',
+    'Debe transicionar a 5_STRATEGIC_RESILIENCE ante fallo persistente de compilación',
+  )
+  console.log('✓ Integración en node_phase4_business_compile y redirección a Resiliencia verificada.')
 
   // Restaurar fetch original
   globalThis.fetch = originalFetch
