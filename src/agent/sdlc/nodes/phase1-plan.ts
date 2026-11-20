@@ -445,7 +445,7 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
       try {
         await updateSessionMetrics(state.sessionId, {
           currentPhase: '1_STRATEGY_AND_PLAN',
-          status: SessionStatus.FAILED,
+          status: SessionStatus.ERROR,
         })
       } catch {
         // ignore

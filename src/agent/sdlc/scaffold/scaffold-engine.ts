@@ -1,6 +1,4 @@
 import type {
-  ProjectArchetype,
-  ProjectRuntime,
   UniversalProjectScaffold,
 } from '../../sdlc-state'
 import { executeFileSystemTool } from '../../../fs/fs-tools'
