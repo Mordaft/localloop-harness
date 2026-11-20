@@ -624,7 +624,11 @@ if (typeof document !== 'undefined') {
     state.projectScaffold?.fileExtension === 'tsx' ||
     state.projectScaffold?.fileExtension === 'js' ||
     runtime === 'node'
-  if (isTsOrJs && !hasExistingMain) {
+  const isTemplateMain = Boolean(
+    existingMainTs?.content?.includes('[App] inicializada') ||
+      (existingMainTs?.content && !existingMainTs.content.includes('RegisteredComponentEntry')),
+  )
+  if (isTsOrJs && (!hasExistingMain || isTemplateMain)) {
     startFiles.push({
       path: 'src/main.ts',
       content: generatedMainTs,

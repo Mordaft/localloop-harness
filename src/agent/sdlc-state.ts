@@ -142,6 +142,17 @@ export type ProjectRuntime = string
 
 export type ProjectArchetype = string
 
+export interface ScaffoldValidationResult {
+  ok: boolean
+  attempts: number
+  copiedFiles: string[]
+  validationCommand?: string
+  output: string
+  exitCode: number
+  requiresUserAssistance?: boolean
+  error?: string
+}
+
 export interface UniversalProjectScaffold {
   runtime: ProjectRuntime
   archetype: ProjectArchetype
@@ -173,6 +184,7 @@ export interface UniversalProjectScaffold {
     testCmd: string
     testSh: string
   }
+  validationResult?: ScaffoldValidationResult
 }
 
 export interface ProjectFrameworkConfig {

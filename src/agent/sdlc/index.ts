@@ -24,7 +24,10 @@ export {
   buildUniversalScaffold,
   materializeUniversalScaffold,
   registerScaffoldPresetProvider,
+  assembleScaffoldDefinition,
+  resolveValidationCommand,
   ScaffoldViabilityError,
+  ScaffoldAssistanceRequiredError,
   type ScaffoldPresetProvider,
   type BuildScaffoldParams,
 } from './scaffold/scaffold-engine'

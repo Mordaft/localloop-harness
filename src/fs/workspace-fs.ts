@@ -56,13 +56,47 @@ export function getActiveWorkspaceName(): string {
   return activeDirectoryHandle?.name || 'localloop-workspace'
 }
 
-export function setVirtualFile(path: string, content: string): void {
-  const normalized = path.replace(/^\/+/, '').replace(/\\/g, '/')
-  virtualFileSystem.set(normalized, content)
+export function sanitizeWorkspacePath(rawPath: unknown): string {
+  if (typeof rawPath === 'string') {
+    return rawPath.replace(/^\/+/, '').replace(/\\/g, '/').trim()
+  }
+  if (rawPath && typeof rawPath === 'object') {
+    const obj = rawPath as Record<string, unknown>
+    if (typeof obj.path === 'string') {
+      return obj.path.replace(/^\/+/, '').replace(/\\/g, '/').trim()
+    }
+    if (typeof obj.filePath === 'string') {
+      return obj.filePath.replace(/^\/+/, '').replace(/\\/g, '/').trim()
+    }
+    if (typeof obj.targetPath === 'string') {
+      return obj.targetPath.replace(/^\/+/, '').replace(/\\/g, '/').trim()
+    }
+  }
+  if (typeof rawPath === 'number' && Number.isFinite(rawPath)) {
+    return ''
+  }
+  const str = String(rawPath ?? '').trim()
+  if (str === 'undefined' || str === 'null' || str === '[object Object]' || str === '-1') {
+    return ''
+  }
+  return str.replace(/^\/+/, '').replace(/\\/g, '/').trim()
 }
 
-export function getVirtualFile(path: string): string | undefined {
-  const normalized = path.replace(/^\/+/, '').replace(/\\/g, '/')
+export function setVirtualFile(path: unknown, content: unknown): void {
+  const normalized = sanitizeWorkspacePath(path)
+  if (!normalized) return
+  const stringContent =
+    typeof content === 'string'
+      ? content
+      : typeof content === 'object' && content !== null
+        ? JSON.stringify(content, null, 2)
+        : String(content ?? '')
+  virtualFileSystem.set(normalized, stringContent)
+}
+
+export function getVirtualFile(path: unknown): string | undefined {
+  const normalized = sanitizeWorkspacePath(path)
+  if (!normalized) return undefined
   return virtualFileSystem.get(normalized)
 }
 
@@ -176,12 +210,12 @@ export async function listWorkspaceFiles(maxFiles = 200): Promise<WorkspaceFileE
 
 async function resolveFileHandle(
   root: FileSystemDirectoryHandle,
-  filePath: string,
+  filePath: unknown,
   create = false,
 ): Promise<FileSystemFileHandle> {
-  const normalized = filePath.replace(/^\/+/, '').replace(/\\/g, '/')
+  const normalized = sanitizeWorkspacePath(filePath)
   const parts = normalized.split('/').filter(Boolean)
-  if (parts.length === 0) throw new Error('Ruta de archivo vacía.')
+  if (parts.length === 0) throw new Error('Ruta de archivo vacía o inválida.')
 
   let currentDir = root
   for (let i = 0; i < parts.length - 1; i += 1) {
@@ -191,17 +225,44 @@ async function resolveFileHandle(
 }
 
 export async function readWorkspaceFile(
-  filePath: string,
+  filePath: unknown,
   lineStart?: number,
   lineEnd?: number,
 ): Promise<{ content: string; numberedContent: string; totalLines: number; startLine: number; endLine: number }> {
-  const normalized = filePath.replace(/^\/+/, '').replace(/\\/g, '/')
+  const normalized = sanitizeWorkspacePath(filePath)
+  if (!normalized) {
+    throw new Error('Ruta de archivo vacía o inválida.')
+  }
   let rawText = ''
 
   if (activeDirectoryHandle) {
-    const fileHandle = await resolveFileHandle(activeDirectoryHandle, normalized, false)
-    const file = await fileHandle.getFile()
-    rawText = await file.text()
+    try {
+      const fileHandle = await resolveFileHandle(activeDirectoryHandle, normalized, false)
+      const file = await fileHandle.getFile()
+      rawText = await file.text()
+    } catch (err: unknown) {
+      if (virtualFileSystem.has(normalized)) {
+        rawText = virtualFileSystem.get(normalized)!
+      } else {
+        try {
+          const companionHandle = await resolveFileHandle(activeDirectoryHandle, `${normalized}.txt`, false)
+          const compFile = await companionHandle.getFile()
+          rawText = await compFile.text()
+        } catch {
+          try {
+            const proposals = await listFileProposals()
+            const match = [...proposals].reverse().find((p) => p.path === normalized)
+            if (match) {
+              rawText = match.proposedContent
+            } else {
+              throw err
+            }
+          } catch {
+            throw new Error(`El archivo "${normalized}" no existe en el workspace actual.`)
+          }
+        }
+      }
+    }
   } else if (virtualFileSystem.has(normalized)) {
     rawText = virtualFileSystem.get(normalized)!
   } else {
@@ -234,17 +295,60 @@ export async function readWorkspaceFile(
   }
 }
 
-export async function writeWorkspaceFileDirect(filePath: string, content: string): Promise<void> {
-  const normalized = filePath.replace(/^\/+/, '').replace(/\\/g, '/')
-  virtualFileSystem.set(normalized, content)
+export async function writeWorkspaceFileDirect(filePath: unknown, content: unknown): Promise<void> {
+  const normalized = sanitizeWorkspacePath(filePath)
+  if (!normalized) {
+    throw new Error('Ruta de archivo vacía o inválida.')
+  }
+  const stringContent =
+    typeof content === 'string'
+      ? content
+      : typeof content === 'object' && content !== null
+        ? JSON.stringify(content, null, 2)
+        : String(content ?? '')
+
+  virtualFileSystem.set(normalized, stringContent)
 
   if (activeDirectoryHandle) {
-    const fileHandle = await resolveFileHandle(activeDirectoryHandle, normalized, true)
-    const writable = await fileHandle.createWritable()
-    await writable.write(content)
-    await writable.close()
-    trace('fs.file.written_to_disk', { path: normalized, bytes: content.length })
+    try {
+      const fileHandle = await resolveFileHandle(activeDirectoryHandle, normalized, true)
+      const writable = await fileHandle.createWritable()
+      await writable.write(stringContent)
+      await writable.close()
+      trace('fs.file.written_to_disk', { path: normalized, bytes: stringContent.length })
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      // El navegador (Chromium/Edge) bloquea la creación directa en disco de extensiones ejecutables o de script
+      // (.cmd, .bat, .sh, .exe, etc.) mediante File System Access API arrojando "Name is not allowed" o SecurityError.
+      if (
+        errMsg.includes('Name is not allowed') ||
+        errMsg.includes('not allowed') ||
+        errMsg.includes('SecurityError') ||
+        (err instanceof Error && (err.name === 'TypeError' || err.name === 'SecurityError'))
+      ) {
+        trace('fs.file.disk_restricted_by_browser', {
+          path: normalized,
+          reason:
+            'El navegador restringe la escritura en disco de este archivo por motivos de seguridad (File System Access API). El archivo se preserva en el sistema virtual.',
+          error: errMsg,
+        })
+
+        // Guardar archivo complementario legible en disco con sufijo .txt para inspección directa por parte del usuario
+        try {
+          const companionPath = `${normalized}.txt`
+          const compHandle = await resolveFileHandle(activeDirectoryHandle, companionPath, true)
+          const compWritable = await compHandle.createWritable()
+          await compWritable.write(stringContent)
+          await compWritable.close()
+          trace('fs.file.written_companion_to_disk', { path: companionPath, bytes: stringContent.length })
+        } catch {
+          // Si el archivo complementario tampoco puede escribirse, continuar sin bloquear
+        }
+        return
+      }
+      throw err
+    }
   } else {
-    trace('fs.file.written_to_virtual', { path: normalized, bytes: content.length })
+    trace('fs.file.written_to_virtual', { path: normalized, bytes: stringContent.length })
   }
 }

@@ -131,6 +131,7 @@ export {
   materializeUniversalScaffold,
   registerScaffoldPresetProvider,
   ScaffoldViabilityError,
+  ScaffoldAssistanceRequiredError,
   generateComponentCode,
   type GeneratedComponentArtifacts,
 } from './sdlc'

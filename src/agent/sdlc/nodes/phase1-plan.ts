@@ -20,6 +20,7 @@ import { generateComponentDesign } from '../codegen/component-design'
 import {
   buildUniversalScaffold,
   materializeUniversalScaffold,
+  ScaffoldAssistanceRequiredError,
 } from '../scaffold/scaffold-engine'
 
 /**
@@ -259,6 +260,7 @@ export async function node_phase1_strategy_and_plan(state: SDLCStateType): Promi
         initiativeTitle,
         userText: initiativeNarrative,
         contextInitiative: initiativeTitle,
+        skipMaterialize: true,
       })
       presetTitle = probe.frameworkTitle
       presetManifests = probe.manifestFiles.map((m) => `\`${m.path}\``).join(', ')
@@ -411,16 +413,22 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
   let scaffoldViabilityFailure: string | null = null
 
   try {
-    proposedScaffold = buildUniversalScaffold({
+    proposedScaffold = await buildUniversalScaffold({
       proposedScaffold: rawProposedScaffold,
       declaredDependencies,
       declaredDevDependencies,
       initiativeTitle,
       userText: initiativeNarrative,
       contextInitiative: initiativeTitle,
+      sessionId: state.sessionId,
+      skipMaterialize: true,
     })
   } catch (err) {
-    scaffoldViabilityFailure = err instanceof Error ? err.message : String(err)
+    if (err instanceof ScaffoldAssistanceRequiredError) {
+      scaffoldViabilityFailure = `Validación iterativa de scaffolding fallida tras 3 intentos. Se requiere asistencia del usuario: ${err.message}`
+    } else {
+      scaffoldViabilityFailure = err instanceof Error ? err.message : String(err)
+    }
     trace(`[SDLCGraph] Fallo de viabilidad técnica de scaffolding: ${scaffoldViabilityFailure}`)
   }
 
@@ -428,12 +436,17 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
   // Si el LLM no detalló la información necesaria o está offline, ese error invalida completamente
   // la viabilidad del proyecto: se detiene inmediatamente el flujo informando al usuario del problema.
   if (!proposedScaffold) {
-    const failureContent =
-      `### ❌ Detención Inmediata del SDLC — Viabilidad del Proyecto Invalidada\n\n` +
-      `El Arquitecto de Solución Técnica (LLM) no ha podido detallar la propuesta formal de arquitectura y scaffolding para la iniciativa.\n\n` +
-      `> 🛑 **Motivo de Invalidación:** ${scaffoldViabilityFailure || 'La herramienta `propose_project_scaffold` no fue invocada con los manifiestos y estructura requeridos.'}\n\n` +
-      `**Regla de Integridad de LocalLoop:** Sin una arquitectura y ciclo de vida formalmente especificados por el modelo, **la viabilidad del proyecto queda completamente invalidada**. El flujo se detiene inmediatamente para evitar construir componentes sobre asunciones o marcos no fundamentados.\n\n` +
-      `Por favor, verifica la disponibilidad del modelo o reformula los requerimientos funcionales de la iniciativa para reintentar la planificación técnica.`
+    const isAssistanceRequired = scaffoldViabilityFailure?.includes('asistencia del usuario')
+    const failureContent = isAssistanceRequired
+      ? `### ⚠️ Validación de Scaffolding: Se Requiere Asistencia del Usuario\n\n` +
+        `El proceso iterativo del LLD ha copiado los archivos y ejecutado los comandos de validación durante 3 iteraciones sin conseguir un resultado exitoso.\n\n` +
+        `> 🛑 **Detalle de la Validación:** ${scaffoldViabilityFailure}\n\n` +
+        `💬 **Solicitud de Asistencia al Usuario:** Por favor, revisa en el chat los comandos de inicialización, las dependencias o el entorno para que el proyecto pueda validarse correctamente.`
+      : `### ❌ Detención Inmediata del SDLC — Viabilidad del Proyecto Invalidada\n\n` +
+        `El Arquitecto de Solución Técnica (LLM) no ha podido detallar la propuesta formal de arquitectura y scaffolding para la iniciativa.\n\n` +
+        `> 🛑 **Motivo de Invalidación:** ${scaffoldViabilityFailure || 'La herramienta `propose_project_scaffold` no fue invocada con los manifiestos y estructura requeridos.'}\n\n` +
+        `**Regla de Integridad de LocalLoop:** Sin una arquitectura y ciclo de vida formalmente especificados por el modelo, **la viabilidad del proyecto queda completamente invalidada**. El flujo se detiene inmediatamente para evitar construir componentes sobre asunciones o marcos no fundamentados.\n\n` +
+        `Por favor, verifica la disponibilidad del modelo o reformula los requerimientos funcionales de la iniciativa para reintentar la planificación técnica.`
 
     const failureMsg = {
       role: 'assistant' as const,
@@ -540,12 +553,13 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
 
   if (lastUserText.trim()) {
     try {
-      const userScaffold = buildUniversalScaffold({
+      const userScaffold = await buildUniversalScaffold({
         userText: lastUserText,
         contextInitiative,
         initiativeTitle,
         declaredDependencies: state.declaredDependencies,
         declaredDevDependencies: state.declaredDevDependencies,
+        sessionId: state.sessionId,
       })
       if (userScaffold) {
         scaffold = userScaffold
@@ -559,11 +573,56 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
     throw new Error('No existe un scaffolding formal propuesto para el proyecto. Viabilidad invalidada.')
   }
 
-  // 1. Materializar físicamente todos los archivos del scaffold en el workspace
-  await materializeUniversalScaffold(scaffold, {
-    sessionId: state.sessionId,
-    onProposalCreated: callbacks?.onProposalCreated,
-  })
+  // 1. Validación iterativa y materialización física del scaffolding en el workspace
+  try {
+    if (!scaffold.validationResult) {
+      scaffold = await buildUniversalScaffold({
+        proposedScaffold: scaffold,
+        declaredDependencies: state.declaredDependencies,
+        declaredDevDependencies: state.declaredDevDependencies,
+        initiativeTitle,
+        userText: contextInitiative,
+        sessionId: state.sessionId,
+        onProposalCreated: callbacks?.onProposalCreated,
+      })
+    } else {
+      await materializeUniversalScaffold(scaffold, {
+        sessionId: state.sessionId,
+        onProposalCreated: callbacks?.onProposalCreated,
+      })
+    }
+  } catch (err) {
+    if (err instanceof ScaffoldAssistanceRequiredError) {
+      const assistanceMsg = {
+        role: 'assistant' as const,
+        content:
+          `### ⚠️ Validación de Scaffolding: Se Requiere Asistencia del Usuario\n\n` +
+          `El proceso iterativo del LLD ha copiado los archivos en el workspace y ejecutado los comandos de validación durante 3 iteraciones sin conseguir un resultado exitoso.\n\n` +
+          `> 🛑 **Detalle de la Validación:** ${err.message}\n\n` +
+          `💬 **Solicitud de Asistencia al Usuario:** Por favor, revisa en el chat los comandos de inicialización (\`setup.cmd\`/\`setup.sh\`), dependencias o entorno para que el proyecto pueda validarse correctamente antes de iniciar la construcción de componentes.`,
+        thought:
+          'Se han completado 3 intentos de validación del scaffolding sin éxito. Solicitando asistencia al usuario (HITL).',
+      }
+      if (state.sessionId) {
+        await updateSessionMetrics(state.sessionId, {
+          currentPhase: '1_STRATEGY_AND_PLAN',
+          status: SessionStatus.WAITING_APPROVAL,
+        }).catch(() => {})
+      }
+      await emitSDLCProgress(
+        state.sessionId,
+        assistanceMsg,
+        'Validación de Scaffolding: Esperando Asistencia del Usuario',
+        '1_STRATEGY_AND_PLAN',
+      )
+      return {
+        messages: [...state.messages, assistanceMsg],
+        currentPhase: '1_STRATEGY_AND_PLAN',
+        phase1FrameworkAgreed: false,
+      }
+    }
+    throw err
+  }
 
   // 3. Registrar frameworkConfig en memoria persistente Engram
   const frameworkConfig: ProjectFrameworkConfig = {

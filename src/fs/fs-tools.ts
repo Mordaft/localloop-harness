@@ -3,7 +3,7 @@ import { FileProposalStatus, FsWriteMode, type FsWriteMode as FsWriteModeType } 
 import type { OpenAiToolSpec } from '../llm/llm-client'
 import { createFileProposal, listFileProposals, updateFileProposalStatus } from '../memory/app-db'
 import { extractCleanSourceCode } from '../sandbox/browser-sandbox'
-import { listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFileDirect } from './workspace-fs'
+import { listWorkspaceFiles, readWorkspaceFile, sanitizeWorkspacePath, writeWorkspaceFileDirect } from './workspace-fs'
 
 export function getFileSystemToolSpecs(): OpenAiToolSpec[] {
   return [
@@ -127,8 +127,9 @@ async function internalExecuteFileSystemTool(
   }
 
   if (toolName === 'fs_read_file') {
-    const path = String(args.path ?? '').trim()
-    if (!path) throw new Error('fs_read_file requiere el argumento "path".')
+    const rawPath = args.path ?? args.filePath
+    const path = sanitizeWorkspacePath(rawPath)
+    if (!path) throw new Error('fs_read_file requiere el argumento "path" válido.')
     const lineStart = typeof args.lineStart === 'number' ? args.lineStart : undefined
     const lineEnd = typeof args.lineEnd === 'number' ? args.lineEnd : undefined
     const result = await readWorkspaceFile(path, lineStart, lineEnd)
@@ -144,16 +145,26 @@ async function internalExecuteFileSystemTool(
   }
 
   if (toolName === 'fs_write_file') {
-    const path = String(args.path ?? '').trim()
-    const rawContent = String(args.content ?? '')
+    const rawPath = args.path ?? args.filePath
+    const path = sanitizeWorkspacePath(rawPath)
+    if (!path) throw new Error('fs_write_file requiere el argumento "path" válido.')
+
+    const rawContent =
+      typeof args.content === 'object' && args.content !== null
+        ? JSON.stringify(args.content, null, 2)
+        : String(args.content ?? '')
+
     const needsCleaning =
       /\.(ts|tsx|js|jsx|html|css|json)$/i.test(path) &&
       (rawContent.includes('```') || /from\s+['"]dom['"]/.test(rawContent))
     const proposedContent = needsCleaning
       ? extractCleanSourceCode(rawContent, path)
       : rawContent
-    const reason = String(args.reason ?? 'Actualización propuesta por el agente LocalLoop')
-    if (!path) throw new Error('fs_write_file requiere el argumento "path".')
+    const rawReason = args.reason
+    const reason =
+      typeof rawReason === 'string' && rawReason !== '-1' && rawReason.trim().length > 0
+        ? rawReason.trim()
+        : 'Actualización propuesta por el agente LocalLoop'
 
     let originalContent = ''
     try {
