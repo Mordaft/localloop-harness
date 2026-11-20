@@ -337,7 +337,7 @@ export function getAllMasterToolSpecs(): Map<string, OpenAiToolSpec> {
             description: 'Configuración del arnés de pruebas.',
           },
         },
-        required: ['runtime', 'archetype', 'hasUI'],
+        required: ['runtime', 'archetype', 'hasUI', 'manifestFiles'],
       },
     },
   })
