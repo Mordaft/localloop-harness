@@ -17,6 +17,21 @@ import { appendSessionMessage } from '../../../memory/app-db'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { RuntimeSkillLoader } from '../../skills/runtime-loader'
 import { getSandboxToolSpec } from '../../../sandbox/code-runner'
+import {
+  inferUniversalScaffoldFromContext,
+  extractScaffoldProposalFromText,
+  resolveScaffoldProposal,
+  type InferScaffoldContextParams,
+  type ResolveScaffoldParams,
+} from './scaffold-inference'
+
+export {
+  inferUniversalScaffoldFromContext,
+  extractScaffoldProposalFromText,
+  resolveScaffoldProposal,
+  type InferScaffoldContextParams,
+  type ResolveScaffoldParams,
+}
 
 export class ScaffoldViabilityError extends Error {
   constructor(message: string) {
@@ -63,6 +78,7 @@ export interface BuildScaffoldParams {
   sessionId?: number
   maxIterations?: number
   skipMaterialize?: boolean
+  inferFromContext?: boolean
   validationCommand?: string
   authContext?: McpAuthConnectContext
   onProgress?: (info: {
@@ -573,17 +589,40 @@ export function buildUniversalScaffold(
     }
   }
 
+  // Inferencia contextual universal si está permitida y no hay propuesta ni preset
+  if (!proposal && params.inferFromContext) {
+    proposal = inferUniversalScaffoldFromContext({
+      initiativeTitle: params.initiativeTitle,
+      userText: params.userText,
+      contextInitiative: params.contextInitiative,
+      declaredDependencies: params.declaredDependencies,
+      declaredDevDependencies: params.declaredDevDependencies,
+    })
+  }
+
   if (!proposal) {
     throw new ScaffoldViabilityError(
       'El Arquitecto de Solución Técnica (LLM) no ha detallado la propuesta formal de arquitectura y scaffolding del proyecto. La viabilidad del proyecto queda invalidada.',
     )
   }
 
+  // Asegurar valores por defecto robustos si el modelo omitió runtime, archetype o manifiestos
+  if (!proposal.runtime) {
+    proposal.runtime = 'node'
+  }
+  if (!proposal.archetype) {
+    proposal.archetype = 'WEB_APP'
+  }
   const manifests = proposal.manifestFiles || []
-  if (!proposal.runtime || !proposal.archetype || manifests.length === 0) {
-    throw new ScaffoldViabilityError(
-      `Propuesta de scaffolding incompleta: requiere runtime ("${proposal.runtime || 'faltante'}"), archetype ("${proposal.archetype || 'faltante'}") y al menos un archivo manifiesto de proyecto. La viabilidad queda invalidada.`,
-    )
+  if (manifests.length === 0) {
+    const defaultManifest = inferDefaultManifestPath(proposal.runtime)
+    proposal.manifestFiles = [
+      {
+        path: defaultManifest,
+        content: '',
+        purpose: 'Manifiesto principal del proyecto',
+      },
+    ]
   }
 
   const cleanScaffold = assembleScaffoldDefinition(proposal, params)

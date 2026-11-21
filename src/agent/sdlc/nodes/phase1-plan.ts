@@ -20,6 +20,7 @@ import { generateComponentDesign } from '../codegen/component-design'
 import {
   buildUniversalScaffold,
   materializeUniversalScaffold,
+  resolveScaffoldProposal,
   ScaffoldAssistanceRequiredError,
 } from '../scaffold/scaffold-engine'
 
@@ -261,6 +262,7 @@ export async function node_phase1_strategy_and_plan(state: SDLCStateType): Promi
         userText: initiativeNarrative,
         contextInitiative: initiativeTitle,
         skipMaterialize: true,
+        inferFromContext: true,
       })
       presetTitle = probe.frameworkTitle
       presetManifests = probe.manifestFiles.map((m) => `\`${m.path}\``).join(', ')
@@ -408,6 +410,18 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
     }
   }
 
+  // Resolución inteligente y universal de scaffolding (extracción de texto o inferencia contextual)
+  rawProposedScaffold = resolveScaffoldProposal({
+    rawProposed: rawProposedScaffold,
+    llmContent: llmPlan.content,
+    initiativeTitle,
+    initiativeNarrative,
+    phase0Data: state.phase0Data,
+    marketArchStandard: state.marketArchStandard,
+    declaredDependencies,
+    declaredDevDependencies,
+  })
+
   // Validación e instanciación estricta del scaffolding
   let proposedScaffold: UniversalProjectScaffold | undefined = undefined
   let scaffoldViabilityFailure: string | null = null
@@ -422,6 +436,7 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
       contextInitiative: initiativeTitle,
       sessionId: state.sessionId,
       skipMaterialize: true,
+      inferFromContext: true,
     })
   } catch (err) {
     if (err instanceof ScaffoldAssistanceRequiredError) {
@@ -448,6 +463,12 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
         `**Regla de Integridad de LocalLoop:** Sin una arquitectura y ciclo de vida formalmente especificados por el modelo, **la viabilidad del proyecto queda completamente invalidada**. El flujo se detiene inmediatamente para evitar construir componentes sobre asunciones o marcos no fundamentados.\n\n` +
         `Por favor, verifica la disponibilidad del modelo o reformula los requerimientos funcionales de la iniciativa para reintentar la planificación técnica.`
 
+    const proposalMsg = {
+      role: 'assistant' as const,
+      content: llmPlan.content,
+      thought: llmPlan.thought,
+    }
+
     const failureMsg = {
       role: 'assistant' as const,
       content: failureContent,
@@ -463,6 +484,16 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
       } catch {
         // ignore
       }
+    }
+
+    // Preservar siempre la propuesta redactada por el LLM en el historial para que no desaparezca de la vista
+    if (llmPlan.content?.trim()) {
+      await emitSDLCProgress(
+        state.sessionId,
+        proposalMsg,
+        'Fase 1: Propuesta Técnica (Borrador)',
+        '1_STRATEGY_AND_PLAN',
+      )
     }
 
     await emitSDLCProgress(
@@ -481,7 +512,9 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
       currentPhase: '1_STRATEGY_AND_PLAN',
       phase1FrameworkAgreed: false,
       projectScaffold: undefined,
-      messages: [...state.messages, failureMsg],
+      messages: llmPlan.content?.trim()
+        ? [...state.messages, proposalMsg, failureMsg]
+        : [...state.messages, failureMsg],
     }
   }
 
