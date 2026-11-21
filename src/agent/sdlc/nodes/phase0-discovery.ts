@@ -1,7 +1,7 @@
 import { trace } from '../../../diagnostics'
-import { getActiveWorkspaceName } from '../../../fs/workspace-fs'
+import { getActiveWorkspaceName, getActiveWorkspacePath } from '../../../fs/workspace-fs'
 import { getPersistentEngram, saveSdlcPhaseArtifact } from '../../../memory/engram-memory'
-import { appendSessionMessage, getSessionById, listMcpServers, updateSessionMetrics } from '../../../memory/app-db'
+import { appendSessionMessage, getSavedWorkspaceHandle, getSessionById, listMcpServers, updateSessionMetrics } from '../../../memory/app-db'
 import { SessionStatus } from '../../../enums'
 import { getSessionCallbacks } from '../../agent-graph'
 import { RuntimeSkillLoader } from '../../skills/runtime-loader'
@@ -43,11 +43,27 @@ export async function resolveRequiredSessionWorkspacePath(
     }
   }
   if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {
+    const activeFsPath = getActiveWorkspacePath()
+    if (activeFsPath && isAbsoluteOsPath(activeFsPath)) {
+      resolvedWsPath = activeFsPath.trim()
+    }
+  }
+  if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {
+    const saved = await getSavedWorkspaceHandle().catch(() => null)
+    if (saved?.path && isAbsoluteOsPath(saved.path)) {
+      resolvedWsPath = saved.path.trim()
+    }
+  }
+  if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {
     const servers = await listMcpServers().catch(() => [])
     const tether = servers.find((s) => isTetherServer(s))
     if (tether?.workspace && isAbsoluteOsPath(tether.workspace)) {
       resolvedWsPath = tether.workspace.trim()
     }
+  }
+
+  if (resolvedWsPath && isAbsoluteOsPath(resolvedWsPath) && sessionId) {
+    await updateSessionMetrics(sessionId, { workspacePath: resolvedWsPath }).catch(() => {})
   }
 
   if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {

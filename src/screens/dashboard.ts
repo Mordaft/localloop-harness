@@ -1,6 +1,7 @@
 import { heroIcon } from '../config/heroicons'
 import { SessionStatus } from '../enums'
 import {
+  getActiveWorkspacePath,
   getWorkspaceDirectoryHandle,
   pickWorkspaceDirectory,
   restoreSavedWorkspaceDirectory,
@@ -119,9 +120,10 @@ export function renderSessionCard(session: AgentSession): string {
               <span class="rounded-md border border-border-default bg-bg-app px-2 py-0.5 font-mono text-[11px] text-text-secondary">
                 ${session.skill}
               </span>
-              <span class="inline-flex items-center gap-1 text-xs text-text-muted">
+              <span class="inline-flex items-center gap-1 text-xs text-text-muted" title="${session.workspacePath || ''}">
                 ${heroIcon('folder-open', 'h-3.5 w-3.5 text-primary')}
-                ${session.workspaceName}
+                <span>${session.workspaceName}</span>
+                ${session.workspacePath ? `<span class="font-mono text-[10px] text-text-muted">(${session.workspacePath})</span>` : ''}
               </span>
             </div>
             <a href="#/sessions/${id}" class="mt-2 block font-display text-base font-bold text-text-primary transition group-hover:text-primary">
@@ -181,6 +183,7 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
   const [sessions, kpis] = await Promise.all([listSessions(), getDashboardKpis()])
   const i18n = t()
   const handle = getWorkspaceDirectoryHandle()
+  const activePath = getActiveWorkspacePath()
 
   const activeList = sessions.filter(
     (s) => s.status !== SessionStatus.COMPLETED && s.status !== SessionStatus.BUDGET_EXCEEDED,
@@ -201,9 +204,9 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
             <h1 class="font-display text-2xl font-bold text-text-primary">${i18n.sessions.title}</h1>
           </div>
           <div class="flex items-center gap-2.5">
-            <button id="link-workspace-btn" class="inline-flex items-center gap-2 rounded-lg border border-border-default bg-bg-card px-3.5 py-2 text-xs font-semibold text-text-primary transition hover:border-primary/40 hover:bg-bg-elevated">
+            <button id="link-workspace-btn" class="inline-flex items-center gap-2 rounded-lg border border-border-default bg-bg-card px-3.5 py-2 text-xs font-semibold text-text-primary transition hover:border-primary/40 hover:bg-bg-elevated" title="${activePath || ''}">
               ${heroIcon('folder-open', 'h-4 w-4 text-primary')}
-              <span>${handle ? `${i18n.sessions.workspaceLinked}: ${handle.name}` : i18n.sessions.selectWorkspaceBtn}</span>
+              <span>${handle ? `${i18n.sessions.workspaceLinked}: ${handle.name}${activePath ? ` (${activePath})` : ''}` : i18n.sessions.selectWorkspaceBtn}</span>
             </button>
             <button id="new-session-btn" class="inline-flex items-center gap-2 rounded-lg border border-border-default bg-bg-card px-3.5 py-2 text-xs font-semibold text-text-primary transition hover:border-primary/40 hover:bg-bg-elevated">
               ${heroIcon('plus', 'h-4 w-4')}
@@ -307,9 +310,12 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
 
   root.querySelector<HTMLButtonElement>('#new-session-btn')?.addEventListener('click', async () => {
     let activeDir = getWorkspaceDirectoryHandle()
-    if (!activeDir) {
+    let activePath = getActiveWorkspacePath()
+
+    if (!activeDir || !activePath) {
       try {
         activeDir = await pickWorkspaceDirectory()
+        activePath = getActiveWorkspacePath()
         syncWorkerEnvironment()
       } catch (err) {
         console.warn('[FS] Directory picker cancelled or unsupported:', err)
@@ -330,7 +336,8 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
       title: 'Nueva sesión de desarrollo',
       goal: '',
       skill: 'ProjectRigor_Interviewer',
-      workspaceName: activeDir?.name ?? 'Sandbox Virtual FS',
+      workspaceName: activeDir?.name ?? 'Workspace local',
+      workspacePath: activePath,
     })
 
     void runAgentSessionTurn(sessionId)

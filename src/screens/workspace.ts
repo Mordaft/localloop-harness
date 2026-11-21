@@ -1,12 +1,15 @@
 import { heroIcon } from '../config/heroicons'
 import { SessionStatus, type SessionStatus as SessionStatusType } from '../enums'
 import {
+  getActiveWorkspacePath,
   getWorkspaceDirectoryHandle,
   listWorkspaceFiles,
   pickWorkspaceDirectory,
   readWorkspaceFile,
   restoreSavedWorkspaceDirectory,
+  setActiveWorkspacePath,
 } from '../fs/workspace-fs'
+import { isAbsoluteOsPath } from '../mcp/mcp-client'
 import { t, translateStatus } from '../i18n'
 import { getLlmConfig } from '../llm/llm-config'
 import {
@@ -1570,6 +1573,14 @@ export async function renderWorkspaceScreen(
     restoreP0StateFromData(session.phase0Data)
   }
 
+  if (session.workspacePath && isAbsoluteOsPath(session.workspacePath)) {
+    setActiveWorkspacePath(session.workspacePath)
+  } else if (!session.workspacePath && getActiveWorkspacePath()) {
+    session.workspacePath = getActiveWorkspacePath()
+    await updateSessionMetrics(sessionId, { workspacePath: session.workspacePath })
+  }
+  const activeFsPath = session.workspacePath || getActiveWorkspacePath()
+
   const handle = getWorkspaceDirectoryHandle()
   const config = getLlmConfig()
   const running = isSessionRunning(sessionId)
@@ -1633,6 +1644,11 @@ export async function renderWorkspaceScreen(
               <span data-session-status="${effectiveStatus}" class="rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(effectiveStatus)}">
                 ${translateStatus(effectiveStatus)}
               </span>
+              <span class="inline-flex items-center gap-1.5 rounded-md border border-border-default bg-bg-card px-2.5 py-0.5 text-[11px] text-text-secondary" title="${session.workspacePath || 'Ruta física en anfitrión no definida'}">
+                ${heroIcon('folder-open', 'h-3.5 w-3.5 text-primary')}
+                <span class="font-semibold">${escapeHtml(session.workspaceName || handle?.name || 'Workspace')}</span>
+                ${session.workspacePath ? `<span class="font-mono text-text-muted text-[10px]">(${escapeHtml(session.workspacePath)})</span>` : '<span class="text-amber-400 text-[10px] font-bold">⚠️ Sin ruta de anfitrión</span>'}
+              </span>
               <span class="rounded-md border border-border-default bg-bg-card px-2.5 py-0.5 font-mono text-[11px] text-text-muted" title="Thread GUID">
                 ${escapeHtml(session.threadId.slice(0, 18))}...
               </span>
@@ -1685,22 +1701,31 @@ export async function renderWorkspaceScreen(
         <!-- Canvas Principal de Conversación -->
         <main class="flex flex-1 flex-col overflow-hidden bg-bg-app">
           <div id="chat-messages-scroll" class="flex-1 overflow-y-auto px-8 py-6 space-y-5">
-            ${!handle
+            ${!handle || !session.workspacePath
               ? `
-                  <div class="max-w-3xl w-full rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-sm flex items-center justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                      <span class="text-amber-500 text-lg">⚠️</span>
-                      <div>
-                        <h4 class="font-bold text-xs text-text-primary">Carpeta física del Workspace no vinculada</h4>
-                        <p class="text-[11px] text-text-secondary mt-0.5">
-                          Para que los scripts <code>setup.cmd</code>, <code>setup.sh</code>, <code>start.cmd</code>, <code>start.sh</code> y el código se escriban en tu equipo, vincula tu carpeta local.
-                        </p>
+                  <div class="max-w-3xl w-full rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-sm space-y-3">
+                    <div class="flex items-center justify-between gap-4">
+                      <div class="flex items-center gap-3">
+                        <span class="text-amber-500 text-lg">📁</span>
+                        <div>
+                          <h4 class="font-bold text-xs text-text-primary">
+                            ${!handle ? 'Carpeta física del Workspace no vinculada' : 'Ruta física del Workspace en el anfitrión no definida'}
+                          </h4>
+                          <p class="text-[11px] text-text-secondary mt-0.5">
+                            Para que Tether MCP, la compilación y los scripts operen en tu equipo, vincula la carpeta y confirma su ruta física absoluta.
+                          </p>
+                        </div>
                       </div>
+                      <button id="btn-banner-link-workspace" class="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-bg-card px-4 py-2 text-xs font-bold text-text-primary hover:bg-bg-elevated transition shadow-sm">
+                        ${heroIcon('folder-open', 'h-4 w-4 text-primary')}
+                        <span>${handle ? 'Cambiar Carpeta' : 'Vincular Carpeta'}</span>
+                      </button>
                     </div>
-                    <button id="btn-banner-link-workspace" class="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-bg-card px-4 py-2 text-xs font-bold text-text-primary hover:bg-bg-elevated transition shadow-sm">
-                      ${heroIcon('folder-open', 'h-4 w-4 text-primary')}
-                      <span>Vincular Carpeta</span>
-                    </button>
+                    <div class="flex items-center gap-2 pt-2 border-t border-amber-500/20">
+                      <label class="text-[11px] font-semibold text-text-secondary shrink-0" for="banner-workspace-path-input">Ruta absoluta anfitrión:</label>
+                      <input id="banner-workspace-path-input" type="text" value="${escapeHtml(session.workspacePath || activeFsPath || '')}" placeholder="c:/Users/alvar/git/mi-proyecto" class="flex-1 rounded-lg border border-border-default bg-bg-card px-3 py-1.5 text-xs font-mono text-text-primary outline-none focus:border-primary" />
+                      <button id="btn-banner-save-path" class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition">Guardar Ruta</button>
+                    </div>
                   </div>
                 `
               : ''
@@ -2221,9 +2246,18 @@ export async function renderWorkspaceScreen(
   // Vincular carpeta física del disco local desde el drawer
   root.querySelector<HTMLButtonElement>('#btn-link-workspace-dir')?.addEventListener('click', async () => {
     try {
-      await pickWorkspaceDirectory()
-      syncWorkerEnvironment()
-      void renderWorkspaceScreen(root, sessionId, rerender)
+      const handle = await pickWorkspaceDirectory()
+      if (handle) {
+        const hostPath = (handle as any).path || getActiveWorkspacePath()
+        await updateSessionMetrics(sessionId, {
+          workspaceName: handle.name,
+          workspacePath: hostPath,
+        })
+        session.workspaceName = handle.name
+        session.workspacePath = hostPath
+        syncWorkerEnvironment()
+        void renderWorkspaceScreen(root, sessionId, rerender)
+      }
     } catch (err) {
       console.warn('Vincular carpeta cancelado o error:', err)
     }
@@ -2524,18 +2558,27 @@ export async function renderWorkspaceScreen(
   // Función común de envío de Fase 0 (Formulario o Markdown)
   const submitPhase0 = async () => {
     let activeDir = getWorkspaceDirectoryHandle()
-    if (!activeDir) {
+    let activePath = session.workspacePath || getActiveWorkspacePath()
+    if (!activeDir || !activePath) {
       try {
         activeDir = await pickWorkspaceDirectory()
+        activePath = (activeDir as any)?.path || getActiveWorkspacePath()
         syncWorkerEnvironment()
       } catch (err) {
         console.warn('Vincular carpeta cancelado:', err)
       }
     }
-    if (!activeDir) {
-      alert('Debes indicar y vincular la carpeta física del workspace antes de iniciar la Fase 1.')
+    if (!activeDir || !activePath) {
+      alert('Debes indicar y vincular la carpeta física del workspace y su ruta absoluta en el anfitrión antes de iniciar la Fase 1.')
       return
     }
+
+    await updateSessionMetrics(sessionId, {
+      workspaceName: activeDir.name,
+      workspacePath: activePath,
+    })
+    session.workspaceName = activeDir.name
+    session.workspacePath = activePath
 
     syncP0StateFromDom(root)
 
@@ -2660,12 +2703,54 @@ export async function renderWorkspaceScreen(
   // Vincular carpeta desde el banner de advertencia si no estaba vinculada
   root.querySelector<HTMLButtonElement>('#btn-banner-link-workspace')?.addEventListener('click', async () => {
     try {
-      await pickWorkspaceDirectory()
-      syncWorkerEnvironment()
-      void renderWorkspaceScreen(root, sessionId, rerender)
+      const handle = await pickWorkspaceDirectory()
+      if (handle) {
+        const hostPath = (handle as any).path || getActiveWorkspacePath()
+        const wasError = session.status === SessionStatus.ERROR
+        await updateSessionMetrics(sessionId, {
+          workspaceName: handle.name,
+          workspacePath: hostPath,
+          status: wasError ? SessionStatus.IDLE : undefined,
+        })
+        session.workspaceName = handle.name
+        session.workspacePath = hostPath
+        if (wasError) {
+          session.status = SessionStatus.IDLE
+        }
+        syncWorkerEnvironment()
+        if (wasError && hostPath) {
+          void runAgentSessionTurn(sessionId)
+        }
+        void renderWorkspaceScreen(root, sessionId, rerender)
+      }
     } catch (err) {
       console.warn('Vincular carpeta cancelado:', err)
     }
+  })
+
+  root.querySelector<HTMLButtonElement>('#btn-banner-save-path')?.addEventListener('click', async () => {
+    const input = root.querySelector<HTMLInputElement>('#banner-workspace-path-input')
+    const val = input?.value.trim()
+    if (!val || !isAbsoluteOsPath(val)) {
+      alert('Debes introducir una ruta física absoluta válida del sistema operativo (ej: C:/Users/alvar/git/mi-proyecto o /home/user/proyecto).')
+      return
+    }
+    const normalized = val.replace(/\\/g, '/')
+    setActiveWorkspacePath(normalized)
+    const wasError = session.status === SessionStatus.ERROR
+    await updateSessionMetrics(sessionId, {
+      workspacePath: normalized,
+      status: wasError ? SessionStatus.IDLE : undefined,
+    })
+    session.workspacePath = normalized
+    if (wasError) {
+      session.status = SessionStatus.IDLE
+    }
+    syncWorkerEnvironment()
+    if (wasError) {
+      void runAgentSessionTurn(sessionId)
+    }
+    void renderWorkspaceScreen(root, sessionId, rerender)
   })
 
   // Botones finales: Completar Fase 0 (desde Formulario o desde Markdown)

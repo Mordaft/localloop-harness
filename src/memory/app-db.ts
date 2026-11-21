@@ -64,6 +64,7 @@ export interface StoredFileWriteProposal {
 export interface StoredWorkspaceHandle {
   id: string // 'active-workspace' or `session-${id}`
   name: string
+  path?: string
   handle: FileSystemDirectoryHandle
   updatedAt: string
 }
@@ -395,10 +396,12 @@ export async function updateFileProposalStatus(
 export async function saveWorkspaceHandle(
   handle: FileSystemDirectoryHandle,
   key = 'active-workspace',
+  path?: string,
 ): Promise<void> {
   const row: StoredWorkspaceHandle = {
     id: key,
     name: handle.name,
+    path: path?.trim() || undefined,
     handle,
     updatedAt: new Date().toISOString(),
   }

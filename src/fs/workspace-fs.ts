@@ -1,5 +1,11 @@
 import { trace } from '../diagnostics'
-import { getSavedWorkspaceHandle, listFileProposals, saveWorkspaceHandle } from '../memory/app-db'
+import { isAbsoluteOsPath, isTetherServer } from '../mcp/mcp-client'
+import {
+  getSavedWorkspaceHandle,
+  listFileProposals,
+  listMcpServers,
+  saveWorkspaceHandle,
+} from '../memory/app-db'
 
 export interface WorkspaceFileEntry {
   path: string
@@ -42,18 +48,41 @@ const BINARY_EXTENSIONS = new Set([
 ])
 
 let activeDirectoryHandle: FileSystemDirectoryHandle | undefined
+let activeWorkspacePath: string | undefined
 const virtualFileSystem = new Map<string, string>()
 
-export function setWorkspaceDirectoryHandle(handle: FileSystemDirectoryHandle | undefined): void {
+export function setWorkspaceDirectoryHandle(
+  handle: FileSystemDirectoryHandle | undefined,
+  path?: string,
+): void {
   activeDirectoryHandle = handle
+  if (path && isAbsoluteOsPath(path)) {
+    activeWorkspacePath = path.trim().replace(/\\/g, '/')
+  }
 }
 
 export function getWorkspaceDirectoryHandle(): FileSystemDirectoryHandle | undefined {
   return activeDirectoryHandle
 }
 
+export function setActiveWorkspacePath(path: string | undefined): void {
+  if (path && isAbsoluteOsPath(path)) {
+    activeWorkspacePath = path.trim().replace(/\\/g, '/')
+  } else if (!path) {
+    activeWorkspacePath = undefined
+  }
+}
+
+export function getActiveWorkspacePath(): string | undefined {
+  return activeWorkspacePath
+}
+
 export function getActiveWorkspaceName(): string {
-  return activeDirectoryHandle?.name || 'localloop-workspace'
+  return (
+    activeDirectoryHandle?.name ||
+    (activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '') ||
+    'Workspace local'
+  )
 }
 
 export function sanitizeWorkspacePath(rawPath: unknown): string {
@@ -105,9 +134,53 @@ export function clearVirtualFiles(): void {
 }
 
 /**
+ * Resuelve o solicita al usuario la ruta física absoluta en el anfitrión para la carpeta vinculada.
+ */
+export async function resolveOrPromptWorkspacePath(folderName: string): Promise<string | undefined> {
+  const saved = await getSavedWorkspaceHandle().catch(() => null)
+  let suggested = saved?.path || activeWorkspacePath || ''
+
+  if (!suggested) {
+    const servers = await listMcpServers().catch(() => [])
+    const tether = servers.find((s) => isTetherServer(s))
+    if (tether?.workspace && isAbsoluteOsPath(tether.workspace)) {
+      suggested = tether.workspace.trim()
+    }
+  }
+
+  // Si la ruta sugerida termina con otra carpeta distinta a folderName,
+  // adaptamos el último segmento con folderName
+  if (suggested && isAbsoluteOsPath(suggested)) {
+    const normalized = suggested.replace(/\\/g, '/').replace(/\/+$/, '')
+    const parts = normalized.split('/')
+    if (parts.length > 1 && parts[parts.length - 1] !== folderName) {
+      parts[parts.length - 1] = folderName
+      suggested = parts.join('/')
+    }
+  }
+
+  if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+    const entered = window.prompt(
+      `Has seleccionado la carpeta local "${folderName}".\n\n` +
+      `Por favor, confirma o introduce la ruta física absoluta en tu sistema operativo ` +
+      `(requerida para Tether MCP y compilación CLI en el anfitrión):`,
+      suggested || `C:/.../${folderName}`,
+    )
+    if (entered && isAbsoluteOsPath(entered.trim())) {
+      return entered.trim().replace(/\\/g, '/')
+    }
+  }
+
+  return suggested && isAbsoluteOsPath(suggested) ? suggested : undefined
+}
+
+/**
  * Requests interactive access to a local folder using File System Access API (`window.showDirectoryPicker`).
  */
-export async function pickWorkspaceDirectory(): Promise<FileSystemDirectoryHandle | undefined> {
+export async function pickWorkspaceDirectory(options?: {
+  explicitPath?: string
+  promptForHostPath?: boolean
+}): Promise<FileSystemDirectoryHandle | undefined> {
   if (typeof window === 'undefined' || !('showDirectoryPicker' in window)) {
     throw new Error('Tu navegador no soporta File System Access API (window.showDirectoryPicker).')
   }
@@ -118,8 +191,22 @@ export async function pickWorkspaceDirectory(): Promise<FileSystemDirectoryHandl
   ).showDirectoryPicker
   const handle = await picker({ mode: 'readwrite' })
   activeDirectoryHandle = handle
-  await saveWorkspaceHandle(handle)
-  trace('fs.workspace.picked', { name: handle.name })
+
+  let resolvedPath = options?.explicitPath?.trim()
+  if (!resolvedPath && options?.promptForHostPath !== false) {
+    resolvedPath = await resolveOrPromptWorkspacePath(handle.name)
+  }
+
+  if (resolvedPath && isAbsoluteOsPath(resolvedPath)) {
+    activeWorkspacePath = resolvedPath.replace(/\\/g, '/')
+  }
+
+  if (activeWorkspacePath) {
+    ;(handle as any).path = activeWorkspacePath
+  }
+
+  await saveWorkspaceHandle(handle, 'active-workspace', activeWorkspacePath)
+  trace('fs.workspace.picked', { name: handle.name, path: activeWorkspacePath })
   return handle
 }
 
@@ -127,8 +214,11 @@ export async function pickWorkspaceDirectory(): Promise<FileSystemDirectoryHandl
  * Restores a previously saved `FileSystemDirectoryHandle` from IndexedDB if permissions are granted.
  */
 export async function restoreSavedWorkspaceDirectory(): Promise<FileSystemDirectoryHandle | undefined> {
+  const saved = await getSavedWorkspaceHandle().catch(() => null)
+  if (saved?.path && isAbsoluteOsPath(saved.path) && !activeWorkspacePath) {
+    activeWorkspacePath = saved.path.trim().replace(/\\/g, '/')
+  }
   if (activeDirectoryHandle) return activeDirectoryHandle
-  const saved = await getSavedWorkspaceHandle()
   if (!saved?.handle) return undefined
   try {
     const permHandle = saved.handle as unknown as {
@@ -139,10 +229,16 @@ export async function restoreSavedWorkspaceDirectory(): Promise<FileSystemDirect
       const state = await permHandle.queryPermission({ mode: 'readwrite' })
       if (state === 'granted') {
         activeDirectoryHandle = saved.handle
+        if (activeWorkspacePath) {
+          ;(saved.handle as any).path = activeWorkspacePath
+        }
         return saved.handle
       }
     } else {
       activeDirectoryHandle = saved.handle
+      if (activeWorkspacePath) {
+        ;(saved.handle as any).path = activeWorkspacePath
+      }
       return saved.handle
     }
   } catch {

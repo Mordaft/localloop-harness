@@ -1,6 +1,5 @@
 import { trace } from '../diagnostics'
 import { McpTransportType } from '../enums'
-import { getActiveWorkspaceName } from '../fs/workspace-fs'
 import type { OpenAiToolSpec } from '../llm/llm-client'
 import {
   addMcpServer,

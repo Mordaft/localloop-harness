@@ -7,7 +7,6 @@ import {
 } from '../config/brand-config'
 import { heroIcon } from '../config/heroicons'
 import { FsWriteMode, type FsWriteMode as FsWriteModeType } from '../enums'
-import { getActiveWorkspaceName } from '../fs/workspace-fs'
 import { formatText, t } from '../i18n'
 import { getLlmConfig, saveLlmConfig, testLlmConnection } from '../llm/llm-config'
 import {
