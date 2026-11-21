@@ -11,6 +11,7 @@ async function runDependencyEvaluationTests() {
     {
       sessionId: 888,
       threadId,
+      workspacePath: process.cwd().replace(/\\/g, '/'),
       messages: [{ role: 'user' as const, content: 'Sistema de facturación con pasarela y notificación' }],
     },
     threadConfig,

@@ -52,6 +52,8 @@ export {
   node_phase0_assess,
   node_phase0_ask_discovery,
   node_phase0_process_discovery,
+  CriticalWorkspacePathError,
+  resolveRequiredSessionWorkspacePath,
 } from './nodes/phase0-discovery'
 
 export {

@@ -618,6 +618,7 @@ export async function node_phase1_confirm_framework(state: SDLCStateType): Promi
         initiativeTitle,
         userText: contextInitiative,
         sessionId: state.sessionId,
+        workspacePath: state.workspacePath,
         onProposalCreated: callbacks?.onProposalCreated,
       })
     } else {

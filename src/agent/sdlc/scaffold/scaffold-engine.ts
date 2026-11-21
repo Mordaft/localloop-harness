@@ -81,6 +81,7 @@ export interface BuildScaffoldParams {
   contextInitiative?: string
   initiativeTitle?: string
   sessionId?: number
+  workspacePath?: string
   maxIterations?: number
   skipMaterialize?: boolean
   inferFromContext?: boolean
@@ -307,9 +308,22 @@ export function resolveValidationCommand(
     return customCommand.trim()
   }
   const isWin = isWindowsPlatform()
-  const setupCmd = isWin ? scaffold.lifecycle.setupCmd : scaffold.lifecycle.setupSh
-  if (setupCmd && !setupCmd.includes('No setup command defined') && setupCmd.trim().length > 0) {
-    return setupCmd
+  const rawSetupCmd = isWin ? scaffold.lifecycle.setupCmd : scaffold.lifecycle.setupSh
+  if (rawSetupCmd && !rawSetupCmd.includes('No setup command defined') && rawSetupCmd.trim().length > 0) {
+    const trimmed = rawSetupCmd.trim()
+    // Si contiene comandos por lotes de Windows con salto de línea (ej: @echo off\ncall npm install),
+    // extraer los comandos ejecutables reales para evitar errores de sintaxis en shells PTY de PowerShell
+    if (trimmed.includes('@echo off') || trimmed.includes('call ')) {
+      const directCmds = trimmed
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('@') && !l.startsWith('echo ') && !l.startsWith('exit '))
+        .map((l) => l.replace(/^call\s+/i, ''))
+      if (directCmds.length > 0) {
+        return directCmds.join(' && ')
+      }
+    }
+    return trimmed
   }
   const testCmd = isWin ? scaffold.lifecycle.testCmd : scaffold.lifecycle.testSh
   if (testCmd && testCmd !== 'test' && testCmd.trim().length > 0) {
@@ -329,10 +343,11 @@ async function executeValidationCommand(
     return await params.executeCommand(command)
   }
 
+  const wsPath = params.workspacePath || (params as any)?.workspace || params.authContext?.workspace
   const authContext: McpAuthConnectContext = {
     agentId: params.sessionId ? `localloop-session-${params.sessionId}` : 'localloop-scaffold-verifier',
     agentName: 'LocalLoop (Scaffold_Verifier)',
-    workspace: (params as any)?.workspace || 'localloop-workspace',
+    workspace: wsPath,
     sessionId: params.sessionId ? String(params.sessionId) : undefined,
     ...(params.authContext || {}),
   }
@@ -498,6 +513,22 @@ async function runIterativeScaffoldValidation(
 
     // Si falló y quedan iteraciones disponibles (máximo 3)
     if (attempt < maxIterations) {
+      const isInfraError = /\b(?:403\/404 session error|terminal session not found|failed to open PTY session|The directory name is invalid|ECONNREFUSED|connect ECONNREFUSED)\b/i.test(
+        `${lldValidation.reason} ${lastOutput}`,
+      )
+
+      if (isInfraError) {
+        trace('scaffold.validation.infra_error', {
+          command: validationCommand,
+          reason: lldValidation.reason,
+          output: lastOutput,
+        })
+        throw new ScaffoldViabilityError(
+          `Fallo crítico de infraestructura terminal al validar scaffolding: ${lldValidation.reason}. ` +
+          `Verifica que el daemon de Tether esté activo y que la ruta del workspace configurada sea accesible en el anfitrión.`,
+        )
+      }
+
       trace(`[Scaffold LLD] Fallo en validación (intento ${attempt}/${maxIterations}): ${lldValidation.reason}. Reajustando archivos con LLD...`)
       let repaired = false
 
@@ -518,7 +549,7 @@ async function runIterativeScaffoldValidation(
           const authContext: McpAuthConnectContext = params.authContext ?? {
             agentId: `localloop-session-${params.sessionId}`,
             agentName: 'LocalLoop (Scaffold_Repair_LLD)',
-            workspace: (params as any)?.workspace || 'localloop-workspace',
+            workspace: params.workspacePath || (params as any)?.workspace || '',
           }
           const mcpReport = await RuntimeSkillLoader.syncMcpCapabilities({ authContext }).catch(() => null)
           const hasContext7 = isContext7Available(mcpReport)

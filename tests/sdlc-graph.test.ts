@@ -1,5 +1,7 @@
+import assert from 'node:assert/strict'
 import './fixtures/presets'
 import { compiledSDLCGraph } from '../src/agent/sdlc-graph'
+import { CriticalWorkspacePathError } from '../src/agent/sdlc'
 import type { SDLCStateType } from '../src/agent/sdlc-state'
 import { RuntimeSkillLoader } from '../src/agent/skills/runtime-loader'
 import { SKILL_TREE } from '../src/agent/skills/skills-tree'
@@ -54,11 +56,34 @@ async function runSDLCGraphTests() {
   }
   console.log(`✓ RuntimeSkillLoader cargó quirúrgicamente las tools: ${resolved.tools.map((t) => t.function.name).join(', ')}`)
 
+  // 2b. Verificar error crítico si falta la ruta física del workspace en el anfitrión
+  console.log('[Test 2b] Verificando rechazo estricto si falta la ruta física del workspace en el anfitrión...')
+  await assert.rejects(
+    async () => {
+      await compiledSDLCGraph.invoke(
+        {
+          sessionId: 200,
+          threadId: 'thread-sdlc-missing-ws',
+          messages: [{ role: 'user' as const, content: 'Test sin workspace' }],
+        },
+        { configurable: { thread_id: 'thread-sdlc-missing-ws' } },
+      )
+    },
+    (err: any) => {
+      assert.strictEqual(err.name, 'CriticalWorkspacePathError')
+      return true
+    },
+    'Debe fallar de manera crítica si no se define la ruta obligatoria del workspace',
+  )
+  console.log('✓ Rechazo crítico validado ante ausencia de workspacePath.')
+
   // 3. Ejecutar el grafo de estados LangGraph
   console.log('[Test 3] Ejecutando grafo SDLC hasta la primera interrupción (HITL 1 - Fase 0)...')
+  const testWorkspacePath = process.cwd().replace(/\\/g, '/')
   const initialState = {
     sessionId: 201,
     threadId: 'thread-sdlc-201',
+    workspacePath: testWorkspacePath,
     messages: [{ role: 'user' as const, content: 'Quiero desarrollar un sistema de facturación' }],
   }
 

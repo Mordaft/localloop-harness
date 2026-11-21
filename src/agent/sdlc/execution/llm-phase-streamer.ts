@@ -138,7 +138,7 @@ export async function streamLlmPhase(params: {
   const mcpAuthContext = {
     agentId: sessionId ? `localloop-session-${sessionId}` : 'localloop-sdlc-agent',
     agentName: `LocalLoop (${effectiveRoleId})`,
-    workspace: getActiveWorkspaceName() || 'localloop-workspace',
+    workspace: getActiveWorkspaceName() || '',
     onAuthStatus: (msg: string) => {
       if (callbacks && sessionId) {
         callbacks.onThinking?.({

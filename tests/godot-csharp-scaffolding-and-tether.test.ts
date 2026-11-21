@@ -174,6 +174,7 @@ async function runGodotCsharpTests() {
   const godotState = {
     sessionId: 995,
     threadId: threadConfig.configurable.thread_id,
+    workspacePath: process.cwd().replace(/\\/g, '/'),
     discoveryInputValid: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data: {

@@ -238,6 +238,10 @@ export interface RcaDiagnosis {
 export const SDLCState = Annotation.Root({
   sessionId: Annotation<number>,
   threadId: Annotation<string>,
+  workspacePath: Annotation<string | undefined>({
+    reducer: (curr, next) => (next !== undefined ? next : curr),
+    default: () => undefined,
+  }),
 
   currentPhase: Annotation<SdlcPhase>({
     reducer: (_, next) => next,

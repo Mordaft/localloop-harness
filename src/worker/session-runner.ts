@@ -178,6 +178,7 @@ export async function executeSessionTurn(
         const updatePayload: Record<string, any> = {
           sessionId,
           threadId: session.threadId,
+          workspacePath: session.workspacePath,
           messages: historyMessages,
         }
         const lowerPrompt = userPrompt.toLowerCase()
@@ -231,6 +232,7 @@ export async function executeSessionTurn(
           {
             sessionId,
             threadId: session.threadId,
+            workspacePath: session.workspacePath,
             messages: historyMessages,
             ...(phase0Data ? { phase0Data } : {}),
             ...(phase0Data?.step2?.marketStandard ? { marketArchStandard: phase0Data.step2.marketStandard } : {}),

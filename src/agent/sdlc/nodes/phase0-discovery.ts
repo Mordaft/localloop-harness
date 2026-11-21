@@ -1,11 +1,77 @@
 import { trace } from '../../../diagnostics'
 import { getActiveWorkspaceName } from '../../../fs/workspace-fs'
 import { getPersistentEngram, saveSdlcPhaseArtifact } from '../../../memory/engram-memory'
-import { updateSessionMetrics } from '../../../memory/app-db'
+import { appendSessionMessage, getSessionById, listMcpServers, updateSessionMetrics } from '../../../memory/app-db'
 import { SessionStatus } from '../../../enums'
 import { getSessionCallbacks } from '../../agent-graph'
 import { RuntimeSkillLoader } from '../../skills/runtime-loader'
+import { isAbsoluteOsPath, isTetherServer } from '../../../mcp/mcp-client'
 import type { BusinessUseCase, SDLCStateType } from '../../sdlc-state'
+
+export class CriticalWorkspacePathError extends Error {
+  public readonly details: {
+    sessionId?: number
+    providedPath?: string
+    reason: string
+  }
+  constructor(details: { sessionId?: number; providedPath?: string; reason: string }) {
+    super(
+      `[CRITICAL ERROR] No se puede iniciar el ciclo de desarrollo en la sesión #${details.sessionId ?? 'N/A'}. ` +
+      `La ruta física del workspace en el anfitrión no está definida o es inválida: "${details.providedPath ?? 'undefined'}". ` +
+      `Detalle: ${details.reason}`,
+    )
+    this.name = 'CriticalWorkspacePathError'
+    this.details = details
+  }
+}
+
+/**
+ * Resuelve y valida obligatoriamente la ruta física del workspace en el anfitrión.
+ * Si no está definida o no es una ruta absoluta del sistema operativo, arroja CriticalWorkspacePathError.
+ */
+export async function resolveRequiredSessionWorkspacePath(
+  sessionId?: number,
+  statePath?: string,
+): Promise<string> {
+  let resolvedWsPath = statePath?.trim()
+  if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {
+    if (sessionId) {
+      const sess = await getSessionById(sessionId).catch(() => null)
+      if (sess?.workspacePath && isAbsoluteOsPath(sess.workspacePath)) {
+        resolvedWsPath = sess.workspacePath.trim()
+      }
+    }
+  }
+  if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {
+    const servers = await listMcpServers().catch(() => [])
+    const tether = servers.find((s) => isTetherServer(s))
+    if (tether?.workspace && isAbsoluteOsPath(tether.workspace)) {
+      resolvedWsPath = tether.workspace.trim()
+    }
+  }
+
+  if (!resolvedWsPath || !isAbsoluteOsPath(resolvedWsPath)) {
+    const errMsg = `[CRITICAL ERROR] Error Crítico de Workflow: La sesión #${sessionId ?? 'N/A'} no tiene una ruta de workspace válida en el anfitrión. No se puede generar nada sin esta ruta obligatoria. Detalle: ruta="${resolvedWsPath ?? 'undefined'}"`
+    trace('[SDLCGraph] ' + errMsg)
+    if (sessionId) {
+      await updateSessionMetrics(sessionId, {
+        status: SessionStatus.ERROR,
+      }).catch(() => {})
+      await appendSessionMessage({
+        sessionId,
+        role: 'system',
+        content: `🚨 **Error Crítico de Configuración del Workspace**\n\n${errMsg}\n\nPor favor, vincula o define la ruta absoluta del workspace local en la sesión antes de iniciar el desarrollo.`,
+      }).catch(() => {})
+    }
+    throw new CriticalWorkspacePathError({
+      sessionId,
+      providedPath: resolvedWsPath,
+      reason: 'No hay ruta física de workspace absoluta definida para esta sesión.',
+    })
+  }
+
+  return resolvedWsPath
+}
 
 /**
  * NODO 0.1: Evaluación de Entrada Inicial
@@ -14,6 +80,10 @@ import type { BusinessUseCase, SDLCStateType } from '../../sdlc-state'
 export async function node_phase0_assess(state: SDLCStateType): Promise<Partial<SDLCStateType>> {
   trace('[SDLCGraph] Evaluando rigor del input inicial...')
   const callbacks = state.sessionId ? getSessionCallbacks(state.sessionId) : undefined
+
+  // 1. Verificación obligatoria de la ruta física del workspace en el anfitrión
+  const resolvedWsPath = await resolveRequiredSessionWorkspacePath(state.sessionId, state.workspacePath)
+
   const extraUrls =
     state.mcpServerConfig?.url && state.mcpServerConfig.url.trim().length > 0
       ? [state.mcpServerConfig.url.trim()]
@@ -23,7 +93,8 @@ export async function node_phase0_assess(state: SDLCStateType): Promise<Partial<
     authContext: {
       agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-sdlc-agent',
       agentName: 'LocalLoop (EnterpriseArch_MCP_Connector)',
-      workspace: getActiveWorkspaceName() || 'localloop-workspace',
+      workspace: resolvedWsPath,
+      sessionId: state.sessionId ? String(state.sessionId) : undefined,
       onAuthStatus: (msg) => {
         if (callbacks && state.sessionId) {
           callbacks.onThinking?.({
@@ -61,6 +132,7 @@ export async function node_phase0_assess(state: SDLCStateType): Promise<Partial<
     return {
       discoveryInputValid: true,
       currentPhase: '1_STRATEGY_AND_PLAN',
+      workspacePath: resolvedWsPath,
     }
   }
 
@@ -68,6 +140,7 @@ export async function node_phase0_assess(state: SDLCStateType): Promise<Partial<
     discoveryInputValid: false,
     activeSkill: 'ProjectRigor_Interviewer',
     currentPhase: '0_DISCOVERY_RIGOR',
+    workspacePath: resolvedWsPath,
   }
 }
 
@@ -286,7 +359,7 @@ export async function node_phase0_process_discovery(state: SDLCStateType): Promi
     authContext: {
       agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-sdlc-agent',
       agentName: 'LocalLoop (EnterpriseArch_MCP_Connector)',
-      workspace: getActiveWorkspaceName() || 'localloop-workspace',
+      workspace: state.workspacePath || getActiveWorkspaceName() || '',
       onAuthStatus: (msg) => {
         if (callbacks && state.sessionId) {
           callbacks.onThinking?.({

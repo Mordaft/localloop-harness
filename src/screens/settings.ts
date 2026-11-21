@@ -45,8 +45,7 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
   )
 
   const tetherUrl = tetherServer?.url || 'http://localhost:7432/sse'
-  const tetherWorkspace =
-    tetherServer?.workspace || getActiveWorkspaceName() || 'localloop-workspace'
+  const tetherWorkspace = tetherServer?.workspace || ''
   const isTetherConnected =
     tetherServer?.authStatus === 'authorized' || Boolean(tetherServer?.authToken)
   const isTetherPending = tetherServer?.authStatus === 'pending_approval'
@@ -595,19 +594,19 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
     const urlInput = root.querySelector<HTMLInputElement>('#tether-url')
     const workspaceInput = root.querySelector<HTMLInputElement>('#tether-workspace')
     const url = urlInput?.value.trim() || 'http://localhost:7432/sse'
-    const ws = workspaceInput?.value.trim() || getActiveWorkspaceName() || 'localloop-workspace'
+    const ws = workspaceInput?.value.trim() || ''
 
     if (tetherServer?.id) {
       await updateMcpServer(tetherServer.id, {
         name: 'tether',
         url,
-        workspace: ws,
+        workspace: ws || undefined,
       })
     } else {
       await addMcpServer({
         name: 'tether',
         url,
-        workspace: ws,
+        workspace: ws || undefined,
       })
     }
     clearMcpCapabilityCache()
@@ -620,7 +619,7 @@ export async function renderSettingsScreen(root: HTMLElement, rerender: () => vo
     const urlInput = root.querySelector<HTMLInputElement>('#tether-url')
     const workspaceInput = root.querySelector<HTMLInputElement>('#tether-workspace')
     const url = urlInput?.value.trim() || 'http://localhost:7432/sse'
-    const ws = workspaceInput?.value.trim() || getActiveWorkspaceName() || 'localloop-workspace'
+    const ws = workspaceInput?.value.trim() || ''
 
     let target = tetherServer
     if (!target) {

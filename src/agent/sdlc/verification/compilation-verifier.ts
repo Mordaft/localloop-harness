@@ -139,7 +139,7 @@ export async function verifyAndRepairApplicationCompilation(
   const authContext: McpAuthConnectContext = {
     agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-verifier',
     agentName: 'LocalLoop (Compilation_Verifier)',
-    workspace: (state.mcpServerConfig as any)?.workspace || 'localloop-workspace',
+    workspace: state.workspacePath || (state.mcpServerConfig as any)?.workspace || '',
     sessionId: state.sessionId ? String(state.sessionId) : undefined,
     ...(options?.authContext || {}),
   }

@@ -81,7 +81,29 @@ const inFlightAuthPromises = new Map<string, Promise<string | null>>()
 
 let cachedCapabilityReport: McpCapabilityAssignmentReport | null = null
 let cachedCapabilityTimestamp = 0
-const CAPABILITY_CACHE_TTL_MS = 15_000
+const CAPABILITY_CACHE_TTL_MS = 300_000 // 5 minutos de validez de caché de capacidades
+
+/**
+ * Determina si una ruta es una ruta absoluta válida del sistema operativo anfitrión.
+ */
+export function isAbsoluteOsPath(val: unknown): boolean {
+  if (typeof val !== 'string') return false
+  const trimmed = val.trim()
+  if (!trimmed || trimmed === 'localloop-workspace' || trimmed === 'workspace') return false
+  return /^([a-zA-Z]:[\\/]|\\\\|\/(?!workspace\b)[a-zA-Z0-9._-]+)/.test(trimmed)
+}
+
+/**
+ * Sanitiza rutas para el entorno confinado de Tether:
+ * - Una vez abierta la sesión, Tether asume rutas estrictamente relativas al workspace.
+ * - Elimina letras de unidad, barras iniciales y traversals ('..').
+ */
+export function sanitizePathForTetherSandbox(pathOrDir: string): string {
+  if (!pathOrDir) return '.'
+  let clean = pathOrDir.replace(/^[a-zA-Z]:[\\/]/, '').replace(/^[\\/]+/, '')
+  const segments = clean.split(/[\\/]+/).filter((seg) => seg && seg !== '..' && seg !== '.')
+  return segments.length > 0 ? segments.join('/') : '.'
+}
 
 const CAPABILITY_RULES: Array<{
   category: Exclude<McpCapabilityCategory, 'GENERAL_PURPOSE'>
@@ -703,12 +725,8 @@ export async function authenticateMcpServer(
 
     const agentId = (context?.agentId || server.agentId || `localloop-agent-${generatedGuid}`).trim()
     const agentName = (context?.agentName || server.agentName || 'LocalLoop SDLC Agent').trim()
-    const workspace = (
-      context?.workspace ||
-      server.workspace ||
-      getActiveWorkspaceName() ||
-      'localloop-workspace'
-    ).trim()
+    const rawWs = (context?.workspace || server.workspace || '').trim()
+    const workspace = isAbsoluteOsPath(rawWs) ? rawWs : rawWs
 
     const candidateUrls = buildCandidateMcpUrls(server.url, server.name)
     const candidateAuthUrls = Array.from(
@@ -1365,7 +1383,7 @@ export async function ensureMcpServerRegistered(
     name: inferredName,
     url: cleanUrl,
     transport: McpTransportType.SSE,
-    workspace: workspace || getActiveWorkspaceName() || 'localloop-workspace',
+    workspace: workspace?.trim() || undefined,
   })
   cachedCapabilityReport = null
 
@@ -1375,7 +1393,7 @@ export async function ensureMcpServerRegistered(
     url: cleanUrl,
     transport: McpTransportType.SSE,
     enabled: true,
-    workspace: workspace || getActiveWorkspaceName() || 'localloop-workspace',
+    workspace: workspace?.trim() || undefined,
     createdAt: new Date().toISOString(),
   }
 }
@@ -1490,16 +1508,30 @@ export async function callMcpTool(
     // Sanitize relative or virtual workspace directory arguments (e.g. "Prueba 12", "workspace")
     // that cause Windows PTY / CreateProcess to fail with "The directory name is invalid"
     const sanitizedArgs: Record<string, unknown> = { ...args }
-    const isAbsoluteOsPath = (val: string) => /^([a-zA-Z]:[\\/]|\\\\|\/(?!workspace\b)[a-zA-Z0-9._-]+)/.test(val.trim())
+    const isTetherTool =
+      tool.serverName.toLowerCase().includes('tether') ||
+      tool.qualifiedName.toLowerCase().includes('tether')
+    const isSessionOpen = /\b(session_open|open_session|create_session)\b/i.test(tool.name)
+
     const serverAbsWorkspace =
       matchedServer.workspace && isAbsoluteOsPath(matchedServer.workspace)
         ? matchedServer.workspace.trim()
         : undefined
 
-    for (const dirKey of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
+    for (const dirKey of ['workspace', 'cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
       if (typeof sanitizedArgs[dirKey] === 'string') {
         const rawDir = String(sanitizedArgs[dirKey]).trim()
-        if (!rawDir || !isAbsoluteOsPath(rawDir)) {
+        if (isTetherTool) {
+          if (isSessionOpen) {
+            // En session_open se requiere la ruta absoluta del workspace en el anfitrión
+            if (!isAbsoluteOsPath(rawDir) && serverAbsWorkspace) {
+              sanitizedArgs[dirKey] = serverAbsWorkspace
+            }
+          } else {
+            // Fuera de session_open, Tether opera confinado en el workspace y exige rutas relativas sin '..'
+            sanitizedArgs[dirKey] = sanitizePathForTetherSandbox(rawDir)
+          }
+        } else if (!rawDir || !isAbsoluteOsPath(rawDir)) {
           if (serverAbsWorkspace) {
             sanitizedArgs[dirKey] = serverAbsWorkspace
           } else {
@@ -1525,7 +1557,7 @@ export async function callMcpTool(
       payloadStr.includes('directory name is invalid')
     ) {
       const retryArgs: Record<string, unknown> = { ...sanitizedArgs }
-      for (const k of ['cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir', 'path']) {
+      for (const k of ['workspace', 'cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir', 'path']) {
         delete retryArgs[k]
       }
       const retryPayload = await invokeMcpServerRpc(
@@ -1624,18 +1656,24 @@ export function analyzeMcpToolCapabilities(tool: McpToolDefinition): AnalyzedMcp
     matchedSignals.push('GENERAL_PURPOSE:fallback')
   }
 
+  // Las herramientas de ciclo de vida de sesión PTY (session_open, session_close, session_screen, session_input)
+  // son de gestión interna de LocalLoop y NUNCA deben asignarse a los roles públicos del LLM.
+  const isSessionControl = /\b(session_open|session_close|session_list|session_input|session_screen|open_session|close_session|create_session)\b/i.test(tool.name)
+
   const assignedRoles: string[] = []
-  for (const role of ROLE_CAPABILITY_MATRIX) {
-    if (role.acceptAll) {
-      assignedRoles.push(role.roleId)
-      continue
-    }
+  if (!isSessionControl) {
+    for (const role of ROLE_CAPABILITY_MATRIX) {
+      if (role.acceptAll) {
+        assignedRoles.push(role.roleId)
+        continue
+      }
 
-    const matchesPrimary = matchedCategories.some((cat) => role.primaryCategories.includes(cat))
-    const matchesSecondary = matchedCategories.some((cat) => role.secondaryCategories.includes(cat))
+      const matchesPrimary = matchedCategories.some((cat) => role.primaryCategories.includes(cat))
+      const matchesSecondary = matchedCategories.some((cat) => role.secondaryCategories.includes(cat))
 
-    if (matchesPrimary || matchesSecondary) {
-      assignedRoles.push(role.roleId)
+      if (matchesPrimary || matchesSecondary) {
+        assignedRoles.push(role.roleId)
+      }
     }
   }
 
@@ -1992,7 +2030,13 @@ export async function ensureTetherSession(
   )
 
   if (sessionOpenTool) {
-    const ws = authContext?.workspace || getActiveWorkspaceName() || 'localloop-workspace'
+    const ws = authContext?.workspace?.trim()
+    if (!ws) {
+      throw new Error(
+        '[Tether Error Crítico] No se puede abrir sesión en Tether: la ruta física del workspace en el anfitrión es obligatoria y no está definida en la sesión de LocalLoop.',
+      )
+    }
+
     const openArgs: Record<string, unknown> = {}
     const props = (sessionOpenTool.inputSchema?.properties as Record<string, unknown>) || {}
     if ('workspace' in props) openArgs.workspace = ws
@@ -2007,16 +2051,26 @@ export async function ensureTetherSession(
       try {
         const parsed = JSON.parse(rawRes)
         if (typeof parsed === 'object' && parsed !== null) {
+          if (parsed.isError === true) {
+            const errDetail = Array.isArray(parsed.content)
+              ? parsed.content.map((c: any) => c.text || '').join(' ')
+              : parsed.error || JSON.stringify(parsed)
+            throw new Error(`Tether session_open falló en "${ws}": ${errDetail}`)
+          }
           if (typeof parsed.session_id === 'string') extractedSessionId = parsed.session_id
           if (typeof parsed.sessionId === 'string') extractedSessionId = parsed.sessionId
           if (typeof parsed.id === 'string') extractedSessionId = parsed.id
           if (!extractedSessionId && Array.isArray(parsed.content)) {
             const txt = parsed.content.map((c: any) => c.text || '').join(' ')
+            if (/\b(?:failed to open|The directory name is invalid|error)\b/i.test(txt)) {
+              throw new Error(`Tether session_open falló: ${txt}`)
+            }
             const match = /(?:session_id|sessionId|session)[:=]\s*["']?([a-zA-Z0-9_-]+)/i.exec(txt)
             if (match) extractedSessionId = match[1]
           }
         }
-      } catch {
+      } catch (e) {
+        if (e instanceof Error && e.message.includes('Tether session_open falló')) throw e
         const match = /(?:session_id|sessionId|session)[:=]\s*["']?([a-zA-Z0-9_-]+)/i.exec(rawRes)
         if (match) extractedSessionId = match[1]
       }
@@ -2025,31 +2079,32 @@ export async function ensureTetherSession(
         if (originKey) tetherActiveSessionCache.set(originKey, extractedSessionId)
         return extractedSessionId
       }
+
+      throw new Error(`Tether session_open no devolvió un session_id válido. Respuesta recibida: ${rawRes}`)
     } catch (err) {
       trace('tether.session_open.failed', { error: err instanceof Error ? err.message : String(err) })
+      throw err // Sin fallbacks sintéticos ficticios
     }
   }
 
-  // Fallback a identificador derivado del contexto o generado
-  const fallbackId =
-    authContext?.sessionId ||
-    authContext?.agentId ||
-    `localloop-session-${Date.now().toString(36)}`
+  if (authContext?.sessionId) {
+    if (originKey) tetherActiveSessionCache.set(originKey, authContext.sessionId)
+    return authContext.sessionId
+  }
 
-  if (originKey) tetherActiveSessionCache.set(originKey, fallbackId)
-  return fallbackId
+  throw new Error('[Tether Error Crítico] No se encontró herramienta session_open y no hay sessionId activo.')
 }
 
 /**
  * Localiza la mejor herramienta MCP disponible para ejecución CLI en terminal host (priorizando Tether).
- * Excluye herramientas de ciclo de vida de sesiones (session_open, session_close).
+ * Excluye herramientas de ciclo de vida de sesiones (session_open, session_close, session_input, session_screen).
  */
 export function findCliExecutionTool(report?: McpCapabilityAssignmentReport | null): McpToolDefinition | null {
   const rep = report ?? getCachedMcpCapabilityReport()
   if (!rep || rep.tools.length === 0) return null
 
   const isSessionControlTool = (name: string) =>
-    /\b(session_open|session_close|session_list|open_session|close_session|create_session)\b/i.test(name)
+    /\b(session_open|session_close|session_list|session_input|session_screen|open_session|close_session|create_session)\b/i.test(name)
 
   const isExplicitExecTool = (name: string, props?: Record<string, unknown>) => {
     if (isSessionControlTool(name)) return false
@@ -2217,12 +2272,25 @@ export async function executeCliViaMcp(
     args.agentId = authContext?.agentId || 'localloop-agent'
   }
 
-  // 4. Asignar workspace / cwd si el esquema lo define
-  const ws = authContext?.workspace || getActiveWorkspaceName() || 'localloop-workspace'
-  if ('workspace' in props) args.workspace = ws
-  if ('cwd' in props && !('cwd' in args)) args.cwd = ws
-  if ('workdir' in props) args.workdir = ws
-  if ('directory' in props) args.directory = ws
+  // 4. Confinamiento de Tether:
+  // Para Tether, una vez establecida la sesión en session_open, Tether se ancla en esa carpeta física.
+  // A partir de ese momento, NUNCA inyectar 'workspace' ni 'cwd' con rutas absolutas.
+  // Cualquier subcarpeta debe ser estrictamente relativa al workspace y sin '..'.
+  if (!isTether) {
+    const ws = authContext?.workspace
+    if (ws) {
+      if ('workspace' in props) args.workspace = ws
+      if ('cwd' in props && !('cwd' in args)) args.cwd = ws
+      if ('workdir' in props) args.workdir = ws
+      if ('directory' in props) args.directory = ws
+    }
+  } else {
+    for (const dirKey of ['cwd', 'directory', 'workdir', 'workingDirectory', 'path']) {
+      if (typeof args[dirKey] === 'string') {
+        args[dirKey] = sanitizePathForTetherSandbox(String(args[dirKey]))
+      }
+    }
+  }
 
   const parseExecutionResult = (rawOutput: unknown): {
     exitCode: number
@@ -2298,22 +2366,27 @@ export async function executeCliViaMcp(
         reason: text,
       })
 
-      const freshSid = await ensureTetherSession(cliTool.serverUrl, authContext, null, {
-        forceNew: true,
-      }).catch(() => '')
+      try {
+        const freshSid = await ensureTetherSession(cliTool.serverUrl, authContext, null, {
+          forceNew: true,
+        })
 
-      const effectiveSid = freshSid || `localloop-session-${Date.now().toString(36)}`
-      if ('session_id' in props || isTether) args.session_id = effectiveSid
-      if ('sessionId' in props) args.sessionId = effectiveSid
-      if ('session' in props) args.session = effectiveSid
+        if ('session_id' in props || isTether) args.session_id = freshSid
+        if ('sessionId' in props) args.sessionId = freshSid
+        if ('session' in props) args.session = freshSid
 
-      rawOutput = await callMcpTool(cliTool, args, authContext)
-      const retried = parseExecutionResult(rawOutput)
-      exitCode = retried.exitCode
-      text = retried.text
-      isMcpError = retried.isMcpError
-      staticCheck = detectStaticErrorSignals(text, exitCode)
-      hasErrorSignals = exitCode !== 0 || isMcpError || staticCheck.hasErrors
+        rawOutput = await callMcpTool(cliTool, args, authContext)
+        const retried = parseExecutionResult(rawOutput)
+        exitCode = retried.exitCode
+        text = retried.text
+        isMcpError = retried.isMcpError
+        staticCheck = detectStaticErrorSignals(text, exitCode)
+        hasErrorSignals = exitCode !== 0 || isMcpError || staticCheck.hasErrors
+      } catch (retryErr) {
+        trace('tether.execute.retry_session_failed', {
+          error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+        })
+      }
     }
 
     const elapsedMs = Date.now() - startTime

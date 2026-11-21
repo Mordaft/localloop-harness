@@ -19,6 +19,7 @@ export interface AgentSession {
   title: string
   goal: string
   workspaceName: string
+  workspacePath?: string
   skill: string
   status: SessionStatusType
   currentPhase?: SdlcPhase
@@ -149,6 +150,7 @@ export async function createSession(input: {
   title: string
   goal: string
   workspaceName?: string
+  workspacePath?: string
   skill?: string
   threadId?: string
 }): Promise<number> {
@@ -160,6 +162,7 @@ export async function createSession(input: {
     title: input.title.trim(),
     goal: input.goal.trim(),
     workspaceName: input.workspaceName?.trim() || 'Workspace local',
+    workspacePath: input.workspacePath?.trim() || undefined,
     skill: input.skill || 'ProjectRigor_Interviewer',
     status: SessionStatus.IDLE,
     turnsUsed: 0,
@@ -205,7 +208,7 @@ export async function updateSessionTitle(id: number, title: string): Promise<voi
 
 export async function updateSessionMetrics(
   id: number,
-  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model' | 'title' | 'skill' | 'currentPhase' | 'phase0Data'>>,
+  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'workspacePath' | 'model' | 'title' | 'skill' | 'currentPhase' | 'phase0Data'>>,
 ): Promise<void> {
   const updated = new Date().toISOString()
   if (database) {

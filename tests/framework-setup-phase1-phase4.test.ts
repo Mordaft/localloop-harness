@@ -15,9 +15,11 @@ async function runFrameworkSetupTests() {
 
   // 1. Iniciar con Fase 0 válida para entrar directamente a Fase 1
   console.log('[Test 1] Iniciando SDLC Graph hasta la pausa interactiva de Fase 1...')
+  const testWs = process.cwd().replace(/\\/g, '/')
   const p0State = {
     sessionId: 901,
     threadId: threadConfig.configurable.thread_id,
+    workspacePath: testWs,
     discoveryInputValid: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data: {
@@ -199,6 +201,7 @@ async function runFrameworkSetupTests() {
   const tetrisState = {
     sessionId: 902,
     threadId: tetrisThreadConfig.configurable.thread_id,
+    workspacePath: testWs,
     discoveryInputValid: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data: {

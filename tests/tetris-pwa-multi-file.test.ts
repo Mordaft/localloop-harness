@@ -19,6 +19,7 @@ async function runTetrisPwaTests() {
     {
       sessionId,
       threadId,
+      workspacePath: process.cwd().replace(/\\/g, '/'),
       messages: [{ role: 'user', content: userPrompt }],
     },
     threadConfig,

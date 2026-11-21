@@ -530,6 +530,7 @@ async function runTests() {
             {
               sessionId: 999,
               threadId: `thread-offline-llm-${Date.now()}`,
+              workspacePath: process.cwd().replace(/\\/g, '/'),
               discoveryInputValid: true,
               marketArchStandard: 'CLEAN_ARCHITECTURE',
               useCases: [

@@ -130,6 +130,7 @@ async function runUniversalScaffoldingTests() {
   const goSdlcState = {
     sessionId: 990,
     threadId: threadConfig.configurable.thread_id,
+    workspacePath: process.cwd().replace(/\\/g, '/'),
     discoveryInputValid: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data: {
@@ -269,6 +270,7 @@ async function runUniversalScaffoldingTests() {
   const webDexieState = {
     sessionId: 991,
     threadId: webThreadConfig.configurable.thread_id,
+    workspacePath: process.cwd().replace(/\\/g, '/'),
     discoveryInputValid: true,
     marketArchStandard: 'C4_AND_CLEAN_ARCHITECTURE',
     phase0Data: {
