@@ -120,6 +120,11 @@ export async function streamLlmPhase(params: {
   toolCalls: ParsedToolCall[]
   subagentDeliverables: SubagentComponentDeliverable[]
   usedFallback?: boolean
+  tokenUsage: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
 }> {
   const { sessionId, phaseName, sdlcPhase, systemPrompt, userPrompt, defaultFallback } = params
   const callbacks = sessionId ? getSessionCallbacks(sessionId) : undefined
@@ -211,6 +216,8 @@ export async function streamLlmPhase(params: {
 
   let accumulatedContent = ''
   let accumulatedThought = ''
+  let totalPhasePromptTokens = 0
+  let totalPhaseCompletionTokens = 0
   const allExecutedToolCalls: ParsedToolCall[] = []
   const subagentDeliverables: SubagentComponentDeliverable[] = []
 
@@ -235,6 +242,8 @@ export async function streamLlmPhase(params: {
               phase: 'thinking',
               sdlcPhase,
             })
+            const currentPrompt = totalPhasePromptTokens || Math.max(1, Math.ceil((enrichedSystemPrompt.length + userPrompt.length) / 4))
+            const currentCompletion = totalPhaseCompletionTokens + Math.max(1, Math.ceil((accumulatedContent.length + accumulatedThought.length) / 4))
             callbacks?.onStreamChunk?.({
               sessionId,
               contentSoFar: accumulatedContent,
@@ -242,12 +251,19 @@ export async function streamLlmPhase(params: {
               thought,
               phase: phaseName,
               sdlcPhase,
+              tokenUsage: {
+                promptTokens: currentPrompt,
+                completionTokens: currentCompletion,
+                totalTokens: currentPrompt + currentCompletion,
+              },
             })
           }
         },
         onContentDelta: (contentSoFar, delta) => {
           accumulatedContent = contentSoFar
           if (sessionId) {
+            const currentPrompt = totalPhasePromptTokens || Math.max(1, Math.ceil((enrichedSystemPrompt.length + userPrompt.length) / 4))
+            const currentCompletion = totalPhaseCompletionTokens + Math.max(1, Math.ceil((contentSoFar.length + accumulatedThought.length) / 4))
             callbacks?.onStreamChunk?.({
               sessionId,
               contentSoFar,
@@ -255,12 +271,20 @@ export async function streamLlmPhase(params: {
               thought: accumulatedThought,
               phase: phaseName,
               sdlcPhase,
+              tokenUsage: {
+                promptTokens: currentPrompt,
+                completionTokens: currentCompletion,
+                totalTokens: currentPrompt + currentCompletion,
+              },
             })
           }
         },
         signal: callbacks?.signal,
         requestTimeoutMs: 35000,
       })
+
+      totalPhasePromptTokens += (response.promptTokens || 0)
+      totalPhaseCompletionTokens += (response.completionTokens || 0)
 
       if (response.contentBuffer.trim().length > 0) {
         accumulatedContent = response.contentBuffer.trim()
@@ -659,6 +683,11 @@ export async function streamLlmPhase(params: {
         toolCalls: allExecutedToolCalls,
         subagentDeliverables,
         usedFallback: false,
+        tokenUsage: {
+          promptTokens: totalPhasePromptTokens,
+          completionTokens: totalPhaseCompletionTokens,
+          totalTokens: totalPhasePromptTokens + totalPhaseCompletionTokens,
+        },
       }
       if (sessionId) {
         try {
@@ -695,6 +724,10 @@ export async function streamLlmPhase(params: {
 
   // Generador fallback (solo para pruebas deterministas offline cuando requireLiveLlm es false)
   const fallback = defaultFallback()
+  const fallbackPromptTokens = Math.max(1, Math.ceil((enrichedSystemPrompt.length + userPrompt.length) / 4))
+  const fallbackCompletionTokens = Math.max(1, Math.ceil((fallback.content.length + (fallback.thought?.length || 0)) / 4))
+  const fallbackTotalTokens = fallbackPromptTokens + fallbackCompletionTokens
+
   if (sessionId && callbacks?.onStreamChunk) {
     const lines = fallback.content.split('\n')
     let current = ''
@@ -707,6 +740,11 @@ export async function streamLlmPhase(params: {
         thought: fallback.thought,
         phase: phaseName,
         sdlcPhase,
+        tokenUsage: {
+          promptTokens: fallbackPromptTokens,
+          completionTokens: Math.max(1, Math.ceil(current.length / 4)),
+          totalTokens: fallbackPromptTokens + Math.max(1, Math.ceil(current.length / 4)),
+        },
       })
       await new Promise((r) => setTimeout(r, 20))
     }
@@ -733,5 +771,10 @@ export async function streamLlmPhase(params: {
     toolCalls: [],
     subagentDeliverables: [],
     usedFallback: true,
+    tokenUsage: {
+      promptTokens: fallbackPromptTokens,
+      completionTokens: fallbackCompletionTokens,
+      totalTokens: fallbackTotalTokens,
+    },
   }
 }

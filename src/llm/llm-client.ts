@@ -112,6 +112,9 @@ export interface LlmStreamResponse {
   finishReason: string | null
   reasoningChars: number
   estimatedTokens: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
 }
 
 const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 90_000
@@ -352,6 +355,8 @@ export async function streamChatCompletion(params: {
     let finishReason: string | null = null
     let reasoningChars = 0
     let accumulatedThought = ''
+    let usagePromptTokens = 0
+    let usageCompletionTokens = 0
     let usageTotalTokens = 0
 
     let inThinkTag = false
@@ -443,8 +448,16 @@ export async function streamChatCompletion(params: {
     }
 
     function handleParsedChunk(parsed: ChatCompletionChunk) {
-      if (parsed.usage?.total_tokens) {
-        usageTotalTokens = parsed.usage.total_tokens
+      if (parsed.usage) {
+        if (typeof parsed.usage.prompt_tokens === 'number') {
+          usagePromptTokens = parsed.usage.prompt_tokens
+        }
+        if (typeof parsed.usage.completion_tokens === 'number') {
+          usageCompletionTokens = parsed.usage.completion_tokens
+        }
+        if (typeof parsed.usage.total_tokens === 'number') {
+          usageTotalTokens = parsed.usage.total_tokens
+        }
       }
       const choice = parsed.choices?.[0]
       if (!choice) return
@@ -593,10 +606,16 @@ export async function streamChatCompletion(params: {
       }))
       .filter((tc) => tc.name.length > 0)
 
-    const estimatedTokens =
+    const promptTokens =
+      usagePromptTokens > 0 ? usagePromptTokens : estimateMessageTokens(messages, '')
+    const completionTokens =
+      usageCompletionTokens > 0
+        ? usageCompletionTokens
+        : Math.max(1, Math.ceil((contentBuffer.length + accumulatedThought.length) / 4))
+    const totalTokens =
       usageTotalTokens > 0
         ? usageTotalTokens
-        : estimateMessageTokens(messages, contentBuffer + accumulatedThought)
+        : promptTokens + completionTokens
 
     trace('llm.stream.complete', {
       scopeId: params.scopeId,
@@ -606,7 +625,9 @@ export async function streamChatCompletion(params: {
       finishReason,
       toolCallsCount: toolCalls.length,
       toolNames: toolCalls.map((t) => t.name),
-      estimatedTokens,
+      estimatedTokens: totalTokens,
+      promptTokens,
+      completionTokens,
     })
 
     return {
@@ -615,7 +636,10 @@ export async function streamChatCompletion(params: {
       thoughtBuffer: accumulatedThought,
       finishReason,
       reasoningChars,
-      estimatedTokens,
+      estimatedTokens: totalTokens,
+      promptTokens,
+      completionTokens,
+      totalTokens,
     }
   } catch (err) {
     if (timedOut && !signal?.aborted) {

@@ -847,8 +847,33 @@ export function renderMessageItem(msg: StoredChatMessage): string {
     `
   }
 
+  const tokenPill = msg.tokenUsage
+    ? `
+      <div class="flex items-center gap-1.5 rounded-lg bg-bg-app border border-border-default px-2.5 py-1 text-[10px] font-mono text-text-secondary">
+        <span class="text-text-muted">Tokens:</span>
+        <span title="Tokens de Contexto / Entrada">Contexto: <strong class="text-text-primary">${msg.tokenUsage.promptTokens.toLocaleString()}</strong></span>
+        <span class="text-border-default">|</span>
+        <span title="Tokens Generados / Salida">Salida: <strong class="text-text-primary">${msg.tokenUsage.completionTokens.toLocaleString()}</strong></span>
+      </div>
+    `
+    : ''
+
+  const phaseTag = msg.phaseName
+    ? `<span class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">${escapeHtml(msg.phaseName)}</span>`
+    : ''
+
   return `
     <div data-message-role="assistant" data-message-content="${escapeHtmlAttr(msg.content)}" class="max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3">
+      <div class="flex items-center justify-between border-b border-border-default pb-2.5 text-[11px]">
+        <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5 font-bold text-primary">
+            ${heroIcon('sparkles', 'h-3.5 w-3.5 text-primary')}
+            <span>LocalLoop (SDLC Agent)</span>
+          </div>
+          ${phaseTag}
+        </div>
+        ${tokenPill}
+      </div>
       ${msg.thought && getLlmConfig().renderThinking
       ? `
             <details class="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-text-secondary">
@@ -1061,9 +1086,16 @@ export function computeSdlcPhasesState(params: {
   ]
 
   for (let i = 0; i <= 6; i++) {
-    if (i < activePhase) {
-      phases[i].status = 'completed'
-    } else if (i === activePhase) {
+    const hasPriorEvidence =
+      (i === 0 && msgHasP0) ||
+      (i === 1 && msgHasP1) ||
+      (i === 2 && msgHasP2) ||
+      (i === 3 && msgHasP3) ||
+      (i === 4 && msgHasP4) ||
+      (i === 5 && msgHasP5) ||
+      (i === 6 && msgHasP6)
+
+    if (i === activePhase) {
       if (i === 0 && isPhase0Waiting) {
         phases[i].status = 'waiting'
       } else if (i === 1 && isPhase1Waiting) {
@@ -1073,20 +1105,10 @@ export function computeSdlcPhasesState(params: {
       } else if (running) {
         phases[i].status = 'active'
       } else {
-        if (
-          (i === 0 && msgHasP0) ||
-          (i === 1 && msgHasP1) ||
-          (i === 2 && msgHasP2) ||
-          (i === 3 && msgHasP3) ||
-          (i === 4 && msgHasP4) ||
-          (i === 5 && msgHasP5) ||
-          (i === 6 && msgHasP6)
-        ) {
-          phases[i].status = 'completed'
-        } else {
-          phases[i].status = 'pending'
-        }
+        phases[i].status = hasPriorEvidence ? 'completed' : 'pending'
       }
+    } else if (i < activePhase || hasPriorEvidence) {
+      phases[i].status = 'completed'
     } else {
       phases[i].status = 'pending'
     }
@@ -1147,6 +1169,19 @@ export function renderLifecycleStepperHtml(phases: SdlcPhaseItem[]): string {
     .join('')
 }
 
+export function updateHeaderStatusInDom(root: HTMLElement, status: SessionStatusType): void {
+  const statusBadge = root.querySelector<HTMLElement>('[data-session-status]')
+  if (statusBadge) {
+    statusBadge.dataset.sessionStatus = String(status)
+    statusBadge.className = `rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(status)}`
+    statusBadge.textContent = translateStatus(status)
+  }
+  const stepper = root.querySelector<HTMLElement>('#sdlc-lifecycle-stepper')
+  if (stepper) {
+    stepper.dataset.sessionStatus = String(status)
+  }
+}
+
 export function updateLifecycleStepperInDom(
   root: HTMLElement,
   sessionId: number,
@@ -1172,12 +1207,17 @@ export function updateLifecycleStepperInDom(
   const storedStatus = rawStatus !== undefined && rawStatus !== '' ? (Number(rawStatus) as SessionStatusType) : undefined
 
   let sessionStatus: SessionStatusType = SessionStatus.IDLE
-  if (storedStatus === SessionStatus.COMPLETED) {
+  if (running) {
+    sessionStatus = SessionStatus.RUNNING
+    if (statusBadge && statusBadge.dataset.sessionStatus !== String(SessionStatus.RUNNING)) {
+      statusBadge.dataset.sessionStatus = String(SessionStatus.RUNNING)
+      statusBadge.className = `rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(SessionStatus.RUNNING)}`
+      statusBadge.textContent = translateStatus(SessionStatus.RUNNING)
+    }
+  } else if (storedStatus === SessionStatus.COMPLETED) {
     sessionStatus = SessionStatus.COMPLETED
   } else if (storedStatus === SessionStatus.WAITING_APPROVAL) {
     sessionStatus = SessionStatus.WAITING_APPROVAL
-  } else if (running) {
-    sessionStatus = SessionStatus.RUNNING
   } else if (storedStatus !== undefined) {
     sessionStatus = storedStatus
   }
@@ -1217,6 +1257,11 @@ interface QueuedChunk {
   thought?: string
   phase?: string
   sdlcPhase?: string
+  tokenUsage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
   receivedAt: number
 }
 
@@ -1230,7 +1275,8 @@ class StreamingQueueBatcher {
   private root: HTMLElement | null = null
   private sessionId = 0
   private isDirty = false
-  private readonly INTERVAL_MS = 1000
+  private currentPhaseKey = ''
+  readonly INTERVAL_MS = 1000
 
   start(sessionId: number, root: HTMLElement) {
     this.stop()
@@ -1238,6 +1284,7 @@ class StreamingQueueBatcher {
     this.root = root
     this.latestChunk = null
     this.isDirty = false
+    this.currentPhaseKey = ''
 
     this.timer = setInterval(() => {
       this.flush()
@@ -1265,8 +1312,24 @@ class StreamingQueueBatcher {
     if (!scrollContainer) return
 
     const config = getLlmConfig()
+    const newPhaseKey = (chunk.phase || chunk.sdlcPhase || '').trim()
 
     let bubble = scrollContainer.querySelector<HTMLElement>(`#live-streaming-bubble-${this.sessionId}`)
+
+    // Si la fase o componente activo cambia (ej. Fase 2 -> Fase 3, o comp_core -> comp_service),
+    // sellamos la tarjeta anterior en el DOM para que permanezca como registro terminado sin desaparecer.
+    if (bubble && this.currentPhaseKey && newPhaseKey && this.currentPhaseKey !== newPhaseKey) {
+      const contentBox = bubble.querySelector<HTMLElement>('#stream-content-box')
+      if (contentBox && contentBox.innerHTML.trim().length > 0) {
+        this.sealStreamingBubble(bubble)
+        bubble = null
+      }
+    }
+
+    if (newPhaseKey) {
+      this.currentPhaseKey = newPhaseKey
+    }
+
     if (!bubble) {
       bubble = document.createElement('div')
       bubble.id = `live-streaming-bubble-${this.sessionId}`
@@ -1278,7 +1341,10 @@ class StreamingQueueBatcher {
             <span class="flex h-2.5 w-2.5 rounded-full bg-primary animate-ping"></span>
             <span id="stream-phase-title" class="font-display text-xs font-bold text-primary">Conectando con Modelo LLM...</span>
           </div>
-          <span class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">Cola Streaming (1000ms Selectivo)</span>
+          <div class="flex items-center gap-2">
+            <span id="stream-tokens-pill" class="hidden rounded bg-bg-app border border-border-default px-2 py-0.5 text-[10px] font-mono text-text-muted"></span>
+            <span id="stream-status-badge" class="rounded bg-primary/15 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">En curso</span>
+          </div>
         </div>
         ${
           config.renderThinking
@@ -1302,6 +1368,14 @@ class StreamingQueueBatcher {
     if (chunk.phase) {
       const titleEl = bubble.querySelector<HTMLElement>('#stream-phase-title')
       if (titleEl) titleEl.textContent = `${chunk.phase}...`
+    }
+
+    if (chunk.tokenUsage) {
+      const tokensPill = bubble.querySelector<HTMLElement>('#stream-tokens-pill')
+      if (tokensPill) {
+        tokensPill.innerHTML = `Contexto: <strong class="text-text-primary">${chunk.tokenUsage.promptTokens.toLocaleString()}</strong> | Salida: <strong class="text-text-primary">${chunk.tokenUsage.completionTokens.toLocaleString()}</strong>`
+        tokensPill.classList.remove('hidden')
+      }
     }
 
     if (config.renderThinking && chunk.thought && chunk.thought.trim()) {
@@ -1334,6 +1408,27 @@ class StreamingQueueBatcher {
     }
   }
 
+  private sealStreamingBubble(bubble: HTMLElement) {
+    bubble.removeAttribute('id')
+    bubble.setAttribute('data-sealed-phase', 'true')
+    bubble.className =
+      'max-w-3xl w-full rounded-2xl border border-border-default bg-bg-card p-6 text-xs text-text-primary shadow-sm space-y-3 transition-all'
+
+    const pingEl = bubble.querySelector('.animate-ping')
+    if (pingEl) pingEl.remove()
+
+    const badgeEl = bubble.querySelector('#stream-status-badge')
+    if (badgeEl) {
+      badgeEl.className =
+        'rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-emerald-400'
+      badgeEl.textContent = 'Completado'
+    }
+
+    if (bubble.querySelector('.mermaid:not([data-processed="true"])')) {
+      void renderMermaidInDom(bubble)
+    }
+  }
+
   stop() {
     if (this.timer) {
       clearInterval(this.timer)
@@ -1343,8 +1438,13 @@ class StreamingQueueBatcher {
       this.flush()
     }
     if (this.root) {
+      const bubble = this.root.querySelector<HTMLElement>(`#live-streaming-bubble-${this.sessionId}`)
+      if (bubble) {
+        this.sealStreamingBubble(bubble)
+      }
       void renderMermaidInDom(this.root)
     }
+    this.currentPhaseKey = ''
   }
 }
 
@@ -1371,6 +1471,7 @@ export async function renderWorkspaceScreen(
   const config = getLlmConfig()
   const running = isSessionRunning(sessionId)
   const thinkingState = getSessionThinkingState(sessionId)
+  const effectiveStatus: SessionStatusType = running ? SessionStatus.RUNNING : session.status
 
   // Filtrar mensajes que sean plantilla de inicialización
   const visibleMessages = messages.filter(
@@ -1385,7 +1486,7 @@ export async function renderWorkspaceScreen(
     !running &&
     (session.currentPhase === '4_E2E_BUSINESS_AUDIT' ||
       (!session.currentPhase &&
-        session.status === SessionStatus.WAITING_APPROVAL &&
+        effectiveStatus === SessionStatus.WAITING_APPROVAL &&
         (lastMessage.includes('Fase 4: Solicitud de Aprobación Formal de Negocio') ||
           lastMessage.includes('Aprobación Formal de Negocio'))))
 
@@ -1394,7 +1495,7 @@ export async function renderWorkspaceScreen(
     !isPhase4Waiting &&
     (session.currentPhase === '1_STRATEGY_AND_PLAN' ||
       (!session.currentPhase &&
-        session.status === SessionStatus.WAITING_APPROVAL &&
+        effectiveStatus === SessionStatus.WAITING_APPROVAL &&
         (lastMessage.includes('Iteración con el Usuario (Fase 1') ||
           lastMessage.includes('Pausa de Fase 1') ||
           lastMessage.includes('Marco de Referencia del Desarrollo'))))
@@ -1426,8 +1527,8 @@ export async function renderWorkspaceScreen(
               <h1 id="session-title-header" class="truncate font-display text-base font-bold text-text-primary" title="${escapeHtml(session.title)}">
                 ${escapeHtml(session.title)}
               </h1>
-              <span data-session-status="${session.status}" class="rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(session.status)}">
-                ${translateStatus(session.status)}
+              <span data-session-status="${effectiveStatus}" class="rounded-md px-2.5 py-0.5 text-[11px] font-semibold ${statusClass(effectiveStatus)}">
+                ${translateStatus(effectiveStatus)}
               </span>
               <span class="rounded-md border border-border-default bg-bg-card px-2.5 py-0.5 font-mono text-[11px] text-text-muted" title="Thread GUID">
                 ${escapeHtml(session.threadId.slice(0, 18))}...
@@ -1455,12 +1556,12 @@ export async function renderWorkspaceScreen(
             ${escapeHtml(session.goal || 'Ciclo de Vida de Software Guiado por Árbol de Habilidades y Arquitectura Empresarial')}
           </p>
           <div id="sdlc-lifecycle-stepper"
-               data-session-status="${session.status}"
+               data-session-status="${effectiveStatus}"
                data-current-phase="${session.currentPhase || ''}"
                class="flex items-center gap-2 overflow-x-auto text-[11px] font-medium py-1 scrollbar-none">
             ${renderLifecycleStepperHtml(
     computeSdlcPhasesState({
-      sessionStatus: session.status,
+      sessionStatus: effectiveStatus,
       currentPhase: session.currentPhase,
       turnsUsed: session.turnsUsed,
       messages: visibleMessages,
@@ -2401,6 +2502,8 @@ export async function renderWorkspaceScreen(
 
     // 4. Reanudar el ciclo agéntico con la especificación completa
     activeStreamBatcher?.stop()
+    updateHeaderStatusInDom(root, SessionStatus.RUNNING)
+    updateLifecycleStepperInDom(root, sessionId)
     void runAgentSessionTurn(sessionId, promptMessage, phase0ThreeStepPayload)
     await renderWorkspaceScreen(root, sessionId, rerender)
   }
@@ -2426,6 +2529,8 @@ export async function renderWorkspaceScreen(
     const customText = input?.value.trim()
     if (input) input.value = ''
     activeStreamBatcher?.stop()
+    updateHeaderStatusInDom(root, SessionStatus.RUNNING)
+    updateLifecycleStepperInDom(root, sessionId)
     void runAgentSessionTurn(
       sessionId,
       customText && customText.length > 0
@@ -2438,12 +2543,16 @@ export async function renderWorkspaceScreen(
   // Submit interactivo HITL 2: FASE 4 (Aprobación Formal)
   root.querySelector<HTMLButtonElement>('#hitl-approve-btn')?.addEventListener('click', async () => {
     activeStreamBatcher?.stop()
+    updateHeaderStatusInDom(root, SessionStatus.RUNNING)
+    updateLifecycleStepperInDom(root, sessionId)
     void runAgentSessionTurn(sessionId, 'Aprobación formal de negocio concedida.')
     await renderWorkspaceScreen(root, sessionId, rerender)
   })
 
   root.querySelector<HTMLButtonElement>('#hitl-reject-btn')?.addEventListener('click', async () => {
     activeStreamBatcher?.stop()
+    updateHeaderStatusInDom(root, SessionStatus.RUNNING)
+    updateLifecycleStepperInDom(root, sessionId)
     void runAgentSessionTurn(sessionId, 'Rechazo de negocio: Activar análisis de causa raíz (RCA).')
     await renderWorkspaceScreen(root, sessionId, rerender)
   })
@@ -2456,6 +2565,8 @@ export async function renderWorkspaceScreen(
     if (!text) return
     input!.value = ''
     activeStreamBatcher?.stop()
+    updateHeaderStatusInDom(root, SessionStatus.RUNNING)
+    updateLifecycleStepperInDom(root, sessionId)
 
     if (isPhase0Waiting) {
       syncP0StateFromDom(root)
@@ -2590,6 +2701,8 @@ export async function renderWorkspaceScreen(
     if (!isSessionRunning(sessionId)) {
       activeStreamBatcher?.stop()
       await renderWorkspaceScreen(root, sessionId, rerender)
+    } else {
+      updateHeaderStatusInDom(root, SessionStatus.RUNNING)
     }
   })
 
@@ -2597,6 +2710,9 @@ export async function renderWorkspaceScreen(
   activeThinkingListener?.()
   activeThinkingListener = onAgentThinking(async (state) => {
     if (state.sessionId !== sessionId) return
+    if (state.isThinking || isSessionRunning(sessionId)) {
+      updateHeaderStatusInDom(root, SessionStatus.RUNNING)
+    }
     const pill = root.querySelector(`[data-thinking-pill="${sessionId}"]`)
     if (pill) {
       pill.classList.toggle('hidden', !state.isThinking)

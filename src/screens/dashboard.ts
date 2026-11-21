@@ -91,12 +91,13 @@ export function updateThinkingPillInDom(sessionId: number): void {
   }
 }
 
-function renderSessionCard(session: AgentSession): string {
+export function renderSessionCard(session: AgentSession): string {
   const i18n = t()
   const id = session.id ?? 0
   const running = isSessionRunning(id)
   const isCompleted =
     session.status === SessionStatus.COMPLETED || session.status === SessionStatus.BUDGET_EXCEEDED
+  const effectiveStatus = running ? SessionStatus.RUNNING : session.status
   const progressPct =
     session.maxTurns > 0
       ? Math.min(100, Math.round((session.turnsUsed / session.maxTurns) * 100))
@@ -111,8 +112,8 @@ function renderSessionCard(session: AgentSession): string {
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
-              <span class="rounded-md px-2 py-0.5 text-[11px] font-semibold ${statusClass(session.status)}">
-                ${translateStatus(session.status)}
+              <span class="rounded-md px-2 py-0.5 text-[11px] font-semibold ${statusClass(effectiveStatus)}">
+                ${translateStatus(effectiveStatus)}
               </span>
               <span class="rounded-md border border-border-default bg-bg-app px-2 py-0.5 font-mono text-[11px] text-text-secondary">
                 ${session.skill}
@@ -150,7 +151,13 @@ function renderSessionCard(session: AgentSession): string {
 
       <div class="mt-4 border-t border-border-subtle pt-3">
         <div class="mb-1.5 flex items-center justify-between text-xs text-text-muted">
-          <span>${formatText(i18n.sessions.card.turnsCount, { used: session.turnsUsed, max: session.maxTurns, tokens: session.tokensUsed })}</span>
+          <span>${formatText(i18n.sessions.card.turnsCount, {
+            turns: session.turnsUsed,
+            maxTurns: session.maxTurns,
+            used: session.turnsUsed,
+            max: session.maxTurns,
+            tokens: (session.tokensUsed || 0).toLocaleString(),
+          })}</span>
           <span class="font-mono text-[11px]">${formatUpdatedTime(session.updated)}</span>
         </div>
         <div class="h-1.5 w-full overflow-hidden rounded-full bg-bg-app" aria-label="${i18n.sessions.card.progressAria}">

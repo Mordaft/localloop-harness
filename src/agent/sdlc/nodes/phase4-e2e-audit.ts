@@ -304,6 +304,8 @@ Genera el informe de integración E2E en Markdown. Si dispones de herramientas d
       ? 'Registrando simulación E2E...'
       : `Ejecutando integración E2E en ${hasBrowserComps ? 'Browser Iframe Sandbox' : 'Sandbox JS'}...`,
     '4_E2E_BUSINESS_AUDIT',
+    llmE2e.tokenUsage,
+    'Fase 4: Integración E2E',
   )
 
   const progressEventsToAdd: ProjectProgressEvent[] = []

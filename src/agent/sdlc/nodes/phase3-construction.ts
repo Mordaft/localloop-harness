@@ -1147,7 +1147,14 @@ Corrige el archivo o archivos necesarios para resolver este fallo.`,
     thought: llmUnitReport.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, phase3Msg, verifiedSummary, '3_COMPONENT_CONSTRUCTION')
+  await emitSDLCProgress(
+    state.sessionId,
+    phase3Msg,
+    verifiedSummary,
+    '3_COMPONENT_CONSTRUCTION',
+    llmUnitReport.tokenUsage,
+    `Fase 3: Verificación Unitaria (${compId})`,
+  )
 
   if (state.sessionId) {
     try {

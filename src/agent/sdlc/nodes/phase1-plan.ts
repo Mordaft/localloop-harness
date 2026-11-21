@@ -509,6 +509,8 @@ Elabora la Propuesta de Solución Técnica completa para aprobación del usuario
     phase1Msg,
     'Propuesta de Solución Técnica y Marco de Referencia (Esperando Aprobación HITL)',
     '1_STRATEGY_AND_PLAN',
+    llmPlan.tokenUsage,
+    'Fase 1: Propuesta de Solución Técnica',
   )
 
   return {
@@ -769,7 +771,14 @@ Genera el informe de formalización reflejando explícitamente la respuesta del 
     thought: llmConfirm.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, confirmMsg, 'Marco de Referencia y Scripts de Setup Formalizados', '1_STRATEGY_AND_PLAN')
+  await emitSDLCProgress(
+    state.sessionId,
+    confirmMsg,
+    'Marco de Referencia y Scripts de Setup Formalizados',
+    '1_STRATEGY_AND_PLAN',
+    llmConfirm.tokenUsage,
+    'Fase 1: Marco de Referencia Formalizado',
+  )
 
   return {
     frameworkConfig,

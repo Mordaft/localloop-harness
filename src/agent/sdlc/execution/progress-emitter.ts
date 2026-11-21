@@ -11,6 +11,8 @@ export async function emitSDLCProgress(
   message: { role: 'assistant'; content: string; thought?: string },
   thinkingText?: string,
   sdlcPhase?: SdlcPhase,
+  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+  phaseName?: string,
 ): Promise<void> {
   if (!sessionId) return
   try {
@@ -22,6 +24,8 @@ export async function emitSDLCProgress(
       role: message.role,
       content: message.content,
       thought: message.thought,
+      tokenUsage,
+      phaseName,
     })
     const callbacks = getSessionCallbacks(sessionId)
     if (thinkingText) {

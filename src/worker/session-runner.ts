@@ -39,6 +39,7 @@ export interface SessionRunHooks {
     thought?: string,
     phase?: string,
     sdlcPhase?: SdlcPhase | string,
+    tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number },
   ) => void
   onProposalCreated?: (sessionId: number, proposalId: number, path: string) => void
 }
@@ -129,6 +130,7 @@ export async function executeSessionTurn(
         chunk.thought,
         chunk.phase,
         chunk.sdlcPhase,
+        chunk.tokenUsage,
       )
     },
     onStepUpdate: (id) => {
@@ -243,10 +245,15 @@ export async function executeSessionTurn(
         resolvedStatus = SessionStatus.IDLE
       }
 
+      const currentSession = await getSessionById(sessionId)
+      const allSessionMessages = await listSessionMessages(sessionId)
+      const totalTokensFromMsgs = allSessionMessages.reduce((acc, m) => acc + (m.tokenUsage?.totalTokens || 0), 0)
+      const finalTokensUsed = Math.max(currentSession?.tokensUsed || 0, totalTokensFromMsgs)
+
       await updateSessionMetrics(sessionId, {
         status: resolvedStatus,
-        turnsUsed: (session.turnsUsed || 0) + 1,
-        tokensUsed: session.tokensUsed || 0,
+        turnsUsed: (currentSession?.turnsUsed ?? session.turnsUsed ?? 0) + 1,
+        tokensUsed: finalTokensUsed,
         currentPhase: finalState.currentPhase,
       })
 
@@ -291,10 +298,19 @@ export async function executeSessionTurn(
       resolvedStatus = SessionStatus.WAITING_APPROVAL
     }
 
+    const currentSession = await getSessionById(sessionId)
+    const allSessionMessages = await listSessionMessages(sessionId)
+    const totalTokensFromMsgs = allSessionMessages.reduce((acc, m) => acc + (m.tokenUsage?.totalTokens || 0), 0)
+    const finalTokensUsed = Math.max(
+      finalState.tokensUsed ?? 0,
+      currentSession?.tokensUsed ?? 0,
+      totalTokensFromMsgs,
+    )
+
     await updateSessionMetrics(sessionId, {
       status: resolvedStatus,
-      turnsUsed: (session.turnsUsed || 0) + (finalState.turnsUsed || 0),
-      tokensUsed: finalState.tokensUsed ?? session.tokensUsed,
+      turnsUsed: (currentSession?.turnsUsed ?? session.turnsUsed ?? 0) + (finalState.turnsUsed || 0),
+      tokensUsed: finalTokensUsed,
     })
 
     hooks.onThinking?.({

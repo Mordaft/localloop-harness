@@ -185,7 +185,14 @@ Genera el informe técnico y dictamen de pase a construcción del Gatekeeper en 
     thought: llmGatekeeper.thought,
   }
 
-  await emitSDLCProgress(state.sessionId, gatekeeperMsg, `Aprobado diseño de ${compId} en Gatekeeper`, '2_TECHNICAL_DESIGN_GATE')
+  await emitSDLCProgress(
+    state.sessionId,
+    gatekeeperMsg,
+    `Aprobado diseño de ${compId} en Gatekeeper`,
+    '2_TECHNICAL_DESIGN_GATE',
+    llmGatekeeper.tokenUsage,
+    `Fase 2: Dictamen Gatekeeper (${compId})`,
+  )
 
   if (state.sessionId) {
     try {

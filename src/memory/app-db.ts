@@ -39,6 +39,12 @@ export interface StoredChatMessage {
   thought?: string
   toolName?: string
   toolCallId?: string
+  tokenUsage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
+  phaseName?: string
   createdAt: string
 }
 
@@ -109,7 +115,26 @@ let memAutoId = 1
 export async function listSessions(): Promise<AgentSession[]> {
   if (database) {
     const all = await database.sessions.toArray()
+    for (const s of all) {
+      if ((!s.tokensUsed || s.tokensUsed === 0) && s.id) {
+        const msgs = await database.messages.where('sessionId').equals(s.id).toArray()
+        const total = msgs.reduce((acc, m) => acc + (m.tokenUsage?.totalTokens || 0), 0)
+        if (total > 0) {
+          s.tokensUsed = total
+          await database.sessions.update(s.id, { tokensUsed: total })
+        }
+      }
+    }
     return all.sort((a, b) => b.updated.localeCompare(a.updated))
+  }
+  for (const s of memSessions) {
+    if ((!s.tokensUsed || s.tokensUsed === 0) && s.id) {
+      const msgs = memMessages.filter((m) => m.sessionId === s.id)
+      const total = msgs.reduce((acc, m) => acc + (m.tokenUsage?.totalTokens || 0), 0)
+      if (total > 0) {
+        s.tokensUsed = total
+      }
+    }
   }
   return [...memSessions].sort((a, b) => b.updated.localeCompare(a.updated))
 }
@@ -224,13 +249,24 @@ export async function appendSessionMessage(
     ...msg,
     createdAt: new Date().toISOString(),
   }
+  const addedTokens = msg.tokenUsage?.totalTokens || 0
   if (database) {
     const id = await database.messages.add(entry)
-    await database.sessions.update(msg.sessionId, { updated: entry.createdAt })
+    const currentSession = await database.sessions.get(msg.sessionId)
+    const newTokens = (currentSession?.tokensUsed || 0) + addedTokens
+    await database.sessions.update(msg.sessionId, {
+      updated: entry.createdAt,
+      tokensUsed: newTokens,
+    })
     return id
   }
   const id = memAutoId++
   memMessages.push({ ...entry, id })
+  const target = memSessions.find((s) => s.id === msg.sessionId)
+  if (target) {
+    target.updated = entry.createdAt
+    target.tokensUsed = (target.tokensUsed || 0) + addedTokens
+  }
   return id
 }
 

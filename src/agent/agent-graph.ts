@@ -58,6 +58,11 @@ export interface AgentLoopCallbacks {
     thought?: string
     phase?: string
     sdlcPhase?: string
+    tokenUsage?: {
+      promptTokens: number
+      completionTokens: number
+      totalTokens: number
+    }
   }) => void
   onStepUpdate?: (sessionId: number) => void
   onProposalCreated?: (proposalId: number, path: string) => void

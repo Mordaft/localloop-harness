@@ -1,7 +1,9 @@
 import type { Phase0ThreeStepData } from '../agent/sdlc-state'
 import { trace } from '../diagnostics'
+import { SessionStatus } from '../enums'
 import { getWorkspaceDirectoryHandle } from '../fs/workspace-fs'
 import { getLlmConfig } from '../llm/llm-config'
+import { updateSessionMetrics } from '../memory/app-db'
 import { executeBrowserSandbox } from '../sandbox/browser-sandbox'
 import type { WorkerInboundMessage, WorkerOutboundMessage } from './agent.worker'
 import {
@@ -21,6 +23,11 @@ export interface AgentStreamChunkEvent {
   thought?: string
   phase?: string
   sdlcPhase?: string
+  tokenUsage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
 }
 
 type StreamChunkListener = (event: AgentStreamChunkEvent) => void
@@ -187,6 +194,12 @@ export async function runAgentSessionTurn(
   if (isSessionRunning(sessionId)) return
 
   runningSessionsInUi.add(sessionId)
+  try {
+    await updateSessionMetrics(sessionId, { status: SessionStatus.RUNNING })
+    notifyProgress(sessionId)
+  } catch (err) {
+    trace(`[AgentBridge] Error actualizando estado a RUNNING: ${err}`)
+  }
   syncWorkerEnvironment()
 
   const sentToWorker = postToWorker({
