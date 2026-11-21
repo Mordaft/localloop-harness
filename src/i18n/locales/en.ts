@@ -20,6 +20,10 @@ export const en: TranslationDictionary = {
     reject: 'Reject',
     send: 'Send to agent',
     stop: 'Stop loop',
+    restartFromScratch: 'Start from scratch',
+    resetProcess: 'Restart process',
+    resetProcessConfirm: 'Do you want to restart the process from scratch? Any running execution will be cancelled, and all phases, agentic checkpoints, and Phase 0 definition will be reset.',
+    resetSuccess: 'Process restarted from scratch successfully.',
   },
   sidebar: {
     workspace: 'Agentic Harness',

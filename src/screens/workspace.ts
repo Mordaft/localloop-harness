@@ -22,6 +22,7 @@ import {
   onAgentProgress,
   onAgentStreamChunk,
   onAgentThinking,
+  resetAgentSessionFromScratch,
   runAgentSessionTurn,
   syncWorkerEnvironment,
   type AgentStreamChunkEvent,
@@ -104,6 +105,54 @@ export const p0State = {
       dependsOn: ['comp_core', 'comp_service'],
     },
   ] as SolutionComponentMapping[],
+}
+
+export function resetP0State(initiativeTitle = 'Plataforma Web Modular'): void {
+  phase0SubStep = 1
+  isMarkdownView = false
+  p0State.featureTitle = initiativeTitle
+  p0State.rawBusinessLanguageText = ''
+  p0State.needsList = [
+    {
+      id: 'NEED-1',
+      description: '',
+      expectedImpact: '',
+    },
+  ]
+  p0State.marketStandard = 'C4_AND_CLEAN_ARCHITECTURE'
+  p0State.mcpUrl = ''
+  p0State.currentSituationTitle = ''
+  p0State.currentSituationLimitations = ['']
+  p0State.desiredSituationTitle = ''
+  p0State.desiredSituationCapabilities = ['']
+  p0State.transitionSituationTitle = ''
+  p0State.transitionMilestones = ['']
+  p0State.components = [
+    {
+      componentId: 'comp_core',
+      name: 'Motor Core de Dominio & Reglas de Negocio',
+      action: 'CREATE',
+      targetState: 'DESIRED',
+      description: 'Entidades centrales, contratos tipados y validaciones de dominio.',
+      dependsOn: [],
+    },
+    {
+      componentId: 'comp_service',
+      name: 'Servicio de Aplicación y Casos de Uso',
+      action: 'CREATE',
+      targetState: 'DESIRED',
+      description: 'Orquestación de casos de uso y gestión de estado.',
+      dependsOn: ['comp_core'],
+    },
+    {
+      componentId: 'comp_ui',
+      name: 'Interfaz Visual e Interacción',
+      action: 'CREATE',
+      targetState: 'DESIRED',
+      description: 'Componente visual interactivo y presentación.',
+      dependsOn: ['comp_core', 'comp_service'],
+    },
+  ]
 }
 
 export function generateP0Markdown(state: typeof p0State): string {
@@ -1537,6 +1586,11 @@ export async function renderWorkspaceScreen(
           </div>
 
           <div class="flex items-center gap-2.5">
+            <button id="reset-session-from-scratch-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-400 transition hover:bg-red-500/20 hover:text-red-300 hover:border-red-500/50" title="${i18n.common.resetProcess}">
+              ${heroIcon('arrow-path', 'h-3.5 w-3.5')}
+              <span>${i18n.common.restartFromScratch}</span>
+            </button>
+
             <button id="toggle-files-drawer-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-card px-3 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary">
               ${heroIcon('folder-open', 'h-3.5 w-3.5 text-primary')}
               <span>Archivos</span>
@@ -1599,6 +1653,25 @@ export async function renderWorkspaceScreen(
             }
 
             ${visibleMessages.map((m) => renderMessageItem(m)).join('')}
+
+            ${effectiveStatus === SessionStatus.ERROR
+              ? `
+                <div class="max-w-3xl w-full rounded-2xl border border-red-500/40 bg-red-500/10 p-5 shadow-sm space-y-3 animate-in fade-in">
+                  <div class="flex items-center gap-2.5 text-red-400 font-bold text-sm">
+                    <span>⚠️</span>
+                    <span>El proceso se ha detenido por un error o invalidación de viabilidad técnica.</span>
+                  </div>
+                  <p class="text-xs text-text-secondary">
+                    Puedes iniciar el proceso desde cero en cualquier momento para replantear la iniciativa, recalibrar los requerimientos o corregir el entorno de ejecución.
+                  </p>
+                  <button id="btn-error-reset-from-scratch" class="inline-flex items-center gap-1.5 rounded-xl border border-red-500/40 bg-bg-card px-4 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition shadow-sm">
+                    ${heroIcon('arrow-path', 'h-4 w-4')}
+                    <span>${i18n.common.restartFromScratch}</span>
+                  </button>
+                </div>
+              `
+              : ''
+            }
 
             <!-- WIDGET INTERACTIVO HITL 1: FASE 0 EN 3 PASOS RIGUROSOS -->
             ${isPhase0Waiting
@@ -1895,7 +1968,11 @@ export async function renderWorkspaceScreen(
                     <div class="rounded-xl border border-border-default bg-bg-app p-3 text-xs text-text-secondary">
                       <p>💡 <em>Tras tu confirmación o ajustes, el agente generará en la raíz del workspace los scripts <code>setup.cmd</code> y <code>setup.sh</code>, <code>package.json</code>, <code>tsconfig.json</code> e iniciará la construcción verificada.</em></p>
                     </div>
-                    <div class="flex items-center justify-end pt-1">
+                    <div class="flex items-center justify-between pt-1">
+                      <button id="hitl-phase1-reset-btn" type="button" class="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition" title="${i18n.common.resetProcess}">
+                        ${heroIcon('arrow-path', 'h-3.5 w-3.5')}
+                        <span>${i18n.common.restartFromScratch}</span>
+                      </button>
                       <button id="hitl-phase1-approve-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition shadow-sm">
                         <span>&gt; Aprobar Propuesta Técnica e Iniciar Construcción</span>
                       </button>
@@ -1924,14 +2001,20 @@ export async function renderWorkspaceScreen(
                       <p>✓ <strong>Pruebas E2E de Casos de Uso:</strong> 100% aserciones superadas.</p>
                     </div>
 
-                    <div class="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
-                      <button id="hitl-reject-btn" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-border-default bg-bg-app px-4 py-2 text-xs font-semibold text-warning hover:bg-bg-elevated transition">
-                        ${heroIcon('arrow-path', 'h-4 w-4')}
-                        <span>Rechazar / Activar Resiliencia (RCA)</span>
+                    <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                      <button id="hitl-phase4-reset-btn" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition" title="${i18n.common.resetProcess}">
+                        ${heroIcon('arrow-path', 'h-3.5 w-3.5')}
+                        <span>${i18n.common.restartFromScratch}</span>
                       </button>
-                      <button id="hitl-approve-btn" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-border-default bg-bg-card px-4 py-2 text-xs font-semibold text-text-primary hover:bg-bg-elevated transition shadow-sm">
-                        <span>&gt; Otorgar Aprobación Formal de Negocio</span>
-                      </button>
+                      <div class="flex flex-col sm:flex-row items-center gap-3">
+                        <button id="hitl-reject-btn" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-border-default bg-bg-app px-4 py-2 text-xs font-semibold text-warning hover:bg-bg-elevated transition">
+                          ${heroIcon('arrow-path', 'h-4 w-4')}
+                          <span>Rechazar / Activar Resiliencia (RCA)</span>
+                        </button>
+                        <button id="hitl-approve-btn" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-border-default bg-bg-card px-4 py-2 text-xs font-semibold text-text-primary hover:bg-bg-elevated transition shadow-sm">
+                          <span>&gt; Otorgar Aprobación Formal de Negocio</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 `
@@ -2523,6 +2606,21 @@ export async function renderWorkspaceScreen(
   root.querySelector<HTMLButtonElement>('#btn-complete-phase0')?.addEventListener('click', submitPhase0)
   root.querySelector<HTMLButtonElement>('#btn-complete-phase0-from-md')?.addEventListener('click', submitPhase0)
 
+  // Reiniciar proceso desde cero en cualquier momento (Header, Errores, HITL 1 y HITL 2)
+  const handleResetFromScratch = async () => {
+    if (window.confirm(i18n.common.resetProcessConfirm)) {
+      activeStreamBatcher?.stop()
+      await resetAgentSessionFromScratch(sessionId)
+      resetP0State()
+      await renderWorkspaceScreen(root, sessionId, rerender)
+    }
+  }
+
+  root.querySelector<HTMLButtonElement>('#reset-session-from-scratch-btn')?.addEventListener('click', handleResetFromScratch)
+  root.querySelector<HTMLButtonElement>('#btn-error-reset-from-scratch')?.addEventListener('click', handleResetFromScratch)
+  root.querySelector<HTMLButtonElement>('#hitl-phase1-reset-btn')?.addEventListener('click', handleResetFromScratch)
+  root.querySelector<HTMLButtonElement>('#hitl-phase4-reset-btn')?.addEventListener('click', handleResetFromScratch)
+
   // Submit interactivo HITL 1.5: FASE 1 (Marco de Referencia y Propuesta Técnica)
   root.querySelector<HTMLButtonElement>('#hitl-phase1-approve-btn')?.addEventListener('click', async () => {
     const input = root.querySelector<HTMLInputElement>('#chat-prompt-input')
@@ -2564,6 +2662,16 @@ export async function renderWorkspaceScreen(
     const text = input?.value.trim() ?? ''
     if (!text) return
     input!.value = ''
+
+    if (
+      /^\s*(\/reset|\/restart|reiniciar(\s+(el\s+)?(proceso|sesi[oó]n))?|iniciar(\s+(el\s+)?proceso)?\s+desde\s+cero|empezar\s+de\s+nuevo)\s*$/i.test(
+        text,
+      )
+    ) {
+      await handleResetFromScratch()
+      return
+    }
+
     activeStreamBatcher?.stop()
     updateHeaderStatusInDom(root, SessionStatus.RUNNING)
     updateLifecycleStepperInDom(root, sessionId)

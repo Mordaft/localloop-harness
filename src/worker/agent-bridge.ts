@@ -3,7 +3,7 @@ import { trace } from '../diagnostics'
 import { SessionStatus } from '../enums'
 import { getWorkspaceDirectoryHandle } from '../fs/workspace-fs'
 import { getLlmConfig } from '../llm/llm-config'
-import { updateSessionMetrics } from '../memory/app-db'
+import { resetSessionFromScratch, updateSessionMetrics, type AgentSession } from '../memory/app-db'
 import { executeBrowserSandbox } from '../sandbox/browser-sandbox'
 import type { WorkerInboundMessage, WorkerOutboundMessage } from './agent.worker'
 import {
@@ -254,4 +254,17 @@ export function cancelAgentSession(sessionId: number): void {
     updatedAt: Date.now(),
   })
   notifyProgress(sessionId)
+}
+
+/**
+ * Cancela cualquier ejecución en curso y reinicia el proceso de la sesión desde cero.
+ */
+export async function resetAgentSessionFromScratch(
+  sessionId: number,
+  newGoal?: string,
+): Promise<AgentSession | undefined> {
+  cancelAgentSession(sessionId)
+  const session = await resetSessionFromScratch(sessionId, newGoal)
+  notifyProgress(sessionId)
+  return session
 }

@@ -20,6 +20,10 @@ export interface TranslationDictionary {
     reject: string
     send: string
     stop: string
+    restartFromScratch: string
+    resetProcess: string
+    resetProcessConfirm: string
+    resetSuccess: string
   }
   sidebar: {
     workspace: string

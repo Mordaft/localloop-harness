@@ -19,6 +19,7 @@ import {
   cancelAgentSession,
   getSessionThinkingState,
   isSessionRunning,
+  resetAgentSessionFromScratch,
   runAgentSessionTurn,
   syncWorkerEnvironment,
 } from '../worker/agent-bridge'
@@ -136,6 +137,13 @@ export function renderSessionCard(session: AgentSession): string {
                   </button>`
       : ''
     }
+            <button
+              data-reset-session="${id}"
+              class="rounded-lg border border-border-default bg-bg-app p-1.5 text-text-muted transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
+              title="${i18n.common.restartFromScratch}"
+            >
+              ${heroIcon('arrow-path', 'h-4 w-4')}
+            </button>
             <button
               data-delete-session="${id}"
               class="rounded-lg border border-border-default bg-bg-app p-1.5 text-text-muted transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-500"
@@ -327,6 +335,18 @@ export async function renderSessionsDashboard(root: HTMLElement, rerender: () =>
 
     void runAgentSessionTurn(sessionId)
     window.location.hash = `#/sessions/${sessionId}`
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-reset-session]').forEach((btn) => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation()
+      const id = Number(btn.dataset.resetSession)
+      if (!id) return
+      if (window.confirm(i18n.common.resetProcessConfirm)) {
+        await resetAgentSessionFromScratch(id)
+        rerender()
+      }
+    })
   })
 
   root.querySelectorAll<HTMLButtonElement>('[data-delete-session]').forEach((btn) => {

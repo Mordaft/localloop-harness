@@ -20,6 +20,10 @@ export const es: TranslationDictionary = {
     reject: 'Rechazar',
     send: 'Enviar al agente',
     stop: 'Detener bucle',
+    restartFromScratch: 'Iniciar desde cero',
+    resetProcess: 'Reiniciar proceso',
+    resetProcessConfirm: '¿Deseas reiniciar el proceso desde cero? Se cancelará cualquier ejecución en curso y se restablecerán las fases, checkpoints agénticos y la definición de Fase 0.',
+    resetSuccess: 'Proceso reiniciado desde cero con éxito.',
   },
   sidebar: {
     workspace: 'Arnés Agéntico',

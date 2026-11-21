@@ -234,6 +234,83 @@ export async function deleteSession(id: number): Promise<void> {
   if (idx >= 0) memSessions.splice(idx, 1)
 }
 
+/**
+ * Reinicia completamente el ciclo agéntico de una sesión desde cero:
+ * 1. Purga los checkpoints en IndexedDBSaver del thread anterior.
+ * 2. Asigna un nuevo threadId único para garantizar aislamiento total en LangGraph.
+ * 3. Purga el historial de mensajes de chat y propuestas de ficheros de la sesión.
+ * 4. Restablece la fase a Fase 0 (Descubrimiento), turnos y tokens a 0, y estado a IDLE.
+ * 5. Inserta un mensaje de inicialización limpio para arrancar el descubrimiento desde cero.
+ */
+export async function resetSessionFromScratch(
+  id: number,
+  newGoal?: string,
+): Promise<AgentSession | undefined> {
+  const session = await getSessionById(id)
+  if (!session) return undefined
+
+  if (session.threadId) {
+    try {
+      await getSharedIndexedDBSaver().deleteThread(session.threadId)
+    } catch {
+      // Ignore if thread checkpoints were already empty
+    }
+  }
+
+  const generatedGuid =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 10)
+  const newThreadId = `session-${generatedGuid}`
+  const now = new Date().toISOString()
+  const initialGoal = newGoal ?? session.goal ?? 'Definición y elaboración de software con SDLC Graph'
+
+  if (database) {
+    await database.transaction('rw', database.sessions, database.messages, database.fileProposals, async () => {
+      await database.messages.where('sessionId').equals(id).delete()
+      await database.fileProposals.where('sessionId').equals(id).delete()
+      await database.sessions.update(id, {
+        threadId: newThreadId,
+        status: SessionStatus.IDLE,
+        currentPhase: '0_DISCOVERY_RIGOR',
+        turnsUsed: 0,
+        tokensUsed: 0,
+        goal: initialGoal,
+        updated: now,
+      })
+    })
+  } else {
+    for (let i = memMessages.length - 1; i >= 0; i--) {
+      if (memMessages[i].sessionId === id) {
+        memMessages.splice(i, 1)
+      }
+    }
+    for (let i = memProposals.length - 1; i >= 0; i--) {
+      if (memProposals[i].sessionId === id) {
+        memProposals.splice(i, 1)
+      }
+    }
+    const target = memSessions.find((s) => s.id === id)
+    if (target) {
+      target.threadId = newThreadId
+      target.status = SessionStatus.IDLE
+      target.currentPhase = '0_DISCOVERY_RIGOR'
+      target.turnsUsed = 0
+      target.tokensUsed = 0
+      target.goal = initialGoal
+      target.updated = now
+    }
+  }
+
+  await appendSessionMessage({
+    sessionId: id,
+    role: 'user',
+    content: initialGoal,
+  })
+
+  return getSessionById(id)
+}
+
 export async function listSessionMessages(sessionId: number): Promise<StoredChatMessage[]> {
   if (database) {
     const msgs = await database.messages.where('sessionId').equals(sessionId).toArray()

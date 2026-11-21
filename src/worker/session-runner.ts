@@ -13,6 +13,7 @@ import {
   appendSessionMessage,
   getSessionById,
   listSessionMessages,
+  resetSessionFromScratch,
   updateSessionMetrics,
 } from '../memory/app-db'
 
@@ -75,6 +76,25 @@ export async function executeSessionTurn(
   const session = await getSessionById(sessionId)
   if (!session) {
     throw new Error(`Sesión #${sessionId} no encontrada.`)
+  }
+
+  // Interceptar comando explícito de reinicio / iniciar desde cero en cualquier momento
+  if (
+    userPrompt &&
+    /^\s*(\/reset|\/restart|reiniciar(\s+(el\s+)?(proceso|sesi[oó]n))?|iniciar(\s+(el\s+)?proceso)?\s+desde\s+cero|empezar\s+de\s+nuevo)\s*$/i.test(
+      userPrompt.trim(),
+    )
+  ) {
+    await resetSessionFromScratch(sessionId)
+    hooks.onThinking?.({
+      sessionId,
+      isThinking: false,
+      thought: '',
+      phase: 'completed',
+      updatedAt: Date.now(),
+    })
+    hooks.onStepUpdate?.(sessionId)
+    return SessionStatus.IDLE
   }
 
   const abortController = new AbortController()
