@@ -22,7 +22,7 @@ export const en: TranslationDictionary = {
     stop: 'Stop loop',
     restartFromScratch: 'Start from scratch',
     resetProcess: 'Restart process',
-    resetProcessConfirm: 'Do you want to restart the process from scratch? Any running execution will be cancelled, and all phases, agentic checkpoints, and Phase 0 definition will be reset.',
+    resetProcessConfirm: 'Do you want to restart the process from scratch? Active execution will be cancelled and technical phases and graph checkpoints will be reset, while preserving your business definition intact so you can adjust or relaunch it.',
     resetSuccess: 'Process restarted from scratch successfully.',
   },
   sidebar: {

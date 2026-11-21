@@ -11,7 +11,7 @@ import { getLlmConfig } from '../llm/llm-config'
 import { getPersistentEngram, resetEngramMemoryDatabase } from './engram-memory'
 import { CHECKPOINT_DB_NAME, getSharedIndexedDBSaver } from './indexeddb-saver'
 import { resetWebGuidanceDatabase } from './web-guidance-manager'
-import type { SdlcPhase } from '../agent/sdlc-state'
+import type { Phase0ThreeStepData, SdlcPhase } from '../agent/sdlc-state'
 
 export interface AgentSession {
   id?: number
@@ -22,6 +22,7 @@ export interface AgentSession {
   skill: string
   status: SessionStatusType
   currentPhase?: SdlcPhase
+  phase0Data?: Phase0ThreeStepData
   turnsUsed: number
   maxTurns: number
   tokensUsed: number
@@ -204,7 +205,7 @@ export async function updateSessionTitle(id: number, title: string): Promise<voi
 
 export async function updateSessionMetrics(
   id: number,
-  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model' | 'title' | 'skill' | 'currentPhase'>>,
+  changes: Partial<Pick<AgentSession, 'status' | 'turnsUsed' | 'tokensUsed' | 'workspaceName' | 'model' | 'title' | 'skill' | 'currentPhase' | 'phase0Data'>>,
 ): Promise<void> {
   const updated = new Date().toISOString()
   if (database) {
@@ -276,6 +277,7 @@ export async function resetSessionFromScratch(
         turnsUsed: 0,
         tokensUsed: 0,
         goal: initialGoal,
+        phase0Data: session.phase0Data,
         updated: now,
       })
     })
@@ -298,6 +300,7 @@ export async function resetSessionFromScratch(
       target.turnsUsed = 0
       target.tokensUsed = 0
       target.goal = initialGoal
+      target.phase0Data = session.phase0Data
       target.updated = now
     }
   }

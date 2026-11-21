@@ -12,6 +12,7 @@ import { getLlmConfig } from '../llm/llm-config'
 import {
   getSessionById,
   listSessionMessages,
+  updateSessionMetrics,
   updateSessionTitle,
   type StoredChatMessage,
 } from '../memory/app-db'
@@ -107,10 +108,58 @@ export const p0State = {
   ] as SolutionComponentMapping[],
 }
 
-export function resetP0State(initiativeTitle = 'Plataforma Web Modular'): void {
+export function restoreP0StateFromData(data: Phase0ThreeStepData): void {
+  if (data.step1?.featureTitle) p0State.featureTitle = data.step1.featureTitle
+  if (data.step1?.rawBusinessLanguageText) p0State.rawBusinessLanguageText = data.step1.rawBusinessLanguageText
+  if (Array.isArray(data.step1?.needsList) && data.step1.needsList.length > 0) {
+    p0State.needsList = data.step1.needsList.map((n, idx) => ({
+      id: n.id || `NEED-${idx + 1}`,
+      description: n.description || '',
+      expectedImpact: n.expectedImpact || '',
+    }))
+  }
+  if (data.step2?.marketStandard) p0State.marketStandard = data.step2.marketStandard
+  if (data.step2?.mcpUrl !== undefined) p0State.mcpUrl = data.step2.mcpUrl
+  if (data.step2?.currentSituation?.title) p0State.currentSituationTitle = data.step2.currentSituation.title
+  if (Array.isArray(data.step2?.currentSituation?.limitationsOrCapabilities)) {
+    p0State.currentSituationLimitations = [...data.step2.currentSituation.limitationsOrCapabilities]
+  }
+  if (data.step2?.desiredSituation?.title) p0State.desiredSituationTitle = data.step2.desiredSituation.title
+  if (Array.isArray(data.step2?.desiredSituation?.limitationsOrCapabilities)) {
+    p0State.desiredSituationCapabilities = [...data.step2.desiredSituation.limitationsOrCapabilities]
+  }
+  if (data.step2?.transitionSituation?.title) p0State.transitionSituationTitle = data.step2.transitionSituation.title
+  if (Array.isArray(data.step2?.transitionSituation?.limitationsOrCapabilities)) {
+    p0State.transitionMilestones = [...data.step2.transitionSituation.limitationsOrCapabilities]
+  }
+  if (Array.isArray(data.step3?.featureComponentMappings) && data.step3.featureComponentMappings.length > 0) {
+    p0State.components = data.step3.featureComponentMappings.map((c) => ({
+      componentId: c.componentId,
+      name: c.name,
+      action: c.action || 'CREATE',
+      targetState: c.targetState || 'DESIRED',
+      description: c.description || '',
+      dependsOn: Array.isArray(c.dependsOn) ? [...c.dependsOn] : [],
+    }))
+  }
+}
+
+export function resetP0State(options?: {
+  preserveBusinessDefinition?: boolean
+  initiativeTitle?: string
+}): void {
   phase0SubStep = 1
   isMarkdownView = false
-  p0State.featureTitle = initiativeTitle
+  const shouldPreserve = options?.preserveBusinessDefinition ?? true
+
+  if (shouldPreserve) {
+    if (options?.initiativeTitle && (!p0State.featureTitle || p0State.featureTitle === 'Plataforma Web Modular')) {
+      p0State.featureTitle = options.initiativeTitle
+    }
+    return
+  }
+
+  p0State.featureTitle = options?.initiativeTitle || 'Plataforma Web Modular'
   p0State.rawBusinessLanguageText = ''
   p0State.needsList = [
     {
@@ -1516,6 +1565,11 @@ export async function renderWorkspaceScreen(
     return
   }
 
+  // Restaurar automáticamente la definición de negocio si fue previamente guardada
+  if (session.phase0Data) {
+    restoreP0StateFromData(session.phase0Data)
+  }
+
   const handle = getWorkspaceDirectoryHandle()
   const config = getLlmConfig()
   const running = isSessionRunning(sessionId)
@@ -1692,6 +1746,9 @@ export async function renderWorkspaceScreen(
                         </button>
                         <button type="button" id="load-p0-example-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-2.5 py-1.5 text-xs font-semibold text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition" title="Pre-llenar con una especificación empresarial completa">
                           <span>✨ Cargar Ejemplo</span>
+                        </button>
+                        <button type="button" id="clear-p0-form-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-border-default bg-bg-app px-2.5 py-1.5 text-xs font-semibold text-text-muted hover:bg-bg-elevated hover:text-red-400 transition" title="Vaciar todos los campos del formulario">
+                          <span>🗑️ Limpiar Campos</span>
                         </button>
                       </div>
                     </div>
@@ -2325,6 +2382,12 @@ export async function renderWorkspaceScreen(
     void renderWorkspaceScreen(root, sessionId, rerender)
   })
 
+  // Botón vaciar todos los campos manualmente introducidos
+  root.querySelector<HTMLButtonElement>('#clear-p0-form-btn')?.addEventListener('click', () => {
+    resetP0State({ preserveBusinessDefinition: false, initiativeTitle: session.title })
+    void renderWorkspaceScreen(root, sessionId, rerender)
+  })
+
   // Tabs de navegación directa entre sub-pasos
   root.querySelector<HTMLButtonElement>('#tab-p0-step-1')?.addEventListener('click', () => {
     syncP0StateFromDom(root)
@@ -2522,10 +2585,7 @@ export async function renderWorkspaceScreen(
       ]
     }
 
-    // 1. Guardar título formal de sesión
-    await updateSessionTitle(sessionId, p0State.featureTitle)
-
-    // 2. Construir objeto estructurado de los 3 pasos
+    // 1. Construir objeto estructurado de los 3 pasos
     const phase0ThreeStepPayload: Phase0ThreeStepData = {
       step1: {
         featureTitle: p0State.featureTitle,
@@ -2557,6 +2617,12 @@ export async function renderWorkspaceScreen(
         featureComponentMappings: p0State.components.filter((c) => c.name.trim().length > 0),
       },
     }
+
+    // 2. Guardar título formal de sesión y persistir la definición de negocio de Fase 0
+    await updateSessionMetrics(sessionId, {
+      title: p0State.featureTitle,
+      phase0Data: phase0ThreeStepPayload,
+    })
 
     // 3. Crear el mensaje de resumen para LangGraph
     const promptMessage =

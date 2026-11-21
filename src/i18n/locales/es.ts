@@ -22,7 +22,7 @@ export const es: TranslationDictionary = {
     stop: 'Detener bucle',
     restartFromScratch: 'Iniciar desde cero',
     resetProcess: 'Reiniciar proceso',
-    resetProcessConfirm: '¿Deseas reiniciar el proceso desde cero? Se cancelará cualquier ejecución en curso y se restablecerán las fases, checkpoints agénticos y la definición de Fase 0.',
+    resetProcessConfirm: '¿Deseas reiniciar el proceso desde cero? Se cancelará la ejecución activa y se restablecerán las fases técnicas y los checkpoints del grafo, conservando intacta tu definición de negocio para que puedas reajustarla o relanzarla.',
     resetSuccess: 'Proceso reiniciado desde cero con éxito.',
   },
   sidebar: {

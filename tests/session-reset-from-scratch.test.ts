@@ -7,6 +7,7 @@ import {
   createFileProposal,
   listFileProposals,
   resetSessionFromScratch,
+  updateSessionMetrics,
 } from '../src/memory/app-db'
 import { getSharedIndexedDBSaver } from '../src/memory/indexeddb-saver'
 import { SessionStatus, FileProposalStatus } from '../src/enums'
@@ -18,6 +19,7 @@ import {
 import {
   p0State,
   resetP0State,
+  restoreP0StateFromData,
   computeSdlcPhasesState,
 } from '../src/screens/workspace'
 
@@ -137,14 +139,23 @@ async function runTests() {
   assert.strictEqual(isSessionRunning(session3Id), false, 'La sesión no debe figurar como en ejecución')
   assert.strictEqual(resetBridgeResult.currentPhase, '0_DISCOVERY_RIGOR', 'La fase debe ser 0_DISCOVERY_RIGOR')
 
-  // 5. Probar resetP0State en workspace
-  p0State.featureTitle = 'Iniciativa Modificada'
-  p0State.needsList = [{ id: 'NEED-99', description: 'Custom', expectedImpact: 'High' }]
-  resetP0State('Iniciativa Reiniciada')
-  assert.strictEqual(p0State.featureTitle, 'Iniciativa Reiniciada', 'featureTitle debe ser el proporcionado al resetear')
-  assert.strictEqual(p0State.rawBusinessLanguageText, '', 'rawBusinessLanguageText debe quedar en blanco')
+  // 5. Probar preservación de la definición de negocio en resetP0State
+  p0State.featureTitle = 'Iniciativa Preservada de Negocio'
+  p0State.rawBusinessLanguageText = 'Definición manual detallada por el usuario sobre el negocio.'
+  p0State.needsList = [{ id: 'NEED-1', description: 'Integración bancaria', expectedImpact: 'Crítico' }]
+
+  // Reset por defecto (conserva la definición manual)
+  resetP0State()
+  assert.strictEqual(p0State.featureTitle, 'Iniciativa Preservada de Negocio', 'featureTitle debe conservarse por defecto')
+  assert.strictEqual(p0State.rawBusinessLanguageText, 'Definición manual detallada por el usuario sobre el negocio.', 'rawBusinessLanguageText debe conservarse')
+  assert.strictEqual(p0State.needsList[0].description, 'Integración bancaria', 'needsList debe conservarse intacta')
+
+  // Reset forzado vaciando explícitamente los campos (por ejemplo mediante botón 🗑️ Limpiar Campos)
+  resetP0State({ preserveBusinessDefinition: false, initiativeTitle: 'Nueva Iniciativa' })
+  assert.strictEqual(p0State.featureTitle, 'Nueva Iniciativa', 'featureTitle debe ser el proporcionado al resetear')
+  assert.strictEqual(p0State.rawBusinessLanguageText, '', 'rawBusinessLanguageText debe quedar en blanco al forzar limpieza')
   assert.strictEqual(p0State.needsList.length, 1, 'needsList debe tener 1 elemento limpio')
-  assert.strictEqual(p0State.needsList[0].description, '', 'description debe estar vacía')
+  assert.strictEqual(p0State.needsList[0].description, '', 'description debe estar vacía al forzar limpieza')
 
   // 6. Probar cálculo de stepper en sesión reseteada (Fase 0 waiting)
   const stepperState = computeSdlcPhasesState({
@@ -156,6 +167,43 @@ async function runTests() {
   })
   assert.strictEqual(stepperState[0].status, 'waiting', 'Fase 0 debe estar en estado waiting (HITL 1 listo)')
   assert.strictEqual(stepperState[1].status, 'pending', 'Fase 1 debe estar pendiente')
+
+  // 7. Probar persistencia y recuperación de phase0Data en la sesión tras reset
+  await updateSessionMetrics(sessionId, {
+    phase0Data: {
+      step1: {
+        featureTitle: 'E-Commerce Global',
+        rawBusinessLanguageText: 'Plataforma B2B',
+        needsList: [{ id: 'NEED-1', description: 'Checkout rápido', expectedImpact: 'Conversión' }],
+      },
+      step2: {
+        marketStandard: 'C4_AND_CLEAN_ARCHITECTURE',
+      },
+      step3: {
+        featureComponentMappings: [
+          {
+            componentId: 'comp_cart',
+            name: 'Carrito',
+            action: 'CREATE',
+            targetState: 'DESIRED',
+            description: 'Lógica del carrito',
+            dependsOn: [],
+          },
+        ],
+      },
+    },
+  })
+
+  // Reiniciar la sesión desde cero
+  const resetWithPhase0 = await resetSessionFromScratch(sessionId)
+  assert(resetWithPhase0?.phase0Data, 'phase0Data debe conservarse en el registro de la sesión tras el reset')
+  assert.strictEqual(resetWithPhase0.phase0Data.step1.featureTitle, 'E-Commerce Global')
+
+  // Restaurar p0State desde la data conservada
+  restoreP0StateFromData(resetWithPhase0.phase0Data)
+  assert.strictEqual(p0State.featureTitle, 'E-Commerce Global', 'featureTitle restaurado correctamente')
+  assert.strictEqual(p0State.rawBusinessLanguageText, 'Plataforma B2B', 'rawBusinessLanguageText restaurado correctamente')
+  assert.strictEqual(p0State.components[0].componentId, 'comp_cart', 'Componentes restaurados correctamente')
 
   console.log('✅ Todas las pruebas de Iniciar el Proceso Desde Cero Pasaron Exitosamente.')
 }
