@@ -35,6 +35,18 @@ export {
 // Planificador topológico Fin-Inicio
 export { node_component_scheduler } from './scheduler/component-scheduler'
 
+// Verificación y validación de ejecución LLD
+export {
+  validateExecutionWithLld,
+  type LldExecutionValidationResult,
+  type ValidateExecutionParams,
+} from './verification/lld-execution-validator'
+export {
+  verifyAndRepairApplicationCompilation,
+  validateAndCleanWorkspaceImports,
+  type CompilationVerificationResult,
+} from './verification/compilation-verifier'
+
 // Nodos del Grafo SDLC por Fase
 export {
   node_phase0_assess,

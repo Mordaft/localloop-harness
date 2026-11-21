@@ -10,8 +10,13 @@ import {
   executeCliViaMcp,
   findCliExecutionTool,
   isTetherAvailable,
+  isContext7Available,
   type McpAuthConnectContext,
 } from '../../../mcp/mcp-client'
+import {
+  validateExecutionWithLld,
+  type LldExecutionValidationResult,
+} from '../verification/lld-execution-validator'
 import { getSessionCallbacks } from '../../agent-graph'
 import { appendSessionMessage } from '../../../memory/app-db'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
@@ -90,6 +95,11 @@ export interface BuildScaffoldParams {
     status: 'COPYING' | 'EXECUTING' | 'SUCCESS' | 'RETRYING' | 'NEEDS_ASSISTANCE'
   }) => void
   executeCommand?: (cmd: string) => Promise<{ ok: boolean; output: string; exitCode: number }>
+  validateWithLld?: (params: {
+    command: string
+    output: string
+    exitCode: number
+  }) => Promise<LldExecutionValidationResult | null>
   repairScaffold?: (params: {
     attempt: number
     error: string
@@ -417,11 +427,26 @@ async function runIterativeScaffoldValidation(
     lastOutput = execRes.output
     lastExitCode = execRes.exitCode
 
+    // Validar rigurosamente con el LLD si la salida obtenida encaja con el resultado esperado
+    const lldValidation = await validateExecutionWithLld({
+      command: validationCommand,
+      output: lastOutput,
+      exitCode: lastExitCode,
+      expectedPurpose: `Validación de scaffolding y scripts de ciclo de vida (${currentScaffold.frameworkTitle || currentScaffold.runtime})`,
+      sessionId: params.sessionId ? String(params.sessionId) : undefined,
+      customValidator: params.validateWithLld,
+    })
+
+    const isValidationSuccessful = execRes.ok && lldValidation.isValid
+
     trace('scaffold.validation.result', {
       attempt,
       maxIterations,
       command: validationCommand,
-      ok: execRes.ok,
+      ok: isValidationSuccessful,
+      rawOk: execRes.ok,
+      lldValid: lldValidation.isValid,
+      lldReason: lldValidation.reason,
       exitCode: execRes.exitCode,
       outputPreview: execRes.output.slice(0, 500),
     })
@@ -431,17 +456,17 @@ async function runIterativeScaffoldValidation(
         sessionId: params.sessionId,
         role: 'tool',
         toolName: 'scaffold_validator',
-        content: `[Scaffold LLD] Intento ${attempt}/${maxIterations} | Comando: "${validationCommand}" | Código: ${execRes.exitCode} | Estado: ${execRes.ok ? 'EXITOSO' : 'FALLIDO'}\n\n${execRes.output.slice(0, 1500)}`,
+        content: `[Scaffold LLD] Intento ${attempt}/${maxIterations} | Comando: "${validationCommand}" | Código: ${execRes.exitCode} | Dictamen LLD: ${isValidationSuccessful ? 'EXITOSO' : 'FALLIDO'}\nMotivo LLD: ${lldValidation.reason}\n\n${execRes.output.slice(0, 1500)}`,
       }).catch(() => {})
       callbacks?.onStepUpdate?.(params.sessionId)
     }
 
-    if (execRes.ok) {
+    if (isValidationSuccessful) {
       isClean = true
       if (callbacks && params.sessionId) {
         callbacks.onThinking?.({
           sessionId: params.sessionId,
-          thought: `[Scaffold LLD] Scaffolding validado exitosamente en el intento ${attempt}.`,
+          thought: `[Scaffold LLD] Scaffolding validado exitosamente en el intento ${attempt}: ${lldValidation.reason}`,
           phase: 'thinking',
           sdlcPhase: '1_STRATEGY_AND_PLAN',
         })
@@ -468,13 +493,13 @@ async function runIterativeScaffoldValidation(
 
     // Si falló y quedan iteraciones disponibles (máximo 3)
     if (attempt < maxIterations) {
-      trace(`[Scaffold LLD] Fallo en validación (intento ${attempt}/${maxIterations}). Reajustando archivos con LLD...`)
+      trace(`[Scaffold LLD] Fallo en validación (intento ${attempt}/${maxIterations}): ${lldValidation.reason}. Reajustando archivos con LLD...`)
       let repaired = false
 
       if (params.repairScaffold) {
         const customRepair = await params.repairScaffold({
           attempt,
-          error: lastOutput,
+          error: `${lldValidation.reason}\n${lastOutput}`,
           scaffold: currentScaffold,
         })
         if (customRepair) {
@@ -485,13 +510,24 @@ async function runIterativeScaffoldValidation(
 
       if (!repaired && params.sessionId) {
         try {
+          const authContext: McpAuthConnectContext = params.authContext ?? {
+            agentId: `localloop-session-${params.sessionId}`,
+            agentName: 'LocalLoop (Scaffold_Repair_LLD)',
+            workspace: (params as any)?.workspace || 'localloop-workspace',
+          }
+          const mcpReport = await RuntimeSkillLoader.syncMcpCapabilities({ authContext }).catch(() => null)
+          const hasContext7 = isContext7Available(mcpReport)
+          const context7Hint = hasContext7
+            ? '\n📚 Context7 está disponible. Si el fallo se relaciona con dependencias, librerías obsoletas o cambios de sintaxis en frameworks (Vite, TypeScript, Tailwind, etc.), DEBES usar las herramientas Context7 (mcp_context7_*) para verificar las versiones y APIs oficiales vigentes.'
+            : ''
+
           const repairLlm = await streamLlmPhase({
             sessionId: params.sessionId,
             phaseName: `Fase 1: Auto-reparación de Scaffolding por LLD (intento ${attempt})`,
             sdlcPhase: '1_STRATEGY_AND_PLAN',
             roleId: 'GovernanceProject_Planner',
-            systemPrompt: `Eres el Diseñador Técnico de Bajo Nivel (LLD) y Arquitecto de LocalLoop. Tu misión es corregir los archivos de configuración, manifiestos o scripts de ciclo de vida del scaffolding para que el comando de validación tenga éxito.`,
-            userPrompt: `Fallo de validación en scaffolding al ejecutar: "${validationCommand}"\nSalida del error:\n\`\`\`\n${lastOutput.slice(0, 2500)}\n\`\`\`\nCorrige los archivos necesarios con fs_write_file o propose_project_scaffold.`,
+            systemPrompt: `Eres el Diseñador Técnico de Bajo Nivel (LLD) y Arquitecto de LocalLoop. Tu misión es corregir los archivos de configuración, manifiestos o scripts de ciclo de vida del scaffolding para que el comando de validación tenga éxito.${context7Hint}`,
+            userPrompt: `Fallo de validación en scaffolding al ejecutar: "${validationCommand}"\nDictamen del LLD: ${lldValidation.reason}\n${lldValidation.detectedErrors ? `Señales detectadas: ${lldValidation.detectedErrors.join(' | ')}\n` : ''}Salida del comando:\n\`\`\`\n${lastOutput.slice(0, 2500)}\n\`\`\`\nCorrige los archivos necesarios con fs_write_file o propose_project_scaffold.${context7Hint}`,
             tools: [...getFileSystemToolSpecs(), getSandboxToolSpec()],
             defaultFallback: () => ({ content: '', thought: 'No se pudo generar auto-reparación en fallback.' }),
           })

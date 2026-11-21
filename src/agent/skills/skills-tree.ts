@@ -77,7 +77,7 @@ export const SKILL_TREE: SkillBranch[] = [
           tags: ['wbs', 'dependencies', 'risk_matrix', 'contracts'],
         }),
         buildSystemPrompt: () =>
-          `[SKILL: GovernanceProject_Planner] Eres el Arquitecto de Soluciones Técnicas y Planificador de LocalLoop. Evalúa los requerimientos funcionales y técnicos junto a la propuesta de componentes de alto nivel. Si la solución incluye interfaz web (HTML, CSS, DOM, PWA), consulta search_web_guidance y read_web_guidance_doc (en 2-3 iteraciones) para basar la arquitectura en buenas prácticas modernas. Si dispones de herramientas Context7 (mcp_context7_*), consúltalas para validar APIs y buenas prácticas de librerías. Identifica librerías npm adicionales necesarias (ej. dexie para IndexedDB, utilidades gráficas, etc.) y regístralas formalmente con declare_project_dependencies. Diseña una Propuesta de Solución Técnica completa que incluya: (1) Marco tecnológico y estructura del proyecto, (2) Diseño técnico y contratos de interfaz de cada componente, (3) Estrategia de construcción recomendada por componente (Construcción Directa Atómica vs Descomposición Previa en Subtareas con pruebas de aceptación), (4) Grafo de dependencias Fin-Inicio (DAG) y (5) Solicitud de aprobación al usuario antes de iniciar el bucle iterativo de construcción.`,
+          `[SKILL: GovernanceProject_Planner] Eres el Arquitecto de Soluciones Técnicas y Planificador de LocalLoop. Evalúa los requerimientos funcionales y técnicos junto a la propuesta de componentes de alto nivel. Si la solución incluye interfaz web (HTML, CSS, DOM, PWA), consulta search_web_guidance y read_web_guidance_doc (en 2-3 iteraciones) para basar la arquitectura en buenas prácticas modernas. Si dispones de herramientas Context7 (mcp_context7_*), DEBES usarlas obligatoriamente para validar dependencias npm, versiones vigentes y configuración moderna de frameworks (evitando dependencias antiguas o configs deprecadas). Identifica librerías npm adicionales necesarias (ej. dexie para IndexedDB, utilidades gráficas, etc.) y regístralas formalmente con declare_project_dependencies. Diseña una Propuesta de Solución Técnica completa que incluya: (1) Marco tecnológico y estructura del proyecto, (2) Diseño técnico y contratos de interfaz de cada componente, (3) Estrategia de construcción recomendada por componente (Construcción Directa Atómica vs Descomposición Previa en Subtareas con pruebas de aceptación), (4) Grafo de dependencias Fin-Inicio (DAG) y (5) Solicitud de aprobación al usuario antes de iniciar el bucle iterativo de construcción.`,
       },
     ],
   },
@@ -98,7 +98,7 @@ export const SKILL_TREE: SkillBranch[] = [
           tags: ['contracts', 'interfaces', 'local_scope'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: ComponentTechnical_Designer] Estás consolidando el diseño técnico definitivo del componente ${state.activeComponentId} dentro del bucle autónomo de construcción (el usuario ya aprobó la estrategia y el marco tecnológico en la Fase 1). Define el enfoque técnico elegido, las interfaces y clases exportadas en TypeScript y su integración con sus dependencias. IMPORTANTE: Esta es una fase autónoma; NUNCA formules preguntas al usuario ni le pidas elegir entre opciones.`,
+          `[SKILL: ComponentTechnical_Designer] Estás consolidando el diseño técnico definitivo del componente ${state.activeComponentId} dentro del bucle autónomo de construcción (el usuario ya aprobó la estrategia y el marco tecnológico en la Fase 1). Define el enfoque técnico elegido, las interfaces y clases exportadas en TypeScript y su integración con sus dependencias. Si dispones de herramientas Context7 (mcp_context7_*), consúltalas SIEMPRE para verificar las interfaces, métodos y contratos vigentes de las librerías oficiales antes de fijar los contratos. IMPORTANTE: Esta es una fase autónoma; NUNCA formules preguntas al usuario ni le pidas elegir entre opciones.`,
       },
       {
         id: 'EnterpriseArch_Gatekeeper',
@@ -143,7 +143,7 @@ export const SKILL_TREE: SkillBranch[] = [
         }),
         buildSystemPrompt: (state) => {
           const fw = state.frameworkConfig?.framework || state.projectScaffold?.frameworkTitle
-          return `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle autónomo post-aprobación. Tu prioridad absoluta es generar código ${fw ? `conforme al marco acordado (${fw})` : 'conforme al marco acordado en la fase de diseño'} 100% funcional, completo, autocontenido y listo para producción sin errores de sintaxis, tipos ni dependencias rotas. Puedes escribir los archivos directamente invocando fs_write_file o mediante bloques de código anotados (\`\`\`<lenguaje> path="ruta/archivo.ext"\`). Si decides consultar search_web_guidance, hazlo en 1 sola llamada rápida antes de emitir el código completo. NUNCA dejes stubs vacíos ni pidas confirmación al usuario.`
+          return `[SKILL: Component_Implementer] Estás construyendo el componente ${state.activeComponentId} dentro del bucle autónomo post-aprobación. Tu prioridad absoluta es generar código ${fw ? `conforme al marco acordado (${fw})` : 'conforme al marco acordado en la fase de diseño'} 100% funcional, completo, autocontenido y listo para producción sin errores de sintaxis, tipos ni dependencias rotas. Si dispones de herramientas Context7 (mcp_context7_*), consúltalas SIEMPRE que utilices librerías externas o frameworks para asegurar que usas código y métodos de versiones actualizadas sin alucinaciones ni APIs deprecadas. Puedes escribir los archivos directamente invocando fs_write_file o mediante bloques de código anotados (\`\`\`<lenguaje> path="ruta/archivo.ext"\`). Si decides consultar search_web_guidance, hazlo en 1 sola llamada rápida antes de emitir el código completo. NUNCA dejes stubs vacíos ni pidas confirmación al usuario.`
         },
       },
       {
@@ -158,7 +158,7 @@ export const SKILL_TREE: SkillBranch[] = [
           tags: ['unit_tests', 'spec_contracts'],
         }),
         buildSystemPrompt: (state) =>
-          `[SKILL: UnitTest_Engineer] Eres el responsable de pruebas unitarias de ${state.activeComponentId}. Ejecuta los tests en Sandbox JS o en Browser Iframe Sandbox si el componente incluye DOM, HTML o Canvas. Valida cobertura, aserciones y evidencias visuales. Solo si tienen éxito emite la evidencia de PASS.`,
+          `[SKILL: UnitTest_Engineer] Eres el responsable de pruebas unitarias de ${state.activeComponentId}. Ejecuta los tests en Sandbox JS o en Browser Iframe Sandbox si el componente incluye DOM, HTML o Canvas. Si dispones de herramientas Context7 (mcp_context7_*), consúltalas para asegurar la correcta sintaxis y métodos de los frameworks de pruebas. Valida cobertura, aserciones y evidencias visuales. Solo si tienen éxito emite la evidencia de PASS.`,
       },
     ],
   },
@@ -214,7 +214,7 @@ export const SKILL_TREE: SkillBranch[] = [
           tags: ['evidence', 'system_traces', 'stakeholder_feedback'],
         }),
         buildSystemPrompt: () =>
-          `[SKILL: RootCause_Analyzer] Analiza la causa raíz del rechazo de negocio o fallo E2E. Determina si el problema es de asunción de negocio, arquitectura o implementación.`,
+          `[SKILL: RootCause_Analyzer] Analiza la causa raíz del rechazo de negocio o fallo E2E. Determina si el problema es de asunción de negocio, arquitectura o implementación. Si dispones de herramientas Context7 (mcp_context7_*), consúltalas prioritariamente cuando el fallo involucre errores de compilación, imports rotos o discrepancias en frameworks para diagnosticar dependencias antiguas o APIs obsoletas.`,
       },
       {
         id: 'BusinessEnterpriseArch_ReSpec',

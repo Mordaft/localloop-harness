@@ -14,8 +14,13 @@ import {
   executeCliViaMcp,
   findCliExecutionTool,
   isTetherAvailable,
+  isContext7Available,
   type McpAuthConnectContext,
 } from '../../../mcp/mcp-client'
+import {
+  validateExecutionWithLld,
+  type LldExecutionValidationResult,
+} from './lld-execution-validator'
 import { streamLlmPhase } from '../execution/llm-phase-streamer'
 import { getSessionCallbacks } from '../../agent-graph'
 import { appendSessionMessage } from '../../../memory/app-db'
@@ -31,6 +36,7 @@ export interface CompilationVerificationResult {
   repairedFiles: string[]
   attempts: number
   error?: string
+  lldReason?: string
 }
 
 /**
@@ -109,6 +115,11 @@ export async function verifyAndRepairApplicationCompilation(
   options?: {
     maxRepairIterations?: number
     authContext?: McpAuthConnectContext
+    validateWithLld?: (params: {
+      command: string
+      output: string
+      exitCode: number
+    }) => Promise<LldExecutionValidationResult | null>
   },
 ): Promise<CompilationVerificationResult> {
   const maxIterations = options?.maxRepairIterations ?? 3
@@ -164,6 +175,7 @@ export async function verifyAndRepairApplicationCompilation(
   let attempt = 0
   let lastOutput = ''
   let lastExitCode = 0
+  let lastLldReason = ''
   let isClean = false
 
   while (attempt < maxIterations) {
@@ -184,12 +196,25 @@ export async function verifyAndRepairApplicationCompilation(
     lastOutput = execRes.output
     lastExitCode = execRes.exitCode
 
+    // Validar rigurosamente con el LLD si la salida obtenida encaja con el resultado esperado
+    const lldValidation = await validateExecutionWithLld({
+      command: buildCmd,
+      output: lastOutput,
+      exitCode: lastExitCode,
+      expectedPurpose: `Compilación y verificación de arranque real de la aplicación (${bundler})`,
+      sessionId: state.sessionId ? String(state.sessionId) : undefined,
+      customValidator: options?.validateWithLld,
+    })
+    lastLldReason = lldValidation.reason
+
+    const isCleanCompilation = execRes.ok && lldValidation.isValid
+
     if (state.sessionId) {
       await appendSessionMessage({
         sessionId: state.sessionId,
         role: 'tool',
         toolName: cliTool.qualifiedName,
-        content: `[Tether CLI] Comando: "${buildCmd}" (intento ${attempt}/${maxIterations}) | Código: ${execRes.exitCode} | Estado: ${execRes.ok ? 'EXITOSO' : 'FALLIDO'}\n\n${execRes.output.slice(0, 1500)}`,
+        content: `[Tether CLI] Comando: "${buildCmd}" (intento ${attempt}/${maxIterations}) | Código: ${execRes.exitCode} | Dictamen LLD: ${isCleanCompilation ? 'EXITOSO' : 'FALLIDO'}\nMotivo LLD: ${lldValidation.reason}\n\n${execRes.output.slice(0, 1500)}`,
       }).catch(() => {})
       callbacks?.onStepUpdate?.(state.sessionId)
     }
@@ -197,29 +222,29 @@ export async function verifyAndRepairApplicationCompilation(
     if (callbacks && state.sessionId) {
       callbacks.onThinking?.({
         sessionId: state.sessionId,
-        thought: execRes.ok
-          ? `[Tether CLI] Compilación verificada exitosamente ("${buildCmd}")`
-          : `[Tether CLI] Fallo de compilación detectado ("${buildCmd}"). Iniciando auto-reparación...`,
+        thought: isCleanCompilation
+          ? `[Tether CLI] Compilación verificada exitosamente ("${buildCmd}"): ${lldValidation.reason}`
+          : `[Tether CLI] Fallo de compilación detectado ("${buildCmd}"): ${lldValidation.reason}. Iniciando auto-reparación...`,
         phase: 'thinking',
         sdlcPhase: '4_E2E_BUSINESS_AUDIT',
         activeTool: cliTool.qualifiedName,
       })
     }
 
-    if (execRes.ok) {
+    if (isCleanCompilation) {
       isClean = true
-      trace(`[SDLCGraph] ✅ Compilación y arranque verificados exitosamente con Tether CLI en el intento ${attempt}.`)
+      trace(`[SDLCGraph] ✅ Compilación y arranque verificados exitosamente con Tether CLI y confirmados por LLD en el intento ${attempt}.`)
       break
     }
 
     trace(
-      `[SDLCGraph] ❌ Fallo de compilación detectado por Tether (intento ${attempt}/${maxIterations}, exitCode ${lastExitCode}):\n${lastOutput}`,
+      `[SDLCGraph] ❌ Fallo de compilación confirmado por LLD (intento ${attempt}/${maxIterations}, exitCode ${lastExitCode}):\n${lldValidation.reason}\n${lastOutput}`,
     )
 
     if (callbacks && state.sessionId) {
       callbacks.onThinking?.({
         sessionId: state.sessionId,
-        thought: `Error de compilación detectado con Tether en intento ${attempt}. Iniciando auto-reparación...`,
+        thought: `Error de compilación detectado con Tether en intento ${attempt}: ${lldValidation.reason}. Iniciando auto-reparación...`,
         phase: 'thinking',
         sdlcPhase: '4_E2E_BUSINESS_AUDIT',
       })
@@ -241,7 +266,16 @@ export async function verifyAndRepairApplicationCompilation(
         allSourceFiles.push({ path: 'src/main.ts', content: mainTsFile })
       }
 
+      const hasContext7 = isContext7Available(mcpReport)
+      const context7Hint = hasContext7
+        ? '\n4. Si el error de compilación se debe a dependencias obsoletas, cambios en frameworks o signaturas de librerías externas, dispones de herramientas Context7 (mcp_context7_*). DEBES utilizarlas inmediatamente para consultar la documentación oficial y ejemplos de código vigentes.'
+        : ''
+
       const repairPrompt = `Se ha producido el siguiente error de compilación al arrancar o compilar la aplicación generada:
+Comando ejecutado: "${buildCmd}"
+Dictamen del LLD: ${lldValidation.reason}
+${lldValidation.detectedErrors ? `Errores detectados: ${lldValidation.detectedErrors.join(' | ')}\n` : ''}
+Salida de la terminal:
 \`\`\`
 ${lastOutput.slice(0, 3000)}
 \`\`\`
@@ -252,7 +286,7 @@ ${allSourceFiles.map((f) => `--- "${f.path}" ---\n${f.content.slice(0, 1500)}`).
 INSTRUCCIONES DE AUTO-REPARACIÓN:
 1. Analiza el error del compilador (TypeScript/Vite/SyntaxError), identifica exactamente el archivo, línea y causa raíz (import roto, export no coincidente, tipo incorrecto o sintaxis inválida).
 2. Usa la herramienta "fs_write_file" o bloques de código \`\`\`typescript path="ruta/archivo.ts" para escribir el archivo corregido de forma completa y transpilable.
-3. Si dispones de herramientas Tether (${cliTool.qualifiedName}), puedes invocar comandos de validación para asegurar la corrección.`
+3. Si dispones de herramientas Tether (${cliTool.qualifiedName}), puedes invocar comandos de validación para asegurar la corrección.${context7Hint}`
 
       const repairLlm = await streamLlmPhase({
         sessionId: state.sessionId,
@@ -262,7 +296,7 @@ INSTRUCCIONES DE AUTO-REPARACIÓN:
         systemPrompt: `Eres el Desarrollador de Software y Especialista en Corrección de Errores de LocalLoop.
 Tu tarea es resolver de forma quirúrgica cualquier error de compilación o arranque reportado por la terminal de Tether.
 Debes escribir las correcciones completas con fs_write_file o bloques cercados con path="...".
-No te detengas hasta que el código sea 100% válido y transpilable.`,
+No te detengas hasta que el código sea 100% válido y transpilable.${context7Hint}`,
         userPrompt: repairPrompt,
         tools: [...getFileSystemToolSpecs(), getSandboxToolSpec()],
         defaultFallback: () => ({
@@ -333,6 +367,7 @@ No te detengas hasta que el código sea 100% válido y transpilable.`,
     output: lastOutput,
     repairedFiles,
     attempts: attempt,
-    error: isClean ? undefined : `Error de compilación persistente tras ${attempt} intentos: ${lastOutput.slice(0, 500)}`,
+    error: isClean ? undefined : `Error de compilación persistente tras ${attempt} intentos: ${lastLldReason ? `[${lastLldReason}] ` : ''}${lastOutput.slice(0, 500)}`,
+    lldReason: lastLldReason || undefined,
   }
 }

@@ -131,6 +131,60 @@ const CAPABILITY_RULES: Array<{
   },
 ]
 
+/**
+ * Patrones conocidos de error en salidas de terminal CLI (compiladores, bundlers, gestores de paquetes y runtimes).
+ */
+export const KNOWN_CLI_ERROR_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
+  { pattern: /\berror TS\d+:/i, description: 'Error de tipos o sintaxis de TypeScript' },
+  { pattern: /\bTS\d+:\s*error\b/i, description: 'Error de TypeScript' },
+  { pattern: /\bfailed to compile\b/i, description: 'Fallo de compilación' },
+  { pattern: /\bcompilation failed\b/i, description: 'Fallo de compilación' },
+  { pattern: /\bbuild failed\b/i, description: 'Fallo en proceso de build' },
+  { pattern: /\bpre-transform error\b/i, description: 'Error de pre-transformación de Vite' },
+  { pattern: /\brollup failed\b/i, description: 'Error de empaquetado de Rollup' },
+  { pattern: /\bcould not resolve entry module\b/i, description: 'Módulo de entrada no encontrado' },
+  { pattern: /\b(?:command not found|is not recognized as an internal or external command)\b/i, description: 'Comando o ejecutable no encontrado' },
+  { pattern: /\bcannot find module\b/i, description: 'Módulo o archivo no encontrado' },
+  { pattern: /\bfailed to resolve import\b/i, description: 'Importación no resuelta' },
+  { pattern: /\bcannot find package\b/i, description: 'Paquete de dependencias no encontrado' },
+  { pattern: /\bERR_MODULE_NOT_FOUND\b/i, description: 'Módulo no resuelto en Node.js' },
+  { pattern: /\bmodule parse failed\b/i, description: 'Fallo al parsear módulo' },
+  { pattern: /\b(?:npm|pnpm|yarn)\s+(?:err!|error|err\b)/i, description: 'Error de gestor de paquetes npm/pnpm/yarn' },
+  { pattern: /\bmissing script:/i, description: 'Script no definido en package.json' },
+  { pattern: /\b(?:syntaxerror|typeerror|referenceerror|rangeerror):/i, description: 'Excepción de sintaxis o tipo en tiempo de ejecución' },
+  { pattern: /\b(?:unhandled rejection|unhandledpromiserejection)\b/i, description: 'Promesa rechazada no capturada' },
+  { pattern: /\b(?:panic:|fatal error:)/i, description: 'Pánico o error fatal en runtime nativo' },
+  { pattern: /\b(?:FAIL\s+|tests failed|\b[1-9]\d*\s+failed\b)\b/i, description: 'Fallo en batería de pruebas' },
+  { pattern: /\b(?:enoent:|eacces:|eaddrinuse)\b/i, description: 'Error de sistema de archivos o red' },
+  { pattern: /\bsh:\s*(?:line\s*\d+:)?\s*[\w\.\-]+:\s*not found\b/i, description: 'Binario shell no encontrado' },
+  { pattern: /\b(vite|tsc|node|go|dotnet|cargo):\s*(?:command\s*)?not found\b/i, description: 'Herramienta de compilación no encontrada' },
+]
+
+/**
+ * Evalúa estáticamente si una salida de texto contiene señales claras de error.
+ */
+export function detectStaticErrorSignals(output: string, exitCode?: number): {
+  hasErrors: boolean
+  detectedErrors: string[]
+} {
+  const detectedErrors: string[] = []
+
+  if (exitCode !== undefined && exitCode !== 0) {
+    detectedErrors.push(`El proceso finalizó con código de salida no nulo: ${exitCode}`)
+  }
+
+  for (const item of KNOWN_CLI_ERROR_PATTERNS) {
+    if (item.pattern.test(output)) {
+      detectedErrors.push(item.description)
+    }
+  }
+
+  return {
+    hasErrors: detectedErrors.length > 0,
+    detectedErrors,
+  }
+}
+
 interface RoleCapabilityProfile {
   roleId: string
   description: string
@@ -183,10 +237,11 @@ export const ROLE_CAPABILITY_MATRIX: RoleCapabilityProfile[] = [
       'ARCHITECTURE_AND_LANDSCAPE',
       'CLI_EXECUTION_AND_BUILD',
       'FILESYSTEM_AND_WORKSPACE',
+      'DOCUMENTATION_AND_KNOWLEDGE',
     ],
-    secondaryCategories: ['TESTING_AND_VALIDATION', 'DOCUMENTATION_AND_KNOWLEDGE', 'GENERAL_PURPOSE'],
+    secondaryCategories: ['TESTING_AND_VALIDATION', 'GENERAL_PURPOSE'],
     usageDirective:
-      'Usa las herramientas MCP de CLI, construcción y sistema de archivos para verificar o inicializar la estructura del proyecto, dependencias y scripts base durante el setup.',
+      'Usa las herramientas MCP de CLI, construcción y sistema de archivos para verificar o inicializar la estructura del proyecto, dependencias y scripts base durante el setup. Si dispones de Context7, consúltalo obligatoriamente para validar versiones y dependencias vigentes.',
   },
   {
     roleId: 'ComponentTechnical_Designer',
@@ -194,7 +249,7 @@ export const ROLE_CAPABILITY_MATRIX: RoleCapabilityProfile[] = [
     primaryCategories: ['ARCHITECTURE_AND_LANDSCAPE', 'FILESYSTEM_AND_WORKSPACE', 'DOCUMENTATION_AND_KNOWLEDGE'],
     secondaryCategories: ['TESTING_AND_VALIDATION', 'CLI_EXECUTION_AND_BUILD', 'GENERAL_PURPOSE'],
     usageDirective:
-      'Apóyate en las herramientas MCP para inspeccionar contratos existentes, esquemas, tipos y estructura de módulos antes de fijar el diseño técnico del componente.',
+      'Apóyate en las herramientas MCP para inspeccionar contratos existentes, esquemas, tipos y estructura de módulos antes de fijar el diseño técnico del componente. Consulta Context7 para contratos de librerías oficiales.',
   },
   {
     roleId: 'EnterpriseArch_Gatekeeper',
@@ -207,18 +262,28 @@ export const ROLE_CAPABILITY_MATRIX: RoleCapabilityProfile[] = [
   {
     roleId: 'Component_Implementer',
     description: 'Fase 3.1 - Implementador de Componentes y Construcción',
-    primaryCategories: ['CLI_EXECUTION_AND_BUILD', 'FILESYSTEM_AND_WORKSPACE', 'TESTING_AND_VALIDATION'],
-    secondaryCategories: ['DOCUMENTATION_AND_KNOWLEDGE', 'ARCHITECTURE_AND_LANDSCAPE', 'OBSERVABILITY_AND_RCA', 'GENERAL_PURPOSE'],
+    primaryCategories: [
+      'CLI_EXECUTION_AND_BUILD',
+      'FILESYSTEM_AND_WORKSPACE',
+      'TESTING_AND_VALIDATION',
+      'DOCUMENTATION_AND_KNOWLEDGE',
+    ],
+    secondaryCategories: ['ARCHITECTURE_AND_LANDSCAPE', 'OBSERVABILITY_AND_RCA', 'GENERAL_PURPOSE'],
     usageDirective:
-      'Prioriza el uso de las herramientas MCP de ejecución CLI, construcción y sistema de archivos para compilar, instalar dependencias, escribir código y verificar que el componente construye sin errores.',
+      'Prioriza el uso de las herramientas MCP de ejecución CLI, construcción y sistema de archivos para compilar, instalar dependencias, escribir código y verificar que el componente construye sin errores. Utiliza Context7 activamente para la documentación oficial y ejemplos de código vigentes de librerías.',
   },
   {
     roleId: 'UnitTest_Engineer',
     description: 'Fase 3.2 - Ingeniero de Pruebas Unitarias y Verificación Técnica',
-    primaryCategories: ['TESTING_AND_VALIDATION', 'CLI_EXECUTION_AND_BUILD', 'FILESYSTEM_AND_WORKSPACE'],
-    secondaryCategories: ['OBSERVABILITY_AND_RCA', 'DOCUMENTATION_AND_KNOWLEDGE', 'GENERAL_PURPOSE'],
+    primaryCategories: [
+      'TESTING_AND_VALIDATION',
+      'CLI_EXECUTION_AND_BUILD',
+      'FILESYSTEM_AND_WORKSPACE',
+      'DOCUMENTATION_AND_KNOWLEDGE',
+    ],
+    secondaryCategories: ['OBSERVABILITY_AND_RCA', 'GENERAL_PURPOSE'],
     usageDirective:
-      'Invoca las herramientas MCP de testing y CLI para ejecutar suites de pruebas unitarias, compilación de tipos y cobertura real sobre el componente implementado.',
+      'Invoca las herramientas MCP de testing y CLI para ejecutar suites de pruebas unitarias, compilación de tipos y cobertura real sobre el componente implementado. Emplea Context7 para APIs de testing actualizadas.',
   },
   {
     roleId: 'E2EAutomation_Runner',
@@ -239,10 +304,16 @@ export const ROLE_CAPABILITY_MATRIX: RoleCapabilityProfile[] = [
   {
     roleId: 'RootCause_Analyzer',
     description: 'Fase 5.1 - Analizador de Causa Raíz (RCA) y Diagnóstico',
-    primaryCategories: ['OBSERVABILITY_AND_RCA', 'TESTING_AND_VALIDATION', 'CLI_EXECUTION_AND_BUILD', 'FILESYSTEM_AND_WORKSPACE'],
+    primaryCategories: [
+      'OBSERVABILITY_AND_RCA',
+      'TESTING_AND_VALIDATION',
+      'CLI_EXECUTION_AND_BUILD',
+      'FILESYSTEM_AND_WORKSPACE',
+      'DOCUMENTATION_AND_KNOWLEDGE',
+    ],
     secondaryCategories: ['ARCHITECTURE_AND_LANDSCAPE', 'GENERAL_PURPOSE'],
     usageDirective:
-      'Emplea las herramientas MCP de diagnóstico, logs, CLI y pruebas para reproducir fallos, inspeccionar salidas de error y aislar la causa raíz exacta.',
+      'Emplea las herramientas MCP de diagnóstico, logs, CLI y pruebas para reproducir fallos, inspeccionar salidas de error y aislar la causa raíz exacta. Consulta Context7 para detectar incompatibilidades de librerías o APIs obsoletas.',
   },
   {
     roleId: 'BusinessEnterpriseArch_ReSpec',
@@ -1624,11 +1695,39 @@ export function buildRoleMcpPromptSupplementFromAssignment(assignment?: RoleMcpA
       ].join('\n')
     : ''
 
+  const hasContext7Tools = assignment.tools.some(
+    (t) =>
+      isContext7Server({ name: t.tool.serverName, url: t.tool.serverUrl }) ||
+      t.tool.qualifiedName.toLowerCase().includes('context7') ||
+      /\b(?:query-docs|resolve-library-id|query_docs|resolve_library_id)\b/i.test(t.tool.name),
+  )
+  const context7ToolNames = assignment.tools
+    .filter(
+      (t) =>
+        isContext7Server({ name: t.tool.serverName, url: t.tool.serverUrl }) ||
+        t.tool.qualifiedName.toLowerCase().includes('context7') ||
+        /\b(?:query-docs|resolve-library-id|query_docs|resolve_library_id)\b/i.test(t.tool.name),
+    )
+    .map((t) => `\`${t.tool.qualifiedName}\``)
+    .join(', ')
+
+  const context7Mandate = hasContext7Tools
+    ? [
+        '\n📚 [INSTRUCCIÓN OBLIGATORIA: USO DE CONTEXT7 PARA DOCUMENTACIÓN OFICIAL VIVA Y DEPENDENCIAS ACTUALIZADAS]:',
+        `Tienes disponible la integración especializada de Context7 mediante las herramientas: ${context7ToolNames}.`,
+        'DEBES utilizar Context7 activamente para reducir drásticamente problemas de dependencias antiguas, APIs obsoletas o discrepancias por actualizaciones en frameworks (Vite, TypeScript, Tailwind, testing, etc.):',
+        '1. Antes de definir dependencias, configurar manifiestos (package.json, tsconfig, vite.config) o escribir código que utilice librerías externas, consulta la documentación oficial y ejemplos de código actualizados en vivo usando Context7 (ej. resolviendo el libraryId y consultando docs).',
+        '2. NUNCA adivines ni recurras a versiones o firmas de memoria para paquetes o frameworks modernos cuando Context7 esté disponible.',
+        '3. Si se produce un error de compilación, importación o configuración durante la construcción o auto-reparación, consulta inmediatamente Context7 para verificar la signatura oficial de la API y las mejores prácticas vigentes de la librería.',
+      ].join('\n')
+    : ''
+
   return [
     '\n\n[CAPACIDADES MCP ASIGNADAS DINÁMICAMENTE A TU ROL]',
     `Rol activo: ${assignment.roleId} (${assignment.roleDescription})`,
     `Directiva de uso MCP: ${directive}`,
     cliMandate,
+    context7Mandate,
     'Herramientas MCP disponibles en tu contexto actual:',
     toolLines,
     'IMPORTANTE: Cuando necesites ejecutar acciones de CLI, construcción, pruebas, lectura/escritura o consulta externa cubiertas por estas herramientas MCP, invócalas directamente mediante tool_calls antes de emitir tu veredicto final.',
@@ -1881,6 +1980,38 @@ export function isTetherAvailable(report?: McpCapabilityAssignmentReport | null)
 }
 
 /**
+ * Localiza las herramientas disponibles de Context7 (documentación oficial y librerías en tiempo real).
+ */
+export function findContext7Tools(report?: McpCapabilityAssignmentReport | null): McpToolDefinition[] {
+  const rep = report ?? getCachedMcpCapabilityReport()
+  if (!rep || rep.tools.length === 0) return []
+
+  return rep.tools
+    .filter(
+      (t) =>
+        isContext7Server({ name: t.tool.serverName, url: t.tool.serverUrl }) ||
+        t.tool.qualifiedName.toLowerCase().includes('context7') ||
+        /\b(?:query-docs|resolve-library-id|query_docs|resolve_library_id)\b/i.test(t.tool.name),
+    )
+    .map((t) => t.tool)
+}
+
+/**
+ * Indica si la integración especializada Context7 está disponible y conectada en memoria.
+ */
+export function isContext7Available(report?: McpCapabilityAssignmentReport | null): boolean {
+  return findContext7Tools(report).length > 0
+}
+
+/**
+ * Comprueba si Context7 está configurado en la base de datos o en la lista de servidores suministrada.
+ */
+export async function isContext7Configured(servers?: StoredMcpServer[]): Promise<boolean> {
+  const list = servers ?? (await listMcpServers())
+  return list.some((s) => isContext7Server(s) && s.enabled !== false)
+}
+
+/**
  * Ejecuta un comando en la máquina anfitriona a través de Tether MCP o la herramienta CLI disponible.
  * Adapta los argumentos al esquema esperado por la herramienta (cmd, command, script, etc.).
  */
@@ -1942,11 +2073,8 @@ export async function executeCliViaMcp(
       // texto plano
     }
 
-    const hasErrorSignals =
-      exitCode !== 0 ||
-      /\b(?:error TS\d+|failed to compile|syntaxerror|compilation failed|build failed|cannot find module|failed to resolve import)\b/i.test(
-        text,
-      )
+    const staticCheck = detectStaticErrorSignals(text, exitCode)
+    const hasErrorSignals = exitCode !== 0 || staticCheck.hasErrors
 
     const elapsedMs = Date.now() - startTime
     trace('tether.execute.complete', {

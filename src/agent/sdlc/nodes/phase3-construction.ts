@@ -141,6 +141,7 @@ Puedes abordar el componente de tres formas según su complejidad:
 1. **Construcción Directa**: Consultar search_web_guidance / read_web_guidance_doc si aplica (máximo 1 consulta) y escribir directamente los archivos completos y funcionales con "fs_write_file" o mediante bloques de código anotados con \`\`\`<lenguaje> path="ruta/archivo.ext".
 2. **Descomposición Previa en Subtareas**: Invocar "plan_and_delegate_tasks" (o "delegate_subagent_scope") definiendo las subtareas y su prueba de aceptación ("acceptanceTest") para delegar la construcción verificada en sub-agentes antes de consolidar los archivos del componente.
 3. **Validación Temprana mediante Tether CLI**: Si dispones de herramientas de ejecución de terminal / Tether (como mcp_tether_run_cli o mcp_tether_execute_command), puedes ejecutar comandos en la terminal del proyecto (por ejemplo \`${validationCmdHint}\`) para validar la sintaxis, tipos, compilación y pruebas antes de dar por finalizada la construcción.
+4. **Consulta de Documentación Oficial con Context7**: Si dispones de herramientas Context7 (mcp_context7_*), DEBES utilizarlas siempre que uses librerías externas o frameworks para consultar la documentación oficial viva y evitar APIs deprecadas o dependencias obsoletas.
 
 REGLAS ESTRICTAS DE CONSTRUCCIÓN Y CALIDAD:
 - Fidelidad al Diseño Técnico: Implementa con exactitud los contratos de interfaces, firmas, tipos y responsabilidades aprobados para este componente en la fase de diseño técnico. No introduzcas frameworks, librerías ni supuestos arquitectónicos ajenos a lo acordado.
@@ -170,7 +171,7 @@ ${(state.technicalDesigns?.[compId]?.[0]?.contracts || []).map((c) => c.schema).
 Archivos sugeridos para esta funcionalidad:
 ${defaultFiles.map((f) => `- "${f.path}": ${f.description || f.path}`).join('\n')}
 
-Guarda los archivos completos y transpilables/interpretables en el workspace (directamente o tras descomponer en subtareas). Si dispones de herramientas Tether (CLI), úsalas prioritariamente para validar la compilación y pruebas de tus archivos.`,
+Guarda los archivos completos y transpilables/interpretables en el workspace (directamente o tras descomponer en subtareas). Si dispones de herramientas Tether (CLI), úsalas prioritariamente para validar la compilación y pruebas de tus archivos. Si dispones de herramientas Context7 (mcp_context7_*), consúltalas siempre para verificar las APIs y mejores prácticas vigentes de librerías.`,
     tools:
       resolvedSkill.tools.length > 0
         ? resolvedSkill.tools
