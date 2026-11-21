@@ -1,5 +1,5 @@
 import { trace } from '../../../diagnostics'
-import { getActiveWorkspaceName, readWorkspaceFile, writeWorkspaceFileDirect } from '../../../fs/workspace-fs'
+import { getActiveWorkspacePath, readWorkspaceFile, writeWorkspaceFileDirect } from '../../../fs/workspace-fs'
 import { executeFileSystemTool, getFileSystemToolSpecs } from '../../../fs/fs-tools'
 import {
   executeBrowserSandbox,
@@ -27,11 +27,12 @@ import {
 } from '../../../llm/llm-client'
 import { getLlmConfig } from '../../../llm/llm-config'
 import { getEngramToolSpecs, getSessionCallbacks } from '../../agent-graph'
-import { appendSessionMessage } from '../../../memory/app-db'
+import { appendSessionMessage, getSavedWorkspaceHandle, getSessionById } from '../../../memory/app-db'
 import {
   callMcpTool,
   findCliExecutionTool,
   getMcpToolsForRole,
+  isAbsoluteOsPath,
   ROLE_CAPABILITY_MATRIX,
 } from '../../../mcp/mcp-client'
 import { FsWriteMode } from '../../../enums'
@@ -107,6 +108,7 @@ export async function streamLlmPhase(params: {
   phaseName: string
   sdlcPhase?: SdlcPhase
   roleId?: string
+  workspacePath?: string
   systemPrompt: string
   userPrompt: string
   tools?: OpenAiToolSpec[]
@@ -134,11 +136,26 @@ export async function streamLlmPhase(params: {
     params.requireLiveLlm ?? callbacks?.requireLiveLlm ?? globalRequireLiveLlm,
   )
 
+  let effectiveWs = (params.workspacePath || getActiveWorkspacePath() || '').trim()
+  if ((!effectiveWs || !isAbsoluteOsPath(effectiveWs)) && sessionId) {
+    const session = await getSessionById(sessionId).catch(() => null)
+    if (session?.workspacePath && isAbsoluteOsPath(session.workspacePath)) {
+      effectiveWs = session.workspacePath.trim()
+    }
+  }
+  if (!effectiveWs || !isAbsoluteOsPath(effectiveWs)) {
+    const saved = await getSavedWorkspaceHandle().catch(() => null)
+    if (saved?.path && isAbsoluteOsPath(saved.path)) {
+      effectiveWs = saved.path.trim()
+    }
+  }
+
   const effectiveRoleId = inferRoleIdForPhase(phaseName, sdlcPhase, params.roleId)
   const mcpAuthContext = {
     agentId: sessionId ? `localloop-session-${sessionId}` : 'localloop-sdlc-agent',
     agentName: `LocalLoop (${effectiveRoleId})`,
-    workspace: getActiveWorkspaceName() || '',
+    workspace: effectiveWs,
+    sessionId: sessionId ? String(sessionId) : undefined,
     onAuthStatus: (msg: string) => {
       if (callbacks && sessionId) {
         callbacks.onThinking?.({

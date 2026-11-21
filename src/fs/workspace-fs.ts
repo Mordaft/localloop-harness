@@ -143,20 +143,34 @@ export async function resolveOrPromptWorkspacePath(folderName: string): Promise<
   if (!suggested) {
     const servers = await listMcpServers().catch(() => [])
     const tether = servers.find((s) => isTetherServer(s))
-    if (tether?.workspace && isAbsoluteOsPath(tether.workspace)) {
+    if (tether?.workspace && isAbsoluteOsPath(tether.workspace) && !tether.workspace.includes('...')) {
       suggested = tether.workspace.trim()
+    }
+  }
+
+  // Si no hay suggested, comprobar si recordamos el directorio padre previo en localStorage
+  if (!suggested && typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const parentDir = localStorage.getItem('localloop_workspace_parent_dir')
+      if (parentDir && isAbsoluteOsPath(parentDir) && !parentDir.includes('...')) {
+        suggested = `${parentDir.replace(/\\/g, '/').replace(/\/+$/, '')}/${folderName}`
+      }
+    } catch {
+      // ignore
     }
   }
 
   // Si la ruta sugerida termina con otra carpeta distinta a folderName,
   // adaptamos el último segmento con folderName
-  if (suggested && isAbsoluteOsPath(suggested)) {
+  if (suggested && isAbsoluteOsPath(suggested) && !suggested.includes('...')) {
     const normalized = suggested.replace(/\\/g, '/').replace(/\/+$/, '')
     const parts = normalized.split('/')
     if (parts.length > 1 && parts[parts.length - 1] !== folderName) {
       parts[parts.length - 1] = folderName
       suggested = parts.join('/')
     }
+  } else {
+    suggested = ''
   }
 
   if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
@@ -164,14 +178,39 @@ export async function resolveOrPromptWorkspacePath(folderName: string): Promise<
       `Has seleccionado la carpeta local "${folderName}".\n\n` +
       `Por favor, confirma o introduce la ruta física absoluta en tu sistema operativo ` +
       `(requerida para Tether MCP y compilación CLI en el anfitrión):`,
-      suggested || `C:/.../${folderName}`,
+      suggested,
     )
-    if (entered && isAbsoluteOsPath(entered.trim())) {
-      return entered.trim().replace(/\\/g, '/')
+    if (entered) {
+      const trimmed = entered.trim()
+      if (isAbsoluteOsPath(trimmed) && !trimmed.includes('...')) {
+        const normalized = trimmed.replace(/\\/g, '/')
+        const lastSlash = normalized.lastIndexOf('/')
+        if (lastSlash > 2 && typeof window !== 'undefined' && window.localStorage) {
+          try {
+            localStorage.setItem('localloop_workspace_parent_dir', normalized.slice(0, lastSlash))
+          } catch {
+            // ignore
+          }
+        }
+        return normalized
+      }
     }
   }
 
-  return suggested && isAbsoluteOsPath(suggested) ? suggested : undefined
+  if (suggested && isAbsoluteOsPath(suggested) && !suggested.includes('...')) {
+    const normalized = suggested.replace(/\\/g, '/')
+    const lastSlash = normalized.lastIndexOf('/')
+    if (lastSlash > 2 && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem('localloop_workspace_parent_dir', normalized.slice(0, lastSlash))
+      } catch {
+        // ignore
+      }
+    }
+    return normalized
+  }
+
+  return undefined
 }
 
 /**

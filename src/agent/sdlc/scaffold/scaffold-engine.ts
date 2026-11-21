@@ -298,6 +298,51 @@ function isWindowsPlatform(): boolean {
 }
 
 /**
+ * Detecta comandos de servidor de desarrollo continuo o procesos daemon que bloquean indefinidamente.
+ */
+export function isDaemonOrDevServerCommand(cmd: string): boolean {
+  const c = cmd.trim().toLowerCase()
+  return (
+    /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|watch)\b/i.test(c) ||
+    /\b(?:vite(?:\s+dev)?|nodemon|webpack-dev-server|next\s+dev|astro\s+dev|remix\s+dev|ng\s+serve)\b/i.test(c) ||
+    /\b(?:python|python3)\s+-m\s+http\.server\b/i.test(c)
+  )
+}
+
+function cleanAndFilterValidationCommand(rawCmd: string): string {
+  let parts: string[] = []
+  if (rawCmd.includes('\n')) {
+    parts = rawCmd
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('@') && !l.startsWith('echo ') && !l.startsWith('exit '))
+      .map((l) => l.replace(/^call\s+/i, ''))
+  } else {
+    parts = rawCmd.split('&&').map((p) => p.trim())
+  }
+
+  const flattened: string[] = []
+  for (const part of parts) {
+    if (part.includes('&&')) {
+      for (const sub of part.split('&&')) {
+        const trimmedSub = sub.trim().replace(/^call\s+/i, '')
+        if (trimmedSub && !trimmedSub.startsWith('@') && !trimmedSub.startsWith('echo ') && !trimmedSub.startsWith('exit ')) {
+          flattened.push(trimmedSub)
+        }
+      }
+    } else {
+      flattened.push(part)
+    }
+  }
+
+  const nonDaemon = flattened.filter((c) => !isDaemonOrDevServerCommand(c))
+  if (nonDaemon.length > 0) {
+    return nonDaemon.join(' && ')
+  }
+  return ''
+}
+
+/**
  * Resuelve el comando de validación para el scaffolding según el sistema operativo o comando personalizado.
  */
 export function resolveValidationCommand(
@@ -305,29 +350,23 @@ export function resolveValidationCommand(
   customCommand?: string,
 ): string {
   if (customCommand && customCommand.trim()) {
-    return customCommand.trim()
+    const cleanedCustom = cleanAndFilterValidationCommand(customCommand.trim())
+    if (cleanedCustom) return cleanedCustom
   }
   const isWin = isWindowsPlatform()
   const rawSetupCmd = isWin ? scaffold.lifecycle.setupCmd : scaffold.lifecycle.setupSh
   if (rawSetupCmd && !rawSetupCmd.includes('No setup command defined') && rawSetupCmd.trim().length > 0) {
-    const trimmed = rawSetupCmd.trim()
-    // Si contiene comandos por lotes de Windows con salto de línea (ej: @echo off\ncall npm install),
-    // extraer los comandos ejecutables reales para evitar errores de sintaxis en shells PTY de PowerShell
-    if (trimmed.includes('@echo off') || trimmed.includes('call ')) {
-      const directCmds = trimmed
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith('@') && !l.startsWith('echo ') && !l.startsWith('exit '))
-        .map((l) => l.replace(/^call\s+/i, ''))
-      if (directCmds.length > 0) {
-        return directCmds.join(' && ')
-      }
+    const cleaned = cleanAndFilterValidationCommand(rawSetupCmd.trim())
+    if (cleaned) {
+      return cleaned
     }
-    return trimmed
   }
   const testCmd = isWin ? scaffold.lifecycle.testCmd : scaffold.lifecycle.testSh
   if (testCmd && testCmd !== 'test' && testCmd.trim().length > 0) {
-    return testCmd
+    const cleanedTest = cleanAndFilterValidationCommand(testCmd.trim())
+    if (cleanedTest) {
+      return cleanedTest
+    }
   }
   return isWin ? 'setup.cmd' : './setup.sh'
 }

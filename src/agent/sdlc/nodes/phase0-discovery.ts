@@ -1,5 +1,5 @@
 import { trace } from '../../../diagnostics'
-import { getActiveWorkspaceName, getActiveWorkspacePath } from '../../../fs/workspace-fs'
+import { getActiveWorkspacePath } from '../../../fs/workspace-fs'
 import { getPersistentEngram, saveSdlcPhaseArtifact } from '../../../memory/engram-memory'
 import { appendSessionMessage, getSavedWorkspaceHandle, getSessionById, listMcpServers, updateSessionMetrics } from '../../../memory/app-db'
 import { SessionStatus } from '../../../enums'
@@ -375,7 +375,7 @@ export async function node_phase0_process_discovery(state: SDLCStateType): Promi
     authContext: {
       agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-sdlc-agent',
       agentName: 'LocalLoop (EnterpriseArch_MCP_Connector)',
-      workspace: state.workspacePath || getActiveWorkspaceName() || '',
+      workspace: state.workspacePath || getActiveWorkspacePath() || '',
       onAuthStatus: (msg) => {
         if (callbacks && state.sessionId) {
           callbacks.onThinking?.({

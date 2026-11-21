@@ -77,6 +77,7 @@ interface ResolvedMcpEndpoint {
 const resolvedEndpointCache = new Map<string, ResolvedMcpEndpoint>()
 const serverAuthTokenCache = new Map<string, string>()
 const inFlightAuthPromises = new Map<string, Promise<string | null>>()
+const tetherTokenWorkspaceCache = new Map<string, string>()
 
 let cachedCapabilityReport: McpCapabilityAssignmentReport | null = null
 let cachedCapabilityTimestamp = 0
@@ -88,7 +89,19 @@ const CAPABILITY_CACHE_TTL_MS = 300_000 // 5 minutos de validez de caché de cap
 export function isAbsoluteOsPath(val: unknown): boolean {
   if (typeof val !== 'string') return false
   const trimmed = val.trim()
-  if (!trimmed || trimmed === 'localloop-workspace' || trimmed === 'workspace') return false
+  if (
+    !trimmed ||
+    trimmed === 'localloop-workspace' ||
+    trimmed === 'workspace' ||
+    trimmed.includes('...') ||
+    trimmed.includes('<') ||
+    trimmed.includes('>') ||
+    trimmed.includes('|') ||
+    trimmed.includes('*') ||
+    trimmed.includes('?')
+  ) {
+    return false
+  }
   return /^([a-zA-Z]:[\\/]|\\\\|\/(?!workspace\b)[a-zA-Z0-9._-]+)/.test(trimmed)
 }
 
@@ -104,54 +117,84 @@ export function sanitizePathForTetherSandbox(pathOrDir: string): string {
   return segments.length > 0 ? segments.join('/') : '.'
 }
 
+/**
+ * Sanitiza comandos para el entorno restringido de Tether y su Command Guard:
+ * - Elimina prefijos `cd <workspace> &&` o `cd /d <workspace> &&` ya que la PTY ya corre dentro del workspace_root.
+ * - Sustituye referencias a la ruta absoluta del workspace por '.' para evitar violación de ABSOLUTE_PATH.
+ * - Elimina cualquier cambio de directorio absoluto inicial hacia letras de unidad de Windows.
+ */
+export function sanitizeCommandForTether(command: string, workspaceRoot?: string): string {
+  if (!command) return ''
+  let clean = command
+
+  if (workspaceRoot) {
+    const wsNormalized = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+    const wsEscaped = wsNormalized
+      .split('/')
+      .map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[\\\\/]+')
+    // Eliminar cd /d "C:/..." && o cd "C:/..." &&
+    const cdRegex = new RegExp(`^\\s*cd(?:\\s+\\/[dD])?\\s+["']?${wsEscaped}["']?\\s*(?:&&|;)?\\s*`, 'i')
+    clean = clean.replace(cdRegex, '')
+    // Reemplazar referencias a la ruta absoluta del workspace por '.'
+    const wsRefRegex = new RegExp(`["']?${wsEscaped}[/\\\\]?["']?`, 'gi')
+    clean = clean.replace(wsRefRegex, '.')
+  }
+
+  // Eliminar cualquier cd inicial a una ruta absoluta de unidad de disco (ej: cd /d C:\... &&)
+  clean = clean.replace(/^\s*cd(?:\s+\/[dD])?\s+["']?[a-zA-Z]:[\\/][^"';&]+["']?\s*(?:&&|;)?\s*/i, '')
+
+  return clean.trim()
+}
+
 const CAPABILITY_RULES: Array<{
   category: Exclude<McpCapabilityCategory, 'GENERAL_PURPOSE'>
   label: string
   keywords: RegExp
 }> = [
-  {
-    category: 'CLI_EXECUTION_AND_BUILD',
-    label: 'Ejecución CLI, Shell, Compilación y Construcción',
-    keywords:
-      /\b(exec|execute|run|command|cmd|shell|cli|terminal|bash|sh|powershell|pwsh|spawn|process|script|build|compile|bundle|npm|pnpm|yarn|npx|tsc|vite|cargo|go|python|node|install|setup|make|docker|tether)\b/i,
-  },
-  {
-    category: 'TESTING_AND_VALIDATION',
-    label: 'Pruebas Automatizadas, Validación, Linting y Auditoría',
-    keywords:
-      /\b(test|tests|testing|vitest|jest|mocha|pytest|assert|assertion|verify|validation|validate|check|lint|eslint|biome|typecheck|audit|e2e|browser|playwright|cypress|webdriver|qa|coverage|smoke|benchmark|security|vulnerability|scan)\b/i,
-  },
-  {
-    category: 'FILESYSTEM_AND_WORKSPACE',
-    label: 'Sistema de Archivos, Workspace y Control de Versiones',
-    keywords:
-      /\b(file|files|filesystem|fs|read|write|edit|patch|create|delete|remove|mkdir|dir|directory|folder|list|ls|tree|search|grep|rg|find|glob|workspace|path|git|commit|diff|branch|status|repo|repository)\b/i,
-  },
-  {
-    category: 'ARCHITECTURE_AND_LANDSCAPE',
-    label: 'Arquitectura Empresarial, Catálogo de Servicios, Contratos y Esquemas',
-    keywords:
-      /\b(arch|architecture|landscape|catalog|service|services|contract|contracts|schema|openapi|swagger|graphql|grpc|proto|c4|diagram|mermaid|debt|governance|dependency|dependencies|graph|design|blueprint|component|topology|database|sql|db|api)\b/i,
-  },
-  {
-    category: 'PLANNING_AND_BACKLOG',
-    label: 'Planificación, Backlog, Gobierno de Proyecto y Requisitos',
-    keywords:
-      /\b(plan|planning|backlog|issue|issues|ticket|task|tasks|milestone|sprint|roadmap|project|story|epic|requirement|requirements|jira|linear|kanban|estimate|kpi|outcome|alignment)\b/i,
-  },
-  {
-    category: 'OBSERVABILITY_AND_RCA',
-    label: 'Observabilidad, Diagnóstico, Logs y Análisis de Causa Raíz (RCA)',
-    keywords:
-      /\b(log|logs|trace|tracing|error|errors|exception|stack|diagnos|diagnostic|rca|root_cause|metric|metrics|telemetry|health|ping|monitor|debug|debugger|inspect|profile|crash|incident|alert|port|network)\b/i,
-  },
-  {
-    category: 'DOCUMENTATION_AND_KNOWLEDGE',
-    label: 'Documentación, Conocimiento, Memoria y Sincronización',
-    keywords:
-      /\b(doc|docs|documentation|guide|readme|manual|wiki|knowledge|memory|engram|report|markdown|adr|changelog|spec|specification|reference|fetch|web|url|query|summarize|sync|context7|ctx7|library|libraries|resolve-library-id|query-docs|resolve_library_id|query_docs)\b/i,
-  },
-]
+    {
+      category: 'CLI_EXECUTION_AND_BUILD',
+      label: 'Ejecución CLI, Shell, Compilación y Construcción',
+      keywords:
+        /\b(exec|execute|run|command|cmd|shell|cli|terminal|bash|sh|powershell|pwsh|spawn|process|script|build|compile|bundle|npm|pnpm|yarn|npx|tsc|vite|cargo|go|python|node|install|setup|make|docker|tether)\b/i,
+    },
+    {
+      category: 'TESTING_AND_VALIDATION',
+      label: 'Pruebas Automatizadas, Validación, Linting y Auditoría',
+      keywords:
+        /\b(test|tests|testing|vitest|jest|mocha|pytest|assert|assertion|verify|validation|validate|check|lint|eslint|biome|typecheck|audit|e2e|browser|playwright|cypress|webdriver|qa|coverage|smoke|benchmark|security|vulnerability|scan)\b/i,
+    },
+    {
+      category: 'FILESYSTEM_AND_WORKSPACE',
+      label: 'Sistema de Archivos, Workspace y Control de Versiones',
+      keywords:
+        /\b(file|files|filesystem|fs|read|write|edit|patch|create|delete|remove|mkdir|dir|directory|folder|list|ls|tree|search|grep|rg|find|glob|workspace|path|git|commit|diff|branch|status|repo|repository)\b/i,
+    },
+    {
+      category: 'ARCHITECTURE_AND_LANDSCAPE',
+      label: 'Arquitectura Empresarial, Catálogo de Servicios, Contratos y Esquemas',
+      keywords:
+        /\b(arch|architecture|landscape|catalog|service|services|contract|contracts|schema|openapi|swagger|graphql|grpc|proto|c4|diagram|mermaid|debt|governance|dependency|dependencies|graph|design|blueprint|component|topology|database|sql|db|api)\b/i,
+    },
+    {
+      category: 'PLANNING_AND_BACKLOG',
+      label: 'Planificación, Backlog, Gobierno de Proyecto y Requisitos',
+      keywords:
+        /\b(plan|planning|backlog|issue|issues|ticket|task|tasks|milestone|sprint|roadmap|project|story|epic|requirement|requirements|jira|linear|kanban|estimate|kpi|outcome|alignment)\b/i,
+    },
+    {
+      category: 'OBSERVABILITY_AND_RCA',
+      label: 'Observabilidad, Diagnóstico, Logs y Análisis de Causa Raíz (RCA)',
+      keywords:
+        /\b(log|logs|trace|tracing|error|errors|exception|stack|diagnos|diagnostic|rca|root_cause|metric|metrics|telemetry|health|ping|monitor|debug|debugger|inspect|profile|crash|incident|alert|port|network)\b/i,
+    },
+    {
+      category: 'DOCUMENTATION_AND_KNOWLEDGE',
+      label: 'Documentación, Conocimiento, Memoria y Sincronización',
+      keywords:
+        /\b(doc|docs|documentation|guide|readme|manual|wiki|knowledge|memory|engram|report|markdown|adr|changelog|spec|specification|reference|fetch|web|url|query|summarize|sync|context7|ctx7|library|libraries|resolve-library-id|query-docs|resolve_library_id|query_docs)\b/i,
+    },
+  ]
 
 /**
  * Patrones conocidos de error en salidas de terminal CLI (compiladores, bundlers, gestores de paquetes y runtimes).
@@ -597,47 +640,60 @@ export function parseMcpResponseText(rawText: string, expectedId?: string): {
 export function buildCandidateMcpUrls(rawUrl: string, serverName = ''): string[] {
   const trimmed = rawUrl.trim()
   if (!trimmed) return []
-  const candidates = new Set<string>([trimmed])
 
   // Context7 es un endpoint HTTP JSON-RPC exacto (/mcp); no alternar a endpoints incompatibles /sse
   if (isContext7Server({ name: serverName, url: trimmed })) {
     return [trimmed]
   }
 
-  const addOriginVariants = (origin: string, cleanPath: string) => {
-    if (cleanPath === '' || cleanPath === '/') {
-      candidates.add(new URL('/sse', origin).toString())
-      candidates.add(new URL('/mcp', origin).toString())
-    } else if (cleanPath.endsWith('/sse')) {
-      candidates.add(new URL('/sse', origin).toString())
-      candidates.add(new URL('/mcp', origin).toString())
-      candidates.add(new URL('/', origin).toString())
-    } else if (cleanPath.endsWith('/mcp')) {
-      candidates.add(new URL('/mcp', origin).toString())
-      candidates.add(new URL('/sse', origin).toString())
-      candidates.add(new URL('/', origin).toString())
+  const isTether =
+    serverName.toLowerCase().includes('tether') ||
+    trimmed.toLowerCase().includes('tether') ||
+    trimmed.includes('7432') ||
+    trimmed.includes('7434')
+
+  const candidates: string[] = []
+
+  const addVariants = (origin: string) => {
+    if (isTether) {
+      // Para Tether, priorizar /mcp (JSON-RPC directo) antes de /sse
+      candidates.push(`${origin}/mcp`)
+      candidates.push(`${origin}/sse`)
+      candidates.push(origin)
+    } else {
+      candidates.push(trimmed)
+      candidates.push(`${origin}/sse`)
+      candidates.push(`${origin}/mcp`)
+      candidates.push(origin)
     }
   }
 
   try {
     const parsed = new URL(trimmed)
-    const cleanPath = parsed.pathname.replace(/\/+$/, '')
-    addOriginVariants(parsed.origin, cleanPath)
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+    const origins = [parsed.origin]
 
-    // Si es tether y estaba apuntando a 7434, probar también el puerto por defecto 7432
-    const isTether =
-      serverName.toLowerCase().includes('tether') ||
-      trimmed.toLowerCase().includes('tether') ||
-      parsed.port === '7434'
+    if (isLocalhost) {
+      if (parsed.hostname === 'localhost') {
+        origins.push(`${parsed.protocol}//127.0.0.1${parsed.port ? ':' + parsed.port : ''}`)
+      } else if (parsed.hostname === '127.0.0.1') {
+        origins.push(`${parsed.protocol}//localhost${parsed.port ? ':' + parsed.port : ''}`)
+      }
+    }
+
     if (isTether && parsed.port === '7434') {
-      const port7432Origin = `${parsed.protocol}//${parsed.hostname}:7432`
-      addOriginVariants(port7432Origin, cleanPath)
+      origins.push(`${parsed.protocol}//127.0.0.1:7432`)
+      origins.push(`${parsed.protocol}//localhost:7432`)
+    }
+
+    for (const orig of origins) {
+      addVariants(orig.replace(/\/+$/, ''))
     }
   } catch {
-    // Si es una URL relativa o mock en tests, mantener solo trimmed
+    candidates.push(trimmed)
   }
 
-  return Array.from(candidates)
+  return Array.from(new Set(candidates))
 }
 
 /**
@@ -703,16 +759,27 @@ export async function authenticateMcpServer(
   }
 
   const originKey = getServerOriginKey(server.url)
+  const isTether = isTetherServer(server)
+  const rawWs = (context?.workspace || server.workspace || '').trim()
+  const normalizedWs = rawWs ? rawWs.replace(/\\/g, '/') : ''
 
   if (!context?.forceReconnect) {
-    const existingToken = getCachedServerAuthToken(server.url, server.authToken)
-    if (existingToken) {
-      serverAuthTokenCache.set(originKey, existingToken)
-      return existingToken
-    }
-    const inFlight = inFlightAuthPromises.get(originKey)
-    if (inFlight) {
-      return inFlight
+    const cachedWs = tetherTokenWorkspaceCache.get(originKey)
+    const wsChanged = isTether && normalizedWs && cachedWs && normalizedWs !== cachedWs
+    if (!wsChanged) {
+      const existingToken = getCachedServerAuthToken(server.url, server.authToken)
+      if (existingToken) {
+        serverAuthTokenCache.set(originKey, existingToken)
+        return existingToken
+      }
+      const inFlight = inFlightAuthPromises.get(originKey)
+      if (inFlight) {
+        return inFlight
+      }
+    } else {
+      // Si el workspace cambió en Tether, invalidar la sesión PTY y el token previo
+      tetherActiveSessionCache.delete(originKey)
+      serverAuthTokenCache.delete(originKey)
     }
   }
 
@@ -725,7 +792,12 @@ export async function authenticateMcpServer(
     const agentId = (context?.agentId || server.agentId || `localloop-agent-${generatedGuid}`).trim()
     const agentName = (context?.agentName || server.agentName || 'LocalLoop SDLC Agent').trim()
     const rawWs = (context?.workspace || server.workspace || '').trim()
-    const workspace = isAbsoluteOsPath(rawWs) ? rawWs : rawWs
+    if (isTetherServer(server) && rawWs.includes('...')) {
+      throw new Error(
+        `[Tether Error Crítico] La ruta de workspace para Tether contiene puntos suspensivos ficticios ("${rawWs}"). Debes indicar la ruta absoluta real en el disco anfitrión.`,
+      )
+    }
+    const workspace = rawWs
 
     const candidateUrls = buildCandidateMcpUrls(server.url, server.name)
     const candidateAuthUrls = Array.from(
@@ -803,6 +875,15 @@ export async function authenticateMcpServer(
         if (token) {
           obtainedToken = token
           workingOriginUrl = authUrl
+          if (isTether) {
+            const root =
+              typeof parsed === 'object' && parsed !== null
+                ? (parsed as any).workspace_root || normalizedWs
+                : normalizedWs
+            if (root) {
+              tetherTokenWorkspaceCache.set(originKey, String(root).replace(/\\/g, '/'))
+            }
+          }
           break
         }
       } catch (err) {
@@ -1504,8 +1585,7 @@ export async function callMcpTool(
       createdAt: new Date().toISOString(),
     }
 
-    // Sanitize relative or virtual workspace directory arguments (e.g. "Prueba 12", "workspace")
-    // that cause Windows PTY / CreateProcess to fail with "The directory name is invalid"
+    // Saneamiento de argumentos para herramientas de Tether y Command Guard:
     const sanitizedArgs: Record<string, unknown> = { ...args }
     const isTetherTool =
       tool.serverName.toLowerCase().includes('tether') ||
@@ -1513,28 +1593,71 @@ export async function callMcpTool(
     const isSessionOpen = /\b(session_open|open_session|create_session)\b/i.test(tool.name)
 
     const serverAbsWorkspace =
-      matchedServer.workspace && isAbsoluteOsPath(matchedServer.workspace)
+      matchedServer.workspace && isAbsoluteOsPath(matchedServer.workspace) && !matchedServer.workspace.includes('...')
         ? matchedServer.workspace.trim()
         : undefined
 
-    for (const dirKey of ['workspace', 'cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
-      if (typeof sanitizedArgs[dirKey] === 'string') {
-        const rawDir = String(sanitizedArgs[dirKey]).trim()
-        if (isTetherTool) {
-          if (isSessionOpen) {
-            // En session_open se requiere la ruta absoluta del workspace en el anfitrión
-            if (!isAbsoluteOsPath(rawDir) && serverAbsWorkspace) {
-              sanitizedArgs[dirKey] = serverAbsWorkspace
-            }
-          } else {
-            // Fuera de session_open, Tether opera confinado en el workspace y exige rutas relativas sin '..'
-            sanitizedArgs[dirKey] = sanitizePathForTetherSandbox(rawDir)
+    if (isTetherTool) {
+      if (isSessionOpen) {
+        // En Tether, el workspace_root queda fijado exclusivamente en /auth/connect.
+        // session_open no acepta argumentos de carpetas (workspace/cwd/directory) en su esquema.
+        for (const k of ['workspace', 'cwd', 'directory', 'path', 'workingDirectory', 'workdir']) {
+          delete sanitizedArgs[k]
+        }
+        if (!sanitizedArgs.name) {
+          sanitizedArgs.name = authContext?.agentName || authContext?.agentId || 'LocalLoop Terminal'
+        }
+        if (!sanitizedArgs.shell) {
+          sanitizedArgs.shell = 'cmd.exe'
+        }
+      } else if (/\b(session_exec|session_input|session_screen|session_close)\b/i.test(tool.name)) {
+        // En herramientas de sesión de Tether, eliminar argumentos de carpetas para evitar violación del Command Guard
+        for (const k of ['workspace', 'cwd', 'directory', 'path', 'workingDirectory', 'workdir']) {
+          delete sanitizedArgs[k]
+        }
+
+        // Auto-inyectar session_id activo si no se especificó
+        if (!sanitizedArgs.session_id) {
+          const sid = getTetherActiveSessionId(tool.serverUrl)
+          if (sid) sanitizedArgs.session_id = sid
+        }
+
+        if (tool.name === 'session_exec' && typeof sanitizedArgs.command === 'string') {
+          sanitizedArgs.command = sanitizeCommandForTether(
+            sanitizedArgs.command,
+            authContext?.workspace || serverAbsWorkspace,
+          )
+          if (!sanitizedArgs.timeout_ms) {
+            sanitizedArgs.timeout_ms = 60000
           }
-        } else if (!rawDir || !isAbsoluteOsPath(rawDir)) {
-          if (serverAbsWorkspace) {
-            sanitizedArgs[dirKey] = serverAbsWorkspace
-          } else {
-            delete sanitizedArgs[dirKey]
+        }
+
+        if (tool.name === 'session_input') {
+          if ('input' in sanitizedArgs && !('text' in sanitizedArgs)) {
+            sanitizedArgs.text = sanitizedArgs.input
+            delete sanitizedArgs.input
+          }
+          if (!('press_enter' in sanitizedArgs)) {
+            sanitizedArgs.press_enter = true
+          }
+        }
+
+        if (tool.name === 'session_screen') {
+          if (!sanitizedArgs.lines) {
+            sanitizedArgs.lines = 50
+          }
+        }
+      }
+    } else {
+      for (const dirKey of ['workspace', 'cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir']) {
+        if (typeof sanitizedArgs[dirKey] === 'string') {
+          const rawDir = String(sanitizedArgs[dirKey]).trim()
+          if (!rawDir || !isAbsoluteOsPath(rawDir)) {
+            if (serverAbsWorkspace) {
+              sanitizedArgs[dirKey] = serverAbsWorkspace
+            } else {
+              delete sanitizedArgs[dirKey]
+            }
           }
         }
       }
@@ -1552,8 +1675,9 @@ export async function callMcpTool(
 
     const payloadStr = JSON.stringify(payload ?? '')
     if (
-      payloadStr.includes('The directory name is invalid') ||
-      payloadStr.includes('directory name is invalid')
+      !isSessionOpen &&
+      (payloadStr.includes('The directory name is invalid') ||
+        payloadStr.includes('directory name is invalid'))
     ) {
       const retryArgs: Record<string, unknown> = { ...sanitizedArgs }
       for (const k of ['workspace', 'cwd', 'directory', 'workingDirectory', 'workdir', 'working_dir', 'path']) {
@@ -1583,6 +1707,37 @@ export async function callMcpTool(
 
     const resultStr = JSON.stringify(payload.result ?? {})
     const elapsedMs = Date.now() - startTime
+
+    if (isTetherTool) {
+      const originKey = getServerOriginKey(tool.serverUrl)
+      if (isSessionOpen && payload.result) {
+        let extracted: string | undefined
+        const resObj = payload.result as any
+        if (typeof resObj?.session_id === 'string') extracted = resObj.session_id
+        if (!extracted && Array.isArray(resObj?.content)) {
+          for (const item of resObj.content) {
+            if (typeof item?.text === 'string') {
+              try {
+                const inner = JSON.parse(item.text)
+                if (inner && typeof inner.session_id === 'string') {
+                  extracted = inner.session_id
+                  break
+                }
+              } catch {}
+            }
+          }
+        }
+        if (!extracted) {
+          const match = /(?:session_id|sessionId|session)[\\"\s:=]+([a-zA-Z0-9_-]+)/i.exec(resultStr)
+          if (match?.[1]) extracted = match[1]
+        }
+        if (extracted) {
+          tetherActiveSessionCache.set(originKey, extracted)
+        }
+      } else if (/\b(session_close|close_session)\b/i.test(tool.name)) {
+        tetherActiveSessionCache.delete(originKey)
+      }
+    }
 
     trace('mcp.tool.complete', {
       server: tool.serverName,
@@ -1634,8 +1789,8 @@ export function analyzeMcpToolCapabilities(tool: McpToolDefinition): AnalyzedMcp
   const schemaProps =
     tool.inputSchema && typeof tool.inputSchema.properties === 'object' && tool.inputSchema.properties !== null
       ? Object.entries(tool.inputSchema.properties as Record<string, { description?: string }>)
-          .map(([key, val]) => `${key} ${val?.description ?? ''}`)
-          .join(' ')
+        .map(([key, val]) => `${key} ${val?.description ?? ''}`)
+        .join(' ')
       : ''
 
   const corpus = `${tool.serverName} ${tool.name} ${tool.description} ${schemaProps}`
@@ -1726,14 +1881,14 @@ export function buildRoleMcpPromptSupplementFromAssignment(assignment?: RoleMcpA
 
   const cliMandate = hasCliTools
     ? [
-        '\n🚨 [INSTRUCCIÓN PRIORITARIA: USO DE TETHER PARA EJECUCIÓN CLI, COMPILACIÓN Y RESOLUCIÓN DE ERRORES]:',
-        `Tienes disponible la integración de Tether mediante las herramientas: ${cliToolNames}.`,
-        'DEBES utilizar estas herramientas activamente mediante llamadas a tool_calls para:',
-        '1. Ejecutar comandos reales en la terminal shell del host (ej: `npm run build`, `npm run dev`, `npx tsc --noEmit`, `npm test`, `npm install`).',
-        '2. Verificar la compilación real del proyecto y de los componentes construidos antes de emitir informes o dar por finalizada la fase.',
-        '3. Si un comando devuelve errores de compilación o transpilación (TypeScript/Vite/SyntaxError), lee el log de error devuelto, identifica el fichero y la línea afectada, modifica el código usando las herramientas de edición/escritura de archivos para corregirlo, y vuelve a ejecutar la compilación con Tether hasta que pase limpiamente.',
-        '4. NUNCA asumas que el código compila sin haberlo ejecutado a través de Tether cuando estas herramientas estén disponibles.',
-      ].join('\n')
+      '\n🚨 [INSTRUCCIÓN PRIORITARIA: USO DE TETHER PARA EJECUCIÓN CLI, COMPILACIÓN Y RESOLUCIÓN DE ERRORES]:',
+      `Tienes disponible la integración de Tether mediante las herramientas: ${cliToolNames}.`,
+      'DEBES utilizar estas herramientas activamente mediante llamadas a tool_calls para:',
+      '1. Ejecutar comandos reales en la terminal shell del host (ej: `npm run build`, `npm run dev`, `npx tsc --noEmit`, `npm test`, `npm install`).',
+      '2. Verificar la compilación real del proyecto y de los componentes construidos antes de emitir informes o dar por finalizada la fase.',
+      '3. Si un comando devuelve errores de compilación o transpilación (TypeScript/Vite/SyntaxError), lee el log de error devuelto, identifica el fichero y la línea afectada, modifica el código usando las herramientas de edición/escritura de archivos para corregirlo, y vuelve a ejecutar la compilación con Tether hasta que pase limpiamente.',
+      '4. NUNCA asumas que el código compila sin haberlo ejecutado a través de Tether cuando estas herramientas estén disponibles.',
+    ].join('\n')
     : ''
 
   const hasContext7Tools = assignment.tools.some(
@@ -1754,13 +1909,13 @@ export function buildRoleMcpPromptSupplementFromAssignment(assignment?: RoleMcpA
 
   const context7Mandate = hasContext7Tools
     ? [
-        '\n📚 [INSTRUCCIÓN OBLIGATORIA: USO DE CONTEXT7 PARA DOCUMENTACIÓN OFICIAL VIVA Y DEPENDENCIAS ACTUALIZADAS]:',
-        `Tienes disponible la integración especializada de Context7 mediante las herramientas: ${context7ToolNames}.`,
-        'DEBES utilizar Context7 activamente para reducir drásticamente problemas de dependencias antiguas, APIs obsoletas o discrepancias por actualizaciones en frameworks (Vite, TypeScript, Tailwind, testing, etc.):',
-        '1. Antes de definir dependencias, configurar manifiestos (package.json, tsconfig, vite.config) o escribir código que utilice librerías externas, consulta la documentación oficial y ejemplos de código actualizados en vivo usando Context7 (ej. resolviendo el libraryId y consultando docs).',
-        '2. NUNCA adivines ni recurras a versiones o firmas de memoria para paquetes o frameworks modernos cuando Context7 esté disponible.',
-        '3. Si se produce un error de compilación, importación o configuración durante la construcción o auto-reparación, consulta inmediatamente Context7 para verificar la signatura oficial de la API y las mejores prácticas vigentes de la librería.',
-      ].join('\n')
+      '\n📚 [INSTRUCCIÓN OBLIGATORIA: USO DE CONTEXT7 PARA DOCUMENTACIÓN OFICIAL VIVA Y DEPENDENCIAS ACTUALIZADAS]:',
+      `Tienes disponible la integración especializada de Context7 mediante las herramientas: ${context7ToolNames}.`,
+      'DEBES utilizar Context7 activamente para reducir drásticamente problemas de dependencias antiguas, APIs obsoletas o discrepancias por actualizaciones en frameworks (Vite, TypeScript, Tailwind, testing, etc.):',
+      '1. Antes de definir dependencias, configurar manifiestos (package.json, tsconfig, vite.config) o escribir código que utilice librerías externas, consulta la documentación oficial y ejemplos de código actualizados en vivo usando Context7 (ej. resolviendo el libraryId y consultando docs).',
+      '2. NUNCA adivines ni recurras a versiones o firmas de memoria para paquetes o frameworks modernos cuando Context7 esté disponible.',
+      '3. Si se produce un error de compilación, importación o configuración durante la construcción o auto-reparación, consulta inmediatamente Context7 para verificar la signatura oficial de la API y las mejores prácticas vigentes de la librería.',
+    ].join('\n')
     : ''
 
   return [
@@ -2001,6 +2156,122 @@ export function setTetherActiveSessionId(serverUrl: string, sessionId: string): 
 
 export function clearTetherActiveSessions(): void {
   tetherActiveSessionCache.clear()
+  tetherTokenWorkspaceCache.clear()
+}
+
+/**
+ * Cierra la sesión activa de Tether en el servidor indicado liberando los recursos y terminando los procesos hijos.
+ */
+export async function closeTetherSession(
+  serverUrl?: string,
+  sessionId?: string,
+  authContext?: McpAuthConnectContext,
+): Promise<boolean> {
+  const originKey = serverUrl ? getServerOriginKey(serverUrl) : ''
+  const sid = sessionId || (originKey ? tetherActiveSessionCache.get(originKey) : undefined)
+  if (!sid) return true
+
+  const rep = getCachedMcpCapabilityReport()
+  const tools = rep?.tools?.map((t) => t.tool) || []
+  const closeTool = tools.find(
+    (t) =>
+      (t.serverName.toLowerCase().includes('tether') || t.qualifiedName.toLowerCase().includes('tether')) &&
+      /\b(session_close|close_session)\b/i.test(t.name),
+  )
+
+  if (closeTool) {
+    try {
+      await callMcpTool(closeTool, { session_id: sid }, authContext)
+    } catch {
+      // ignore
+    }
+  }
+
+  if (originKey) {
+    tetherActiveSessionCache.delete(originKey)
+  }
+  return true
+}
+
+/**
+ * Captura y devuelve el contenido del búfer/pantalla de la terminal de Tether.
+ */
+export async function readTetherSessionScreen(
+  serverUrl?: string,
+  sessionId?: string,
+  lines = 50,
+  authContext?: McpAuthConnectContext,
+): Promise<string | null> {
+  const originKey = serverUrl ? getServerOriginKey(serverUrl) : ''
+  const sid = sessionId || (originKey ? tetherActiveSessionCache.get(originKey) : undefined)
+  if (!sid) return null
+
+  const rep = getCachedMcpCapabilityReport()
+  const tools = rep?.tools?.map((t) => t.tool) || []
+  const screenTool = tools.find(
+    (t) =>
+      (t.serverName.toLowerCase().includes('tether') || t.qualifiedName.toLowerCase().includes('tether')) &&
+      /\b(session_screen)\b/i.test(t.name),
+  )
+
+  if (!screenTool) return null
+
+  try {
+    const raw = await callMcpTool(screenTool, { session_id: sid, lines }, authContext)
+    const parsed = JSON.parse(raw)
+    if (parsed && Array.isArray(parsed.content)) {
+      for (const item of parsed.content) {
+        if (typeof item?.text === 'string') {
+          try {
+            const inner = JSON.parse(item.text)
+            if (typeof inner.screen === 'string') return inner.screen
+            if (Array.isArray(inner.lines)) return inner.lines.join('\n')
+          } catch {
+            return item.text
+          }
+        }
+      }
+    }
+    return typeof raw === 'string' ? raw : JSON.stringify(raw)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Envía texto o señales de entrada interactiva a la sesión de terminal de Tether.
+ */
+export async function sendTetherSessionInput(
+  serverUrl: string | undefined,
+  text: string,
+  pressEnter = true,
+  sessionId?: string,
+  authContext?: McpAuthConnectContext,
+): Promise<string | null> {
+  const originKey = serverUrl ? getServerOriginKey(serverUrl) : ''
+  const sid = sessionId || (originKey ? tetherActiveSessionCache.get(originKey) : undefined)
+  if (!sid) return null
+
+  const rep = getCachedMcpCapabilityReport()
+  const tools = rep?.tools?.map((t) => t.tool) || []
+  const inputTool = tools.find(
+    (t) =>
+      (t.serverName.toLowerCase().includes('tether') || t.qualifiedName.toLowerCase().includes('tether')) &&
+      /\b(session_input)\b/i.test(t.name),
+  )
+
+  if (!inputTool) return null
+
+  try {
+    const raw = await callMcpTool(
+      inputTool,
+      { session_id: sid, text, press_enter: pressEnter },
+      authContext,
+    )
+    return typeof raw === 'string' ? raw : JSON.stringify(raw)
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -2030,18 +2301,20 @@ export async function ensureTetherSession(
 
   if (sessionOpenTool) {
     const ws = authContext?.workspace?.trim()
-    if (!ws) {
+    if (!ws || ws.includes('...')) {
       throw new Error(
-        '[Tether Error Crítico] No se puede abrir sesión en Tether: la ruta física del workspace en el anfitrión es obligatoria y no está definida en la sesión de LocalLoop.',
+        `[Tether Error Crítico] No se puede abrir sesión en Tether: la ruta física del workspace en el anfitrión es obligatoria y no puede contener puntos suspensivos ("..."). Ruta recibida: "${ws || 'undefined'}".`,
       )
     }
 
     const openArgs: Record<string, unknown> = {}
     const props = (sessionOpenTool.inputSchema?.properties as Record<string, unknown>) || {}
-    if ('workspace' in props) openArgs.workspace = ws
-    if ('cwd' in props) openArgs.cwd = ws
-    if ('directory' in props) openArgs.directory = ws
-    if ('agent_id' in props) openArgs.agent_id = authContext?.agentId || 'localloop-agent'
+    if ('name' in props || !('properties' in (sessionOpenTool.inputSchema || {}))) {
+      openArgs.name = authContext?.agentName || authContext?.agentId || 'LocalLoop Terminal'
+    }
+    if ('shell' in props || !('properties' in (sessionOpenTool.inputSchema || {}))) {
+      openArgs.shell = 'cmd.exe'
+    }
 
     try {
       const rawRes = await callMcpTool(sessionOpenTool, openArgs, authContext)
@@ -2060,12 +2333,28 @@ export async function ensureTetherSession(
           if (typeof parsed.sessionId === 'string') extractedSessionId = parsed.sessionId
           if (typeof parsed.id === 'string') extractedSessionId = parsed.id
           if (!extractedSessionId && Array.isArray(parsed.content)) {
-            const txt = parsed.content.map((c: any) => c.text || '').join(' ')
-            if (/\b(?:failed to open|The directory name is invalid|error)\b/i.test(txt)) {
-              throw new Error(`Tether session_open falló: ${txt}`)
+            for (const item of parsed.content) {
+              const txt = typeof item === 'object' && item !== null && typeof item.text === 'string' ? item.text : ''
+              try {
+                const inner = JSON.parse(txt)
+                if (inner && typeof inner.session_id === 'string') {
+                  extractedSessionId = inner.session_id
+                  break
+                }
+                if (inner && typeof inner.sessionId === 'string') {
+                  extractedSessionId = inner.sessionId
+                  break
+                }
+              } catch {}
+              if (/\b(?:failed to open|The directory name is invalid|error)\b/i.test(txt)) {
+                throw new Error(`Tether session_open falló: ${txt}`)
+              }
+              const match = /(?:session_id|sessionId|session)[:=]\s*["']?([a-zA-Z0-9_-]+)/i.exec(txt)
+              if (match) {
+                extractedSessionId = match[1]
+                break
+              }
             }
-            const match = /(?:session_id|sessionId|session)[:=]\s*["']?([a-zA-Z0-9_-]+)/i.exec(txt)
-            if (match) extractedSessionId = match[1]
           }
         }
       } catch (e) {
@@ -2216,50 +2505,63 @@ export async function executeCliViaMcp(
     cliTool.serverName.toLowerCase().includes('tether') ||
     cliTool.qualifiedName.toLowerCase().includes('tether')
 
+  // Normalizar y confinar comandos para Tether
+  let effectiveCommand = isTether
+    ? sanitizeCommandForTether(command, authContext?.workspace)
+    : command
+
   const args: Record<string, unknown> = {}
   const props = (cliTool.inputSchema?.properties as Record<string, unknown>) || {}
 
   // 1. Asignar comando según propiedades del esquema
   if ('command' in props) {
-    args.command = command
+    args.command = effectiveCommand
   }
   if ('cmd' in props) {
-    args.cmd = command
+    args.cmd = effectiveCommand
   }
   if ('script' in props) {
-    args.script = command
+    args.script = effectiveCommand
   }
   if ('input' in props && !('command' in props) && !('cmd' in props)) {
-    args.input = command
+    args.input = effectiveCommand
   }
   if (Object.keys(args).length === 0) {
-    args.cmd = command
-    args.command = command
+    args.cmd = effectiveCommand
+    args.command = effectiveCommand
+  }
+  if (isTether && 'timeout_ms' in props && !('timeout_ms' in args)) {
+    args.timeout_ms = 60000
   }
 
   // 2. Asignar session_id / sessionId si la herramienta o Tether lo requiere
-  const needsSession =
+  const isSessionBasedCli =
     'session_id' in props ||
     'sessionId' in props ||
     'session' in props ||
-    isTether
+    /\b(session_exec|session_input|session_screen)\b/i.test(cliTool.name)
 
-  if (needsSession) {
-    let sid = authContext?.sessionId || getTetherActiveSessionId(cliTool.serverUrl)
+  if (isSessionBasedCli) {
+    let sid = isTether
+      ? getTetherActiveSessionId(cliTool.serverUrl)
+      : (authContext?.sessionId || getTetherActiveSessionId(cliTool.serverUrl))
+
     if (!sid && isTether) {
       sid = await ensureTetherSession(cliTool.serverUrl, authContext).catch(() => '')
     }
-    if (!sid) {
-      sid = authContext?.agentId || 'localloop-session-default'
+    if (!sid && authContext?.sessionId) {
+      sid = authContext.sessionId
     }
-    if ('session_id' in props || isTether) {
-      args.session_id = sid
-    }
-    if ('sessionId' in props) {
-      args.sessionId = sid
-    }
-    if ('session' in props) {
-      args.session = sid
+    if (sid) {
+      if ('session_id' in props || isTether) {
+        args.session_id = sid
+      }
+      if ('sessionId' in props) {
+        args.sessionId = sid
+      }
+      if ('session' in props) {
+        args.session = sid
+      }
     }
   }
 
@@ -2304,6 +2606,7 @@ export async function executeCliViaMcp(
       const parsed = JSON.parse(text)
       if (typeof parsed === 'object' && parsed !== null) {
         if (typeof parsed.exitCode === 'number') exitCode = parsed.exitCode
+        if (typeof parsed.exit_code === 'number') exitCode = parsed.exit_code
         if (typeof parsed.code === 'number') exitCode = parsed.code
 
         if (
@@ -2328,6 +2631,29 @@ export async function executeCliViaMcp(
             .join('\n')
           if (contentText) {
             text = contentText
+            // Tether empaqueta la salida estructurada dentro del text de content como JSON:
+            // { session_id, output, exit_code, state, rel_cwd, waiting_for_input } o { error, reason, violation }
+            try {
+              const inner = JSON.parse(contentText)
+              if (typeof inner === 'object' && inner !== null) {
+                if (typeof inner.exit_code === 'number') exitCode = inner.exit_code
+                if (typeof inner.exitCode === 'number') exitCode = inner.exitCode
+                if (typeof inner.code === 'number') exitCode = inner.code
+                if (inner.error || inner.violation || inner.isError === true) {
+                  isMcpError = true
+                  if (exitCode === 0) exitCode = 1
+                }
+                if (typeof inner.output === 'string') {
+                  text = inner.output.replace(/\n>>\s*$/, '').trim()
+                } else if (typeof inner.reason === 'string') {
+                  text = `[Tether Command Guard]: ${inner.reason}`
+                } else if (typeof inner.error === 'string') {
+                  text = inner.error
+                }
+              }
+            } catch {
+              // contentText es texto plano estándar
+            }
           }
         } else if (typeof parsed.stdout === 'string' || typeof parsed.stderr === 'string') {
           const stdOut = typeof parsed.stdout === 'string' ? parsed.stdout : ''
@@ -2358,7 +2684,7 @@ export async function executeCliViaMcp(
     if (
       isTether &&
       hasErrorSignals &&
-      /\b(?:session_id|sessionId|session)\s+(?:is\s+required|not\s+found|required)\b/i.test(text)
+      /\b(?:session_id|sessionId|session|terminal session)\s+(?:is\s+required|not\s+found|required)\b/i.test(text)
     ) {
       trace('tether.execute.retry_session', {
         tool: cliTool.qualifiedName,
