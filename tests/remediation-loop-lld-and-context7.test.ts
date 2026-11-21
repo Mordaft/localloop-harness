@@ -16,13 +16,17 @@ import {
   analyzeAndAssignMcpCapabilities,
   buildRoleMcpPromptSupplementFromAssignment,
   clearMcpCapabilityCache,
+  clearTetherActiveSessions,
+  ensureTetherSession,
   executeCliViaMcp,
   findCliExecutionTool,
   findContext7Tools,
+  getTetherActiveSessionId,
   isContext7Available,
   isContext7Configured,
   isContext7Server,
   isTetherAvailable,
+  setTetherActiveSessionId,
   type McpToolDefinition,
 } from '../src/mcp/mcp-client'
 import {
@@ -441,6 +445,232 @@ async function runRemediationLoopLldAndContext7Tests(): Promise<void> {
   )
 
   console.log('✓ Helper isContext7Configured verificado exitosamente.')
+
+  // -------------------------------------------------------------------------------------
+  // Test 8: Detección y extracción de error estándar MCP (isError: true, content: [...])
+  // -------------------------------------------------------------------------------------
+  console.log('[Test 8] Verificando detección de isError: true y extracción de content text en executeCliViaMcp...')
+
+  const tetherCliToolWithSession: McpToolDefinition = {
+    serverName: 'tether',
+    serverUrl: 'http://localhost:7432/sse',
+    name: 'exec',
+    qualifiedName: 'mcp_tether_exec',
+    description: '[MCP: tether] Ejecuta comando en sesión anfitrión',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string' },
+        session_id: { type: 'string' },
+      },
+      required: ['command', 'session_id'],
+    },
+  }
+
+  await analyzeAndAssignMcpCapabilities({
+    preDiscoveredTools: [tetherCliToolWithSession],
+    forceRefresh: true,
+  })
+
+  const origFetch8 = globalThis.fetch
+  try {
+    // Simular que el servidor responde con formato estándar de error MCP
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'test-mcp-error',
+          result: {
+            content: [{ type: 'text', text: 'session_id is required' }],
+            isError: true,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    // Llamada sin pasar session_id previa
+    const mcpErrRes = await executeCliViaMcp('npm install', { sessionId: undefined })
+    assert.strictEqual(mcpErrRes.ok, false, 'Debe devolver ok: false cuando isError es true')
+    assert.ok(
+      mcpErrRes.output.includes('session_id is required'),
+      'Debe extraer el texto de content block en lugar de dejar el JSON crudo',
+    )
+    assert.ok(mcpErrRes.exitCode >= 1, 'exitCode debe ser >= 1 cuando isError es true')
+    console.log('✓ Respuesta de error estándar MCP detectada y extraída adecuadamente.')
+  } finally {
+    globalThis.fetch = origFetch8
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Test 9: Envío automático de session_id a herramientas Tether que lo requieran
+  // -------------------------------------------------------------------------------------
+  console.log('[Test 9] Verificando propagación automática de session_id en executeCliViaMcp...')
+
+  let receivedArgsInMcp: Record<string, unknown> | null = null
+  const origFetch9 = globalThis.fetch
+  try {
+    globalThis.fetch = (async (_url, init) => {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
+      if (body.method === 'tools/call') {
+        receivedArgsInMcp = body.params?.arguments || null
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: {
+              content: [{ type: 'text', text: 'LocalLoop setup completed successfully' }],
+              isError: false,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result: { ok: true } }), { status: 200 })
+    }) as typeof fetch
+
+    const execSessionRes = await executeCliViaMcp('@echo off\ncall npm install', {
+      sessionId: 'test-session-42',
+      workspace: 'C:\\Users\\test\\localloop',
+    })
+
+    assert.strictEqual(execSessionRes.ok, true, 'Debe ser exitoso con session_id válido')
+    assert.ok(receivedArgsInMcp !== null, 'Debe haber recibido argumentos en tools/call')
+    assert.strictEqual(
+      receivedArgsInMcp?.session_id,
+      'test-session-42',
+      'Debe inyectar automáticamente session_id desde authContext.sessionId',
+    )
+    assert.strictEqual(
+      receivedArgsInMcp?.command,
+      '@echo off\ncall npm install',
+      'Debe pasar el comando esperado',
+    )
+    console.log('✓ session_id propagado correctamente a la herramienta Tether.')
+  } finally {
+    globalThis.fetch = origFetch9
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Test 10: Auto-remediación inmediata cuando Tether devuelve session_id is required
+  // -------------------------------------------------------------------------------------
+  console.log('[Test 10] Verificando auto-reparación y reintento cuando Tether reporta sesión ausente...')
+
+  const tetherSessionOpenTool: McpToolDefinition = {
+    serverName: 'tether',
+    serverUrl: 'http://localhost:7432/sse',
+    name: 'session_open',
+    qualifiedName: 'mcp_tether_session_open',
+    description: '[MCP: tether] Abre una nueva sesión en host',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace: { type: 'string' },
+      },
+    },
+  }
+
+  await analyzeAndAssignMcpCapabilities({
+    preDiscoveredTools: [tetherSessionOpenTool, tetherCliToolWithSession],
+    forceRefresh: true,
+  })
+
+  clearTetherActiveSessions()
+  let callCount = 0
+  const origFetch10 = globalThis.fetch
+  try {
+    globalThis.fetch = (async (_url, init) => {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
+      if (body.method === 'tools/call') {
+        const toolName = body.params?.name
+        if (toolName === 'session_open') {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: { session_id: 'auto-remediated-session-99' },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+
+        if (toolName === 'exec') {
+          callCount++
+          if (callCount === 1) {
+            // Primer intento falla indicando que la sesión previa ya no es válida o faltó
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: body.id,
+                result: {
+                  content: [{ type: 'text', text: 'session_id is required' }],
+                  isError: true,
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            )
+          }
+
+          // Segundo intento tras auto-remediación con session_open
+          assert.strictEqual(
+            body.params?.arguments?.session_id,
+            'auto-remediated-session-99',
+            'El reintento debe usar la sesión recién obtenida de session_open',
+          )
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                content: [{ type: 'text', text: 'Command executed cleanly on fresh session' }],
+                isError: false,
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+      }
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result: {} }), { status: 200 })
+    }) as typeof fetch
+
+    const healedResult = await executeCliViaMcp('npm test', {
+      workspace: 'localloop-ws',
+    })
+
+    assert.strictEqual(healedResult.ok, true, 'El reintento auto-remediado debe concluir en ok: true')
+    assert.strictEqual(callCount, 2, 'Debe haber reintentado exactamente una vez')
+    assert.ok(
+      healedResult.output.includes('Command executed cleanly on fresh session'),
+      'La salida debe reflejar la ejecución exitosa de la sesión re-abierta',
+    )
+    console.log('✓ Auto-remediación de sesión Tether verificada exitosamente.')
+  } finally {
+    globalThis.fetch = origFetch10
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Test 11: findCliExecutionTool prioriza herramienta de ejecución y excluye session_open/close
+  // -------------------------------------------------------------------------------------
+  console.log('[Test 11] Verificando que findCliExecutionTool no confunda herramientas de control con el runner...')
+
+  const sessionCloseTool: McpToolDefinition = {
+    serverName: 'tether',
+    serverUrl: 'http://localhost:7432/sse',
+    name: 'session_close',
+    qualifiedName: 'mcp_tether_session_close',
+    description: '[MCP: tether] Cierra sesión',
+    inputSchema: { type: 'object', properties: { session_id: { type: 'string' } } },
+  }
+
+  await analyzeAndAssignMcpCapabilities({
+    preDiscoveredTools: [tetherSessionOpenTool, sessionCloseTool, tetherCliToolWithSession],
+    forceRefresh: true,
+  })
+
+  const selectedTool = findCliExecutionTool()
+  assert.ok(selectedTool !== null, 'Debe encontrar herramienta')
+  assert.strictEqual(selectedTool?.name, 'exec', 'Debe seleccionar exec en lugar de session_open o session_close')
+  console.log('✓ Selección precisa de la herramienta CLI de Tether verificada.')
 
   console.log('\n=== ¡Todas las pruebas de Auto-Remediación LLD y Context7 pasaron exitosamente! ===')
 }

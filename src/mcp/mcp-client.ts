@@ -60,6 +60,7 @@ export interface McpAuthConnectContext {
   agentId?: string
   agentName?: string
   workspace?: string
+  sessionId?: string
   waitForApproval?: boolean
   approvalTimeoutMs?: number
   pollIntervalMs?: number
@@ -158,6 +159,9 @@ export const KNOWN_CLI_ERROR_PATTERNS: Array<{ pattern: RegExp; description: str
   { pattern: /\b(?:enoent:|eacces:|eaddrinuse)\b/i, description: 'Error de sistema de archivos o red' },
   { pattern: /\bsh:\s*(?:line\s*\d+:)?\s*[\w\.\-]+:\s*not found\b/i, description: 'Binario shell no encontrado' },
   { pattern: /\b(vite|tsc|node|go|dotnet|cargo):\s*(?:command\s*)?not found\b/i, description: 'Herramienta de compilación no encontrada' },
+  { pattern: /\b(?:session_id|sessionId|session\s*id)\s+(?:is\s+required|not\s+found|required|invalid)\b/i, description: 'Error de sesión en MCP/Tether (session_id ausente o inválido)' },
+  { pattern: /"(?:isError|error)"\s*:\s*true\b/i, description: 'Error explícito en respuesta JSON MCP (isError: true)' },
+  { pattern: /\b(?:missing\s+required\s+(?:argument|parameter)|required\s+parameter\s+missing)\b/i, description: 'Parámetro obligatorio faltante en llamada MCP' },
 ]
 
 /**
@@ -1860,6 +1864,7 @@ export function clearMcpCapabilityCache(clearTokens = false): void {
   cachedCapabilityReport = null
   cachedCapabilityTimestamp = 0
   resolvedEndpointCache.clear()
+  clearTetherActiveSessions()
   if (clearTokens) {
     serverAuthTokenCache.clear()
   }
@@ -1942,31 +1947,146 @@ export async function testContext7Connection(server: StoredMcpServer): Promise<{
   }
 }
 
+const tetherActiveSessionCache = new Map<string, string>()
+
+export function getTetherActiveSessionId(serverUrl?: string): string | undefined {
+  if (serverUrl) {
+    const originKey = getServerOriginKey(serverUrl)
+    return tetherActiveSessionCache.get(originKey)
+  }
+  return tetherActiveSessionCache.values().next().value
+}
+
+export function setTetherActiveSessionId(serverUrl: string, sessionId: string): void {
+  const originKey = getServerOriginKey(serverUrl)
+  tetherActiveSessionCache.set(originKey, sessionId)
+}
+
+export function clearTetherActiveSessions(): void {
+  tetherActiveSessionCache.clear()
+}
+
+/**
+ * Asegura o inicializa una sesión válida de Tether para ejecución de comandos CLI.
+ * Si el servidor expone herramientas como session_open o open_session, la invoca para obtener o refrescar session_id.
+ */
+export async function ensureTetherSession(
+  serverUrl?: string,
+  authContext?: McpAuthConnectContext,
+  report?: McpCapabilityAssignmentReport | null,
+  options?: { forceNew?: boolean },
+): Promise<string> {
+  const originKey = serverUrl ? getServerOriginKey(serverUrl) : ''
+  if (!options?.forceNew && originKey && tetherActiveSessionCache.has(originKey)) {
+    return tetherActiveSessionCache.get(originKey)!
+  }
+
+  const rep = report ?? getCachedMcpCapabilityReport()
+  const tools = rep?.tools?.map((t) => t.tool) || []
+
+  // Buscar herramienta de apertura de sesión en Tether si existe
+  const sessionOpenTool = tools.find(
+    (t) =>
+      (t.serverName.toLowerCase().includes('tether') || t.qualifiedName.toLowerCase().includes('tether')) &&
+      /\b(session_open|open_session|create_session|start_session)\b/i.test(t.name),
+  )
+
+  if (sessionOpenTool) {
+    const ws = authContext?.workspace || getActiveWorkspaceName() || 'localloop-workspace'
+    const openArgs: Record<string, unknown> = {}
+    const props = (sessionOpenTool.inputSchema?.properties as Record<string, unknown>) || {}
+    if ('workspace' in props) openArgs.workspace = ws
+    if ('cwd' in props) openArgs.cwd = ws
+    if ('directory' in props) openArgs.directory = ws
+    if ('agent_id' in props) openArgs.agent_id = authContext?.agentId || 'localloop-agent'
+
+    try {
+      const rawRes = await callMcpTool(sessionOpenTool, openArgs, authContext)
+      let extractedSessionId: string | undefined
+
+      try {
+        const parsed = JSON.parse(rawRes)
+        if (typeof parsed === 'object' && parsed !== null) {
+          if (typeof parsed.session_id === 'string') extractedSessionId = parsed.session_id
+          if (typeof parsed.sessionId === 'string') extractedSessionId = parsed.sessionId
+          if (typeof parsed.id === 'string') extractedSessionId = parsed.id
+          if (!extractedSessionId && Array.isArray(parsed.content)) {
+            const txt = parsed.content.map((c: any) => c.text || '').join(' ')
+            const match = /(?:session_id|sessionId|session)[:=]\s*["']?([a-zA-Z0-9_-]+)/i.exec(txt)
+            if (match) extractedSessionId = match[1]
+          }
+        }
+      } catch {
+        const match = /(?:session_id|sessionId|session)[:=]\s*["']?([a-zA-Z0-9_-]+)/i.exec(rawRes)
+        if (match) extractedSessionId = match[1]
+      }
+
+      if (extractedSessionId) {
+        if (originKey) tetherActiveSessionCache.set(originKey, extractedSessionId)
+        return extractedSessionId
+      }
+    } catch (err) {
+      trace('tether.session_open.failed', { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  // Fallback a identificador derivado del contexto o generado
+  const fallbackId =
+    authContext?.sessionId ||
+    authContext?.agentId ||
+    `localloop-session-${Date.now().toString(36)}`
+
+  if (originKey) tetherActiveSessionCache.set(originKey, fallbackId)
+  return fallbackId
+}
+
 /**
  * Localiza la mejor herramienta MCP disponible para ejecución CLI en terminal host (priorizando Tether).
+ * Excluye herramientas de ciclo de vida de sesiones (session_open, session_close).
  */
 export function findCliExecutionTool(report?: McpCapabilityAssignmentReport | null): McpToolDefinition | null {
   const rep = report ?? getCachedMcpCapabilityReport()
   if (!rep || rep.tools.length === 0) return null
 
-  // 1. Priorizar herramienta del servidor Tether con capacidad CLI_EXECUTION_AND_BUILD
-  const tetherTool = rep.tools.find(
-    (t) =>
-      t.categories.includes('CLI_EXECUTION_AND_BUILD') &&
-      (t.tool.serverName.toLowerCase().includes('tether') || t.tool.qualifiedName.toLowerCase().includes('tether')),
-  )
-  if (tetherTool) return tetherTool.tool
+  const isSessionControlTool = (name: string) =>
+    /\b(session_open|session_close|session_list|open_session|close_session|create_session)\b/i.test(name)
 
-  // 2. Cualquier herramienta del servidor Tether
-  const anyTetherTool = rep.tools.find(
-    (t) =>
+  const isExplicitExecTool = (name: string, props?: Record<string, unknown>) => {
+    if (isSessionControlTool(name)) return false
+    if (/\b(exec|execute|run|cmd|command|terminal|bash|shell|script)\b/i.test(name)) return true
+    if (props && ('command' in props || 'cmd' in props || 'script' in props)) return true
+    return false
+  }
+
+  // 1. Priorizar herramienta explícita de ejecución de comandos del servidor Tether
+  const tetherExecTool = rep.tools.find((t) => {
+    const isTether =
       t.tool.serverName.toLowerCase().includes('tether') ||
-      t.tool.qualifiedName.toLowerCase().includes('tether'),
-  )
+      t.tool.qualifiedName.toLowerCase().includes('tether')
+    if (!isTether) return false
+    const props = (t.tool.inputSchema?.properties as Record<string, unknown>) || {}
+    return (
+      t.categories.includes('CLI_EXECUTION_AND_BUILD') &&
+      isExplicitExecTool(t.tool.name, props)
+    )
+  })
+  if (tetherExecTool) return tetherExecTool.tool
+
+  // 2. Cualquier herramienta de Tether que no sea de control de sesión
+  const anyTetherTool = rep.tools.find((t) => {
+    const isTether =
+      t.tool.serverName.toLowerCase().includes('tether') ||
+      t.tool.qualifiedName.toLowerCase().includes('tether')
+    return isTether && !isSessionControlTool(t.tool.name)
+  })
   if (anyTetherTool) return anyTetherTool.tool
 
-  // 3. Cualquier herramienta con capacidad CLI_EXECUTION_AND_BUILD
-  const anyCliTool = rep.tools.find((t) => t.categories.includes('CLI_EXECUTION_AND_BUILD'))
+  // 3. Cualquier herramienta con capacidad CLI_EXECUTION_AND_BUILD que no sea de control de sesión
+  const anyCliTool = rep.tools.find(
+    (t) =>
+      t.categories.includes('CLI_EXECUTION_AND_BUILD') &&
+      !isSessionControlTool(t.tool.name),
+  )
   if (anyCliTool) return anyCliTool.tool
 
   return null
@@ -2013,7 +2133,8 @@ export async function isContext7Configured(servers?: StoredMcpServer[]): Promise
 
 /**
  * Ejecuta un comando en la máquina anfitriona a través de Tether MCP o la herramienta CLI disponible.
- * Adapta los argumentos al esquema esperado por la herramienta (cmd, command, script, etc.).
+ * Adapta los argumentos al esquema esperado por la herramienta (cmd, command, script, session_id, workspace, etc.).
+ * Interpreta respuestas estándar de MCP (isError, content blocks, stdout/stderr) y auto-remedia errores de sesión.
  */
 export async function executeCliViaMcp(
   command: string,
@@ -2037,8 +2158,14 @@ export async function executeCliViaMcp(
     server: cliTool.serverName,
   })
 
+  const isTether =
+    cliTool.serverName.toLowerCase().includes('tether') ||
+    cliTool.qualifiedName.toLowerCase().includes('tether')
+
   const args: Record<string, unknown> = {}
   const props = (cliTool.inputSchema?.properties as Record<string, unknown>) || {}
+
+  // 1. Asignar comando según propiedades del esquema
   if ('command' in props) {
     args.command = command
   }
@@ -2048,33 +2175,146 @@ export async function executeCliViaMcp(
   if ('script' in props) {
     args.script = command
   }
+  if ('input' in props && !('command' in props) && !('cmd' in props)) {
+    args.input = command
+  }
   if (Object.keys(args).length === 0) {
     args.cmd = command
     args.command = command
   }
 
-  try {
-    const rawOutput = await callMcpTool(cliTool, args, authContext)
+  // 2. Asignar session_id / sessionId si la herramienta o Tether lo requiere
+  const needsSession =
+    'session_id' in props ||
+    'sessionId' in props ||
+    'session' in props ||
+    isTether
+
+  if (needsSession) {
+    let sid = authContext?.sessionId || getTetherActiveSessionId(cliTool.serverUrl)
+    if (!sid && isTether) {
+      sid = await ensureTetherSession(cliTool.serverUrl, authContext).catch(() => '')
+    }
+    if (!sid) {
+      sid = authContext?.agentId || 'localloop-session-default'
+    }
+    if ('session_id' in props || isTether) {
+      args.session_id = sid
+    }
+    if ('sessionId' in props) {
+      args.sessionId = sid
+    }
+    if ('session' in props) {
+      args.session = sid
+    }
+  }
+
+  // 3. Asignar agent_id / agentId si el esquema lo define
+  if ('agent_id' in props) {
+    args.agent_id = authContext?.agentId || 'localloop-agent'
+  }
+  if ('agentId' in props) {
+    args.agentId = authContext?.agentId || 'localloop-agent'
+  }
+
+  // 4. Asignar workspace / cwd si el esquema lo define
+  const ws = authContext?.workspace || getActiveWorkspaceName() || 'localloop-workspace'
+  if ('workspace' in props) args.workspace = ws
+  if ('cwd' in props && !('cwd' in args)) args.cwd = ws
+  if ('workdir' in props) args.workdir = ws
+  if ('directory' in props) args.directory = ws
+
+  const parseExecutionResult = (rawOutput: unknown): {
+    exitCode: number
+    text: string
+    isMcpError: boolean
+  } => {
     let exitCode = 0
     let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput)
+    let isMcpError = false
 
     try {
       const parsed = JSON.parse(text)
       if (typeof parsed === 'object' && parsed !== null) {
         if (typeof parsed.exitCode === 'number') exitCode = parsed.exitCode
         if (typeof parsed.code === 'number') exitCode = parsed.code
-        const stdOut = typeof parsed.stdout === 'string' ? parsed.stdout : ''
-        const stdErr = typeof parsed.stderr === 'string' ? parsed.stderr : ''
-        if (stdOut || stdErr) {
-          text = `${stdOut}\n${stdErr}`.trim()
+
+        if (
+          parsed.isError === true ||
+          parsed.error ||
+          parsed.status === 'error' ||
+          parsed.success === false
+        ) {
+          isMcpError = true
+          if (exitCode === 0) exitCode = 1
+        }
+
+        // Extraer texto de bloques de contenido estándar MCP (content: [{ type: 'text', text: '...' }])
+        if (Array.isArray(parsed.content)) {
+          const contentText = parsed.content
+            .map((item: any) =>
+              typeof item === 'object' && item !== null && typeof item.text === 'string'
+                ? item.text
+                : '',
+            )
+            .filter(Boolean)
+            .join('\n')
+          if (contentText) {
+            text = contentText
+          }
+        } else if (typeof parsed.stdout === 'string' || typeof parsed.stderr === 'string') {
+          const stdOut = typeof parsed.stdout === 'string' ? parsed.stdout : ''
+          const stdErr = typeof parsed.stderr === 'string' ? parsed.stderr : ''
+          if (stdOut || stdErr) {
+            text = `${stdOut}\n${stdErr}`.trim()
+          }
+        } else if (typeof parsed.output === 'string') {
+          text = parsed.output
+        } else if (typeof parsed.message === 'string') {
+          text = parsed.message
         }
       }
     } catch {
       // texto plano
     }
 
-    const staticCheck = detectStaticErrorSignals(text, exitCode)
-    const hasErrorSignals = exitCode !== 0 || staticCheck.hasErrors
+    return { exitCode, text, isMcpError }
+  }
+
+  try {
+    let rawOutput = await callMcpTool(cliTool, args, authContext)
+    let { exitCode, text, isMcpError } = parseExecutionResult(rawOutput)
+    let staticCheck = detectStaticErrorSignals(text, exitCode)
+    let hasErrorSignals = exitCode !== 0 || isMcpError || staticCheck.hasErrors
+
+    // Auto-remediación inmediata si Tether devuelve error de sesión requerida o inexistente
+    if (
+      isTether &&
+      hasErrorSignals &&
+      /\b(?:session_id|sessionId|session)\s+(?:is\s+required|not\s+found|required)\b/i.test(text)
+    ) {
+      trace('tether.execute.retry_session', {
+        tool: cliTool.qualifiedName,
+        reason: text,
+      })
+
+      const freshSid = await ensureTetherSession(cliTool.serverUrl, authContext, null, {
+        forceNew: true,
+      }).catch(() => '')
+
+      const effectiveSid = freshSid || `localloop-session-${Date.now().toString(36)}`
+      if ('session_id' in props || isTether) args.session_id = effectiveSid
+      if ('sessionId' in props) args.sessionId = effectiveSid
+      if ('session' in props) args.session = effectiveSid
+
+      rawOutput = await callMcpTool(cliTool, args, authContext)
+      const retried = parseExecutionResult(rawOutput)
+      exitCode = retried.exitCode
+      text = retried.text
+      isMcpError = retried.isMcpError
+      staticCheck = detectStaticErrorSignals(text, exitCode)
+      hasErrorSignals = exitCode !== 0 || isMcpError || staticCheck.hasErrors
+    }
 
     const elapsedMs = Date.now() - startTime
     trace('tether.execute.complete', {

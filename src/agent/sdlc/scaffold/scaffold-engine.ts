@@ -329,10 +329,15 @@ async function executeValidationCommand(
     return await params.executeCommand(command)
   }
 
-  const authContext: McpAuthConnectContext = params.authContext ?? {
+  const authContext: McpAuthConnectContext = {
     agentId: params.sessionId ? `localloop-session-${params.sessionId}` : 'localloop-scaffold-verifier',
     agentName: 'LocalLoop (Scaffold_Verifier)',
     workspace: (params as any)?.workspace || 'localloop-workspace',
+    sessionId: params.sessionId ? String(params.sessionId) : undefined,
+    ...(params.authContext || {}),
+  }
+  if (!authContext.sessionId && params.sessionId) {
+    authContext.sessionId = String(params.sessionId)
   }
 
   const mcpReport = await RuntimeSkillLoader.syncMcpCapabilities({ authContext }).catch(() => null)

@@ -136,10 +136,15 @@ export async function verifyAndRepairApplicationCompilation(
   const preCleaned = await validateAndCleanWorkspaceImports()
   const repairedFiles: string[] = [...preCleaned]
 
-  const authContext: McpAuthConnectContext = options?.authContext ?? {
+  const authContext: McpAuthConnectContext = {
     agentId: state.sessionId ? `localloop-session-${state.sessionId}` : 'localloop-verifier',
     agentName: 'LocalLoop (Compilation_Verifier)',
     workspace: (state.mcpServerConfig as any)?.workspace || 'localloop-workspace',
+    sessionId: state.sessionId ? String(state.sessionId) : undefined,
+    ...(options?.authContext || {}),
+  }
+  if (!authContext.sessionId && state.sessionId) {
+    authContext.sessionId = String(state.sessionId)
   }
 
   // Sincronizar capacidades MCP para asegurar que Tether está descubierto y registrado en memoria
